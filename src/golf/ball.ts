@@ -1,0 +1,252 @@
+/**
+ * ゴルフの球の物理。地形の上を飛び、跳ね、転がって止まる。
+ *
+ * 空気の力は抗力（速さの 2 乗）と、バックスピンの揚力（同じく速さの 2 乗、スピンは時間で弱まる）。
+ * 実際の球の値（直径 43mm・46g・抗力係数 0.25 前後）から、ドライバーで 220m 前後飛ぶように合わせてある。
+ * 地面に当たると、地面の種類ごとの反発と摩擦で跳ね、跳ねが小さくなったら斜面に沿って転がる。
+ *
+ * 画面や three.js には触らない（Worker やテストからも動かせるように）。
+ */
+
+export type Surface = 'green' | 'fairway' | 'rough' | 'sand' | 'rock' | 'snow';
+
+/** 地面の種類ごとの跳ね方と転がり方。 */
+export interface SurfaceFeel {
+  /** 当たった瞬間の、面に垂直な速さの戻り（0..1）。 */
+  bounce: number;
+  /** 当たった瞬間に、面に沿った速さを失う割合（0..1）。 */
+  grip: number;
+  /** 転がるときの抵抗（重力に対する割合）。小さいほどよく転がる。 */
+  roll: number;
+}
+
+export const SURFACE_FEEL: Record<Surface, SurfaceFeel> = {
+  green: { bounce: 0.28, grip: 0.3, roll: 0.055 },
+  fairway: { bounce: 0.33, grip: 0.3, roll: 0.11 },
+  rough: { bounce: 0.22, grip: 0.5, roll: 0.3 },
+  sand: { bounce: 0.04, grip: 0.85, roll: 0.9 },
+  rock: { bounce: 0.55, grip: 0.12, roll: 0.09 },
+  snow: { bounce: 0.1, grip: 0.6, roll: 0.4 },
+};
+
+/** 球が地面について知りたいこと。 */
+export interface GolfGround {
+  /** 地面の高さ（m）。描いている地面と同じ三角形で補間したもの。 */
+  height(x: number, z: number): number;
+  /** 水面の高さ（m）。海は 0、湖と川はその水面。水が無ければ -Infinity。 */
+  water(x: number, z: number): number;
+  surface(x: number, z: number): Surface;
+}
+
+export type BallState = 'rest' | 'flight' | 'roll' | 'holed' | 'water';
+
+/** 球の半径（m）。本物は 21mm だが、見えるように大きめにしてある（物理も同じ大きさで扱う）。 */
+export const BALL_RADIUS = 0.1;
+const G = 9.81;
+/** 抗力と揚力の係数（1/m）。0.5 ρ C A / m。 */
+const DRAG = 0.0047;
+const LIFT = 0.0042;
+/** スピンが弱まる時間（s）。 */
+const SPIN_DECAY = 6;
+/** 1 回の計算の刻み（s）。速い球でも地面をすり抜けないよう細かく。 */
+export const BALL_STEP = 1 / 240;
+
+export class Ball {
+  readonly pos = { x: 0, y: 0, z: 0 };
+  readonly vel = { x: 0, y: 0, z: 0 };
+  state: BallState = 'rest';
+  /** 揚力の強さ（打ち出しのスピン。時間で弱まる）。 */
+  private spin = 0;
+  /** 最後に地面に触れた場所の種類。 */
+  lie: Surface = 'fairway';
+
+  constructor(private readonly ground: GolfGround) {}
+
+  /** 地面に置く。 */
+  place(x: number, z: number): void {
+    this.pos.x = x;
+    this.pos.z = z;
+    this.pos.y = this.ground.height(x, z) + BALL_RADIUS;
+    this.vel.x = this.vel.y = this.vel.z = 0;
+    this.state = 'rest';
+    this.spin = 0;
+    this.lie = this.ground.surface(x, z);
+  }
+
+  /**
+   * 打つ。yaw は水平の向き（ラジアン、-z が 0 で左回り）、loft は打ち出し角（度）、
+   * speed は初速（m/s）、spin は揚力の強さ（0..1）。
+   */
+  hit(yaw: number, loftDeg: number, speed: number, spin: number): void {
+    const loft = (loftDeg * Math.PI) / 180;
+    const horizontal = Math.cos(loft) * speed;
+    this.vel.x = -Math.sin(yaw) * horizontal;
+    this.vel.z = -Math.cos(yaw) * horizontal;
+    this.vel.y = Math.sin(loft) * speed;
+    this.spin = spin;
+    this.state = loftDeg > 0.5 ? 'flight' : 'roll';
+  }
+
+  get speed(): number {
+    return Math.hypot(this.vel.x, this.vel.y, this.vel.z);
+  }
+
+  /** dt 秒ぶん進める（中で BALL_STEP 刻みに分ける）。 */
+  update(dt: number): void {
+    let t = dt;
+    while (t > 1e-6 && (this.state === 'flight' || this.state === 'roll')) {
+      const h = Math.min(BALL_STEP, t);
+      if (this.state === 'flight') this.fly(h);
+      else this.rollStep(h);
+      t -= h;
+    }
+  }
+
+  /** 地面の法線（中心差分）。 */
+  private normal(x: number, z: number): { x: number; y: number; z: number } {
+    const e = 0.5;
+    const dx = (this.ground.height(x + e, z) - this.ground.height(x - e, z)) / (2 * e);
+    const dz = (this.ground.height(x, z + e) - this.ground.height(x, z - e)) / (2 * e);
+    const len = Math.sqrt(dx * dx + 1 + dz * dz);
+    return { x: -dx / len, y: 1 / len, z: -dz / len };
+  }
+
+  private fly(h: number): void {
+    const v = this.vel;
+    const s = Math.hypot(v.x, v.y, v.z);
+    // 抗力は速さの逆向き、揚力は速さに垂直で上向き（水平面内の向きは変えない）。
+    let ax = -DRAG * s * v.x;
+    let ay = -DRAG * s * v.y - G;
+    let az = -DRAG * s * v.z;
+    if (this.spin > 0 && s > 1) {
+      const hs = Math.hypot(v.x, v.z);
+      // 速さに垂直な上向きの単位ベクトル。
+      const ux = (-v.x * v.y) / (s * Math.max(hs, 1e-6));
+      const uy = hs / s;
+      const uz = (-v.z * v.y) / (s * Math.max(hs, 1e-6));
+      const lift = LIFT * this.spin * s * s;
+      ax += ux * lift;
+      ay += uy * lift;
+      az += uz * lift;
+      this.spin *= Math.exp(-h / SPIN_DECAY);
+    }
+    v.x += ax * h;
+    v.y += ay * h;
+    v.z += az * h;
+    const p = this.pos;
+    p.x += v.x * h;
+    p.y += v.y * h;
+    p.z += v.z * h;
+
+    if (p.y - BALL_RADIUS < this.ground.water(p.x, p.z)) {
+      this.state = 'water';
+      return;
+    }
+    const floor = this.ground.height(p.x, p.z) + BALL_RADIUS;
+    if (p.y <= floor) {
+      p.y = floor;
+      this.bounce();
+    }
+  }
+
+  /** 地面に当たった。面に垂直な速さを反発で返し、面に沿った速さを摩擦で削る。 */
+  private bounce(): void {
+    const p = this.pos;
+    const v = this.vel;
+    const n = this.normal(p.x, p.z);
+    this.lie = this.ground.surface(p.x, p.z);
+    const feel = SURFACE_FEEL[this.lie];
+    const vn = v.x * n.x + v.y * n.y + v.z * n.z;
+    if (vn >= 0) return;
+    const tx = v.x - vn * n.x;
+    const ty = v.y - vn * n.y;
+    const tz = v.z - vn * n.z;
+    // バックスピンが残っている球ほど、着地で面に沿った速さを失う（アイアンは止まり、ドライバーは転がる）。
+    const keep = 1 - Math.min(0.95, feel.grip + this.spin * 0.45);
+    const out = -vn * feel.bounce;
+    v.x = tx * keep + n.x * out;
+    v.y = ty * keep + n.y * out;
+    v.z = tz * keep + n.z * out;
+    // スピンは当たるたびにほぼ消える。
+    this.spin *= 0.3;
+    // 跳ねが小さくなったら転がりへ。
+    if (out < 1.2) {
+      v.x -= n.x * out;
+      v.y -= n.y * out;
+      v.z -= n.z * out;
+      this.state = 'roll';
+    }
+  }
+
+  private rollStep(h: number): void {
+    const p = this.pos;
+    const v = this.vel;
+    const n = this.normal(p.x, p.z);
+    this.lie = this.ground.surface(p.x, p.z);
+    const feel = SURFACE_FEEL[this.lie];
+    // 重力のうち斜面に沿った分: g - (g·n) n。法線は下り側へ傾いているので、x と z は法線と同じ向き。
+    const gx = G * n.y * n.x;
+    const gy = -G + G * n.y * n.y;
+    const gz = G * n.y * n.z;
+    const s = Math.hypot(v.x, v.y, v.z);
+    const slopeG = Math.hypot(gx, gy, gz);
+    const resist = feel.roll * G * n.y;
+    // 止まる: 遅く、斜面の引きが抵抗に負けるとき。
+    if (s < 0.04 && slopeG < resist * 1.4) {
+      v.x = v.y = v.z = 0;
+      p.y = this.ground.height(p.x, p.z) + BALL_RADIUS;
+      this.state = 'rest';
+      return;
+    }
+    let ax = gx;
+    let ay = gy;
+    let az = gz;
+    if (s > 1e-6) {
+      ax -= (resist * v.x) / s;
+      ay -= (resist * v.y) / s;
+      az -= (resist * v.z) / s;
+    }
+    const nx = v.x + ax * h;
+    const ny = v.y + ay * h;
+    const nz = v.z + az * h;
+    // 抵抗で向きが逆転しないように（止まる手前で行き過ぎない）。
+    if (s > 1e-6 && nx * v.x + ny * v.y + nz * v.z < 0) {
+      v.x = v.y = v.z = 0;
+    } else {
+      v.x = nx;
+      v.y = ny;
+      v.z = nz;
+    }
+    // 面に沿った速さだけ残す。
+    const vn = v.x * n.x + v.y * n.y + v.z * n.z;
+    v.x -= vn * n.x;
+    v.y -= vn * n.y;
+    v.z -= vn * n.z;
+
+    p.x += v.x * h;
+    p.z += v.z * h;
+    const ahead = p.y + v.y * h;
+    const floor = this.ground.height(p.x, p.z) + BALL_RADIUS;
+    if (ahead > floor + 0.08) {
+      // 地面が急に下がった（段や崖の縁）。飛んで落ちる。
+      p.y = ahead;
+      this.state = 'flight';
+      return;
+    }
+    p.y = floor;
+    if (p.y - BALL_RADIUS < this.ground.water(p.x, p.z) - 0.05) this.state = 'water';
+  }
+
+  /** カップに入ったか。転がりながら、または遅く落ちてきて、縁の内側に来たら入る。 */
+  checkCup(cx: number, cz: number, cupRadius: number): boolean {
+    if (this.state !== 'roll' && this.state !== 'rest' && this.state !== 'flight') return false;
+    const d = Math.hypot(this.pos.x - cx, this.pos.z - cz);
+    const s = this.speed;
+    const low = this.pos.y - this.ground.height(this.pos.x, this.pos.z) < BALL_RADIUS + 0.15;
+    if (low && d < cupRadius && s < 2.2) {
+      this.state = 'holed';
+      return true;
+    }
+    return false;
+  }
+}

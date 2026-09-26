@@ -4,10 +4,18 @@ import { Climate } from './climate';
 import type { IslandWater } from './islandWater';
 import { Noise2D, clamp, mix, smoothstep } from './noise';
 import { type SpecialHit, specialAt } from './special';
+import { type Hole, type Mown, flattenAt, mownAt } from '../golf/course';
+import type { Surface } from '../golf/ball';
 import { SURFACE_STRIDE, composeSurface, surfaceIsland } from './islandSurface';
+import { srgb } from './special';
 import { IslandShape, type LandscapeArrays, type SurfaceFields } from './islandShape';
 
 export const SEA_LEVEL = 0;
+
+/** 刈り込んだ芝の色（リニア RGB）。 */
+const C_FAIRWAY = srgb(0x74a64c);
+const C_TEE = srgb(0x6aa84e);
+const C_GREEN = srgb(0x72c95a);
 
 /**
  * 四角形をどちらの対角線で 2 つの三角形に割るか。true なら h00-h11。
@@ -44,10 +52,14 @@ export class Terrain {
   private readonly moistureBias: number;
   private readonly warmthBias: number;
 
+  private readonly mown: Mown = { green: 0, tee: 0, fairway: 0 };
+
   constructor(
     params: IslandParams,
     landscape: LandscapeArrays,
     private readonly water: IslandWater | null = null,
+    /** ゴルフのホール（golf/course.ts）。グリーンとティーを均し、フェアウェイを刈り込む。 */
+    readonly hole: Hole | null = null,
   ) {
     this.params = params;
     const [a, b, c, d] = hashSeed(params.seed);
@@ -106,7 +118,40 @@ export class Terrain {
     if (!this.water) return this.shape.heightAt(x, z);
     const carve = this.water.carveAt(x, z);
     const calm = Math.max(this.water.wetAt(x, z), smoothstep(0, 1.5, -carve));
-    return this.shape.heightAt(x, z, 1 - calm) + carve;
+    const h = this.shape.heightAt(x, z, 1 - calm) + carve;
+    if (!this.hole) return h;
+    // グリーンとティーは均した面へ寄せる（周りへはなめらかにつなぐ）。
+    const [w, flat] = flattenAt(this.hole, x, z);
+    return w > 0 ? h + (flat - h) * w : h;
+  }
+
+  /** 刈り込んだ所（グリーン・ティー・フェアウェイ）の強さ 0..1。木を生やさない判定に使う。 */
+  mownAt(x: number, z: number): number {
+    if (!this.hole) return 0;
+    const m = mownAt(this.hole, x, z, this.mown);
+    return Math.max(m.green, m.tee, m.fairway);
+  }
+
+  /**
+   * 球が転がる地面の種類（golf/ball.ts）。刈り込んだ所、浜の砂、岩、雪、それ以外はラフ。
+   * 見た目の塗り分け（surface）と同じ層から決めるので、見えている通りに転がる。
+   */
+  surfaceKind(x: number, z: number): Surface {
+    if (this.hole) {
+      const m = mownAt(this.hole, x, z, this.mown);
+      if (m.green > 0.5) return 'green';
+      if (m.tee > 0.5 || m.fairway > 0.5) return 'fairway';
+    }
+    const h = this.heightAt(x, z);
+    if (h < 3.2) return 'sand';
+    const e = 2;
+    const dx = (this.heightAt(x + e, z) - this.heightAt(x - e, z)) / (2 * e);
+    const dz = (this.heightAt(x, z + e) - this.heightAt(x, z - e)) / (2 * e);
+    const temp = this.temperatureAt(x, z, h);
+    this.surface(x, z, h, Math.sqrt(dx * dx + dz * dz), temp, this.moistureAt(x, z), this.specialAt(x, z), this.patchAt(x, z), this.layers, 0);
+    if (this.layers[7] > 0.5) return 'snow';
+    if (this.layers[6] > 0.5) return 'rock';
+    return 'rough';
   }
 
   /**
@@ -154,6 +199,23 @@ export class Terrain {
     // 岩の種類は地方ごと（波長 約 1.5km）。
     const rockTone = this.nRock.noise(x * 0.0007, z * 0.0007);
     surfaceIsland(h, slopeLocal, this.fields, temp, moisture, special, patch, rockTone, out, o);
+    if (this.hole) this.paintMown(x, z, out, o);
+  }
+
+  /** 刈り込んだ所の色。岩と雪は消す。 */
+  private paintMown(x: number, z: number, out: Float32Array, o: number): void {
+    const m = mownAt(this.hole!, x, z, this.mown);
+    const any = Math.max(m.green, m.tee, m.fairway);
+    if (any <= 0) return;
+    for (let c = 0; c < 3; c++) {
+      let v = out[o + c];
+      v += (C_FAIRWAY[c] - v) * m.fairway;
+      v += (C_TEE[c] - v) * m.tee;
+      v += (C_GREEN[c] - v) * m.green;
+      out[o + c] = v;
+    }
+    out[o + 6] *= 1 - any;
+    out[o + 7] *= 1 - any;
   }
 
   /** 層を混ぜ切った 1 色（小さな地図用）。out[o..o+3) にリニア RGB を書く。 */

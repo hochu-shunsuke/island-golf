@@ -1,0 +1,57 @@
+import assert from 'node:assert/strict';
+import { createServer } from 'vite';
+
+/**
+ * 球の物理を、平らなフェアウェイ・グリーン・斜面で確かめる。
+ * クラブの飛距離がゴルフらしい範囲に収まり、球が必ず止まり、すり抜けないこと。
+ */
+const server = await createServer({ configFile: false, appType: 'custom', logLevel: 'silent', server: { middlewareMode: true } });
+try {
+  const { Ball } = await server.ssrLoadModule('/src/golf/ball.ts');
+  const { CLUBS } = await server.ssrLoadModule('/src/golf/clubs.ts');
+  // 球は -z へ打つ。tilt > 0 なら -z へ下る（打つ向きが下り）、tiltX > 0 なら -x が低い。
+  const flat = (surface, tilt = 0, tiltX = 0) => ({
+    height: (x, z) => 10 + tilt * z + tiltX * x,
+    water: () => -Infinity,
+    surface: () => surface,
+  });
+  const shoot = (ground, club, power = 1) => {
+    const ball = new Ball(ground);
+    ball.place(0, 0);
+    ball.hit(0, club.loft, club.speed * power, club.spin);
+    let carry = null;
+    let maxY = 0;
+    for (let t = 0; t < 30 && ball.state !== 'rest'; t += 1 / 60) {
+      const was = ball.state;
+      ball.update(1 / 60);
+      maxY = Math.max(maxY, ball.pos.y - 10);
+      if (carry === null && was === 'flight' && ball.state !== 'flight') carry = -ball.pos.z;
+      if (carry === null && ball.pos.y <= 10 + 0.11 && t > 0.2) carry = -ball.pos.z;
+    }
+    return { total: -ball.pos.z, side: ball.pos.x, carry: carry ?? 0, apex: maxY, state: ball.state };
+  };
+  const rows = [];
+  for (const club of CLUBS) {
+    const r = shoot(flat(club.loft === 0 ? 'green' : 'fairway'), club);
+    rows.push(`${club.name} キャリー ${r.carry.toFixed(0)}m 合計 ${r.total.toFixed(0)}m 最高 ${r.apex.toFixed(0)}m`);
+    assert.equal(r.state, 'rest', `${club.name} の球が止まりません`);
+  }
+  const driver = shoot(flat('fairway'), CLUBS[0]);
+  assert(driver.total > 200 && driver.total < 270, `ドライバーの飛距離がゴルフらしくありません: ${driver.total.toFixed(0)}m`);
+  const putt = shoot(flat('green'), CLUBS[CLUBS.length - 1], 0.5);
+  assert(putt.total > 2 && putt.total < 15, `パターの半分の力が ${putt.total.toFixed(1)}m 転がりました`);
+  const putter = CLUBS[CLUBS.length - 1];
+  // 斜面では下りの方がよく転がり、上りは手前で止まる。
+  const up = shoot(flat('green', -0.03), putter, 0.5);
+  const down = shoot(flat('green', 0.03), putter, 0.5);
+  assert(down.total > putt.total && putt.total > up.total, `上り ${up.total.toFixed(1)}m・平ら ${putt.total.toFixed(1)}m・下り ${down.total.toFixed(1)}m の順になりません`);
+  // 急な上りでは、登り切れずに打った所より下へ戻ってくる。
+  const back = shoot(flat('fairway', -0.2), putter, 0.5);
+  assert(back.total < 0, `20% の上りで球が戻ってきません（${back.total.toFixed(1)}m 先で止まった）`);
+  // 横に傾いた所では、低い方（-x）へ曲がる。
+  const side = shoot(flat('green', 0, 0.03), putter, 0.5);
+  assert(side.side < -0.3, `横の傾きで低い方へ曲がりません（横 ${side.side.toFixed(2)}m）`);
+  console.log('PASS  球の物理', rows.join(' / '), `パター半分 ${putt.total.toFixed(1)}m（上り ${up.total.toFixed(1)} 下り ${down.total.toFixed(1)}、20% の上り ${back.total.toFixed(1)}、横の傾きで ${side.side.toFixed(1)}m 曲がる）`);
+} finally {
+  await server.close();
+}

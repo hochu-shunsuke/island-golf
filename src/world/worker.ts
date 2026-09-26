@@ -5,6 +5,7 @@ import type { IslandParams } from '../island/params';
 import type { LandscapeArrays } from './islandShape';
 import { type IslandWaterArrays, IslandWater } from './islandWater';
 import { Terrain } from './terrain';
+import type { Hole } from '../golf/course';
 
 export interface BuildRequest {
   type: 'build';
@@ -21,6 +22,8 @@ export interface InitRequest {
   landscape: LandscapeArrays;
   /** 島全体の格子で求めた水（湖・川・彫った量）。 */
   water: IslandWaterArrays;
+  /** ゴルフのホール（グリーンとティーを均し、フェアウェイを刈り込む）。 */
+  hole: Hole | null;
 }
 
 export type WorkerRequest = InitRequest | BuildRequest;
@@ -54,7 +57,7 @@ self.onmessage = (ev: MessageEvent<WorkerRequest>) => {
   const msg = ev.data;
 
   if (msg.type === 'init') {
-    terrain = new Terrain(msg.params, msg.landscape, new IslandWater(msg.water));
+    terrain = new Terrain(msg.params, msg.landscape, new IslandWater(msg.water), msg.hole);
     return;
   }
 

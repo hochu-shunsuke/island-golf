@@ -26,6 +26,8 @@ import { type TouchControls, createTouchControls, hasTouchInput, isTouchDevice }
 import { drawIslandMap } from './view/mapView';
 import { IslandWater } from './world/islandWater';
 import { Terrain } from './world/terrain';
+import type { Hole } from './golf/course';
+import { GolfGame } from './golf/game';
 
 /**
  * island golf（island-maker の島で回るゴルフ。作り始め）。カードのつまみで島を作りながら見渡し、
@@ -46,6 +48,11 @@ const MOBILE_PIXEL_BUDGET = 1_400_000;
 const DESKTOP_PIXEL_BUDGET = 8_000_000;
 /** 見渡すときの視野（度）。飛ぶときは stroll と同じく 68°〜82°＋速さ。 */
 const MAKE_FOV = 55;
+/** 球を打つときの視野（度）。 */
+const GOLF_FOV = 58;
+/** 狙いを回す速さ（マウスは画素あたり、タッチは画素あたりのラジアン）。 */
+const AIM_MOUSE = 0.0022;
+const AIM_TOUCH = 0.004;
 
 interface WakeLockSentinelLike {
   release(): Promise<void>;
@@ -154,6 +161,8 @@ let island: Island | null = null;
 let terrain: Terrain | null = null;
 let chunks: ChunkManager | null = null;
 let madeParams: IslandParams | null = null;
+/** この島のホール（golf/course.ts）。 */
+let hole: Hole | null = null;
 
 function request(n: number): void {
   const erosionN = n === FULL_RES ? EROSION_RES : EROSION_PREVIEW_RES;
@@ -173,7 +182,13 @@ function show(msg: GenerateResult): void {
   const { island: next, params: made } = msg;
   island = next;
   madeParams = made;
-  terrain = new Terrain(made, next.landscape, new IslandWater(next.water));
+  hole = msg.hole;
+  // 島（とホール）が変わったら、回っていたゲームは作り直す。
+  if (golf) {
+    scene.remove(golf.group);
+    golf = null;
+  }
+  terrain = new Terrain(made, next.landscape, new IslandWater(next.water), hole);
   // 見渡す島の 1 枚と地図は Worker が作ってある。ここでは貼るだけ（画面を止めない）。
   overview.set(msg.overview, msg.overviewWater);
   drawIslandMap(overlay.minimap, msg.map);
@@ -220,13 +235,17 @@ function commit(): void {
   request(FULL_RES);
 }
 
-// ── 飛ぶ（入口と操作は stroll と同じ） ─────────────────
-/** 飛んでいる最中か。PC はポインタロックの有無と一致するが、タッチにはロックが無いので状態で持つ。 */
+// ── 回る（入口と操作は stroll と同じ） ─────────────────
+/** 遊んでいる最中か。PC はポインタロックの有無と一致するが、タッチにはロックが無いので状態で持つ。 */
 let playing = false;
 let entered = false;
 let touchControls: TouchControls | null = null;
 let wakeLock: WakeLockSentinelLike | null = null;
 let lastAutoFlight = false;
+/** 今のホールを回っているゲーム。島を作り直すと作り直す。 */
+let golf: GolfGame | null = null;
+/** 空から見ている（stroll と同じ飛ぶ操作）。F で行き来する。 */
+let scout = false;
 
 function setInputMode(next: 'touch' | 'keys'): void {
   if (inputMode === next) return;
@@ -234,39 +253,45 @@ function setInputMode(next: 'touch' | 'keys'): void {
   if (next === 'touch' && document.pointerLockElement) document.exitPointerLock();
   document.documentElement.dataset.input = next;
   overlay.setInputMode(next === 'touch');
-  touchControls?.setActive(playing && next === 'touch');
+  applyTouchUi();
   resizeRenderer();
 }
 
-/** 飛ぶ準備。最初は見渡していた視点の先の上空から、2 回目からは休憩した所から。 */
+/** タッチの操作ボタンを、今の遊び方（ゴルフ／空から）に合わせて出し分ける。 */
+function applyTouchUi(): void {
+  const touchNow = playing && inputMode === 'touch';
+  touchControls?.setActive(touchNow && scout);
+  overlay.setGolfTouch(touchNow && golf !== null, scout);
+}
+
+/** ホールを回るゲームを用意する。ホールが無い島（小さすぎる・全部が山や水）なら null。 */
+function ensureGolf(): GolfGame | null {
+  if (golf || !terrain || !hole) return golf;
+  golf = new GolfGame(
+    terrain,
+    hole,
+    (status) => overlay.setGolf(playing && !scout ? status : null),
+    (text) => overlay.flash(text),
+  );
+  scene.add(golf.group);
+  return golf;
+}
+
+/** 空から見るための鳥。球の上空から、打つ向きを見下ろして飛び始める。 */
 function preparePlayer(): Player | null {
   if (!ground) return null;
-  if (!player) {
-    const dir = new THREE.Vector3();
-    camera.getWorldDirection(dir);
-    const flat = Math.hypot(dir.x, dir.z) || 1;
-    const fx = dir.x / flat;
-    const fz = dir.z / flat;
-    const x = controls.target.x - fx * 350;
-    const z = controls.target.z - fz * 350;
-    // 正面 1.5km の一番高い所より上から始める。足元から一定の高さにすると、正面に高い山が
-    // あるとき、目の前が山肌で埋まった画面から始まった。
-    let ahead = Math.max(0, ground.heightAt(x, z));
-    for (let d = 50; d <= 1500; d += 50) ahead = Math.max(ahead, ground.heightAt(x + fx * d, z + fz * d));
-    const y = Math.max(Math.max(0, ground.heightAt(x, z)) + 160, ahead + 70);
-    player = new Player(ground, x, z);
-    player.restore({ x, y, z, yaw: Math.atan2(-fx, -fz), pitch: -0.22, flying: true });
-  } else {
-    // 休憩中につまみで島を作り直していたら、地面に埋まらないよう持ち上げる。
-    player.restore(player.snapshot());
-  }
+  const from = golf?.ball.pos ?? { x: controls.target.x, z: controls.target.z };
+  const yaw = golf?.aimYaw ?? 0;
+  const y = Math.max(0, ground.heightAt(from.x, from.z)) + 70;
+  if (!player) player = new Player(ground, from.x, from.z);
+  player.restore({ x: from.x, y, z: from.z, yaw, pitch: -0.45, flying: true });
   if (touchCapable && !touchControls) {
     touchControls = createTouchControls({
       root: document.getElementById('ui')!,
       surface: canvas,
       player,
       lookSensitivity: LOOK_SENSITIVITY,
-      isPlaying: () => playing,
+      isPlaying: () => playing && scout,
       onPause: stopPlaying,
       onTouchInput: () => setInputMode('touch'),
     });
@@ -274,8 +299,37 @@ function preparePlayer(): Player | null {
   return player;
 }
 
+/** 空から見る ⇄ 球へ戻る。 */
+function toggleScout(): void {
+  if (!playing) return;
+  if (!scout) {
+    if (!preparePlayer()) return;
+    scout = true;
+    overlay.setGolf(null);
+    overlay.setPinMarker(null);
+    overlay.flash(
+      inputMode === 'touch' ? '空から見ています。「球へ戻る」で打つ所へ。' : '空から見ています。F で球へ戻ります。',
+    );
+  } else {
+    scout = false;
+    player?.clearKeys();
+    golf?.resetCamera();
+    camera.fov = GOLF_FOV;
+    camera.updateProjectionMatrix();
+    overlay.setFlightInfo(false, 0, 0, false);
+    golf?.emit();
+  }
+  applyTouchUi();
+}
+
 function handleStart(pointerType: string): void {
-  if (!preparePlayer()) return;
+  if (!ground) return;
+  if (!ensureGolf()) {
+    // ホールを置けない島は、空から眺めるだけにする。
+    scout = true;
+    if (!preparePlayer()) return;
+    overlay.flash('この島にはホールを置けませんでした。空から眺めます。');
+  }
   const startedWithTouch =
     pointerType === 'touch' || pointerType === 'pen' || (pointerType === 'keyboard' && preferredTouch);
   setInputMode(startedWithTouch ? 'touch' : 'keys');
@@ -290,7 +344,7 @@ function handleStart(pointerType: string): void {
 }
 
 function startPlaying(): void {
-  if (playing || !player) return;
+  if (playing) return;
   playing = true;
   if (!entered) {
     entered = true;
@@ -300,17 +354,24 @@ function startPlaying(): void {
   if (island && madeParams) {
     chunks = new ChunkManager(
       scene,
-      { params: madeParams, landscape: island.landscape, water: island.water },
+      { params: madeParams, landscape: island.landscape, water: island.water, hole },
       water.material,
     );
     overview.setCoverage(chunks.coverage);
     farForest.setCoverage(chunks.coverage);
   }
   controls.enabled = false;
+  golf?.resetCamera();
+  if (!scout) {
+    camera.fov = GOLF_FOV;
+    camera.updateProjectionMatrix();
+    golf?.emit();
+  }
+  fog.density = FOG_FLY;
   overlay.hide();
   overlay.showKeyboardGuide();
-  touchControls?.setActive(inputMode === 'touch');
-  if (player.autoFlight) void requestWakeLock();
+  applyTouchUi();
+  if (scout && player?.autoFlight) void requestWakeLock();
 }
 
 function stopPlaying(): void {
@@ -318,14 +379,17 @@ function stopPlaying(): void {
   playing = false;
   // 押しっぱなし・倒しっぱなしの判定が残らないように全部戻す。
   player?.clearKeys();
-  // 隠さないと、カードの上にボタンが重なって表示されてしまう。
-  touchControls?.setActive(false);
+  if (golf) golf.aimInput = 0;
+  applyTouchUi();
+  overlay.setGolf(null);
+  overlay.setPinMarker(null);
+  overlay.setFlightInfo(false, 0, 0, false);
   void releaseWakeLock();
   chunks?.dispose();
   chunks = null;
   overview.setCoverage(null);
   farForest.setCoverage(null);
-  // 飛んでいた場所の前方を注視点にして、見渡す視点へ戻る。
+  // 今の視点の前方を注視点にして、見渡す視点へ戻る。
   const dir = new THREE.Vector3();
   camera.getWorldDirection(dir);
   controls.target.copy(camera.position).addScaledVector(dir, 400);
@@ -338,8 +402,8 @@ function stopPlaying(): void {
   if (document.pointerLockElement) document.exitPointerLock();
   overlay.show(
     inputMode === 'touch'
-      ? '休憩中。つまみで島を変えられます。タップすると続きから飛べます。'
-      : '休憩中。つまみで島を変えられます。クリックすると続きから飛べます。',
+      ? '休憩中。タップすると続きから打てます。'
+      : '休憩中。クリックすると続きから打てます。',
   );
 }
 
@@ -406,26 +470,104 @@ document.addEventListener('pointerlockchange', () => {
   }
 });
 
-// 別のアプリに移ったら止める。スマホでは戻ってきたとき勝手に飛んでいると困る。
+// 別のアプリに移ったら止める。スマホでは戻ってきたとき勝手に動いていると困る。
 document.addEventListener('visibilitychange', () => {
   if (document.hidden && playing) stopPlaying();
   else if (!document.hidden && playing && player?.autoFlight) void requestWakeLock();
 });
 addEventListener('blur', () => {
-  if (playing) player?.clearKeys();
+  if (!playing) return;
+  player?.clearKeys();
+  if (golf) golf.aimInput = 0;
 });
 
+// ── ゴルフの入力（キー・マウス・タッチを同じ関数に集める） ─────
+/** 打つ操作を押した。カップに入った後なら、もう一度ティーから。 */
+function shotDown(): void {
+  if (!golf || scout) return;
+  if (golf.phase === 'holed') {
+    golf.restart();
+    return;
+  }
+  golf.startCharge();
+}
+function shotUp(): void {
+  if (!golf || scout) return;
+  golf.release();
+}
+
 addEventListener('keydown', (e: KeyboardEvent) => {
-  if (!playing || !player) return;
+  if (!playing) return;
   if (e.code === 'Space') e.preventDefault();
-  player.onKey(e.code, true, e.repeat);
+  if (e.code === 'KeyF' && !e.repeat) {
+    toggleScout();
+    return;
+  }
+  if (scout) {
+    player?.onKey(e.code, true, e.repeat);
+    return;
+  }
+  if (!golf) return;
+  if (e.code === 'KeyA' || e.code === 'ArrowLeft') golf.aimInput = 1;
+  else if (e.code === 'KeyD' || e.code === 'ArrowRight') golf.aimInput = -1;
+  else if ((e.code === 'KeyW' || e.code === 'ArrowUp') && !e.repeat) golf.changeClub(-1);
+  else if ((e.code === 'KeyS' || e.code === 'ArrowDown') && !e.repeat) golf.changeClub(1);
+  else if (e.code === 'Space' && !e.repeat) shotDown();
 });
 addEventListener('keyup', (e: KeyboardEvent) => {
-  if (playing) player?.onKey(e.code, false);
+  if (!playing) return;
+  if (scout) {
+    player?.onKey(e.code, false);
+    return;
+  }
+  if (!golf) return;
+  if ((e.code === 'KeyA' || e.code === 'ArrowLeft') && golf.aimInput > 0) golf.aimInput = 0;
+  if ((e.code === 'KeyD' || e.code === 'ArrowRight') && golf.aimInput < 0) golf.aimInput = 0;
+  if (e.code === 'Space') shotUp();
 });
 addEventListener('mousemove', (e: MouseEvent) => {
-  if (document.pointerLockElement !== canvas || !player) return;
-  player.onLook(e.movementX, e.movementY, LOOK_SENSITIVITY);
+  if (document.pointerLockElement !== canvas) return;
+  if (scout) player?.onLook(e.movementX, e.movementY, LOOK_SENSITIVITY);
+  else golf?.rotateAim(-e.movementX * AIM_MOUSE);
+});
+addEventListener('mousedown', (e: MouseEvent) => {
+  if (document.pointerLockElement === canvas && e.button === 0) shotDown();
+});
+addEventListener('mouseup', (e: MouseEvent) => {
+  if (document.pointerLockElement === canvas && e.button === 0) shotUp();
+});
+addEventListener(
+  'wheel',
+  (e: WheelEvent) => {
+    if (playing && !scout && golf && Math.abs(e.deltaY) > 4) golf.changeClub(e.deltaY > 0 ? 1 : -1);
+  },
+  { passive: true },
+);
+
+// タッチ: 画面をなぞって狙いを回す。打つ・クラブ・空から・休憩はボタン。
+let aimPointer: number | null = null;
+let aimLastX = 0;
+canvas.addEventListener('pointerdown', (e) => {
+  if (!playing || scout || e.pointerType === 'mouse') return;
+  aimPointer = e.pointerId;
+  aimLastX = e.clientX;
+});
+canvas.addEventListener('pointermove', (e) => {
+  if (e.pointerId !== aimPointer || !golf) return;
+  golf.rotateAim(-(e.clientX - aimLastX) * AIM_TOUCH);
+  aimLastX = e.clientX;
+});
+const endAim = (e: PointerEvent) => {
+  if (e.pointerId === aimPointer) aimPointer = null;
+};
+canvas.addEventListener('pointerup', endAim);
+canvas.addEventListener('pointercancel', endAim);
+overlay.bindGolfTouch({
+  onShotDown: shotDown,
+  onShotUp: shotUp,
+  onClub: (step) => golf?.changeClub(step),
+  onScout: toggleScout,
+  onPause: stopPlaying,
 });
 
 let resizeQueued = false;
@@ -477,7 +619,9 @@ function updateAerialVisibility(dt: number, clearance: number): void {
 function fitNearPlane(): void {
   // 飛んでいる間も、地面から離れているほど near を上げる（高度 200m なら 4m）。
   // 足元近くを歩くときは 0.5m に戻る。
-  const near = playing
+  const near = playing && !scout
+    ? 0.2
+    : playing
     ? Math.min(8, Math.max(0.5, (player?.altitudeAboveGround ?? 0) * 0.02))
     : Math.min(30, Math.max(0.5, camera.position.distanceTo(controls.target) * 0.003));
   if (Math.abs(near - camera.near) > camera.near * 0.1) {
@@ -513,13 +657,30 @@ function frameIsland(dt: number): void {
   camera.setViewOffset(w, h, -viewShift.x, -viewShift.y, w, h);
 }
 
+const pinScreen = new THREE.Vector3();
+/** ピンの目印を、旗の上の実際の画面位置へ（遠いと旗が小さくて見えないため）。近ければ出さない。 */
+function placePinMarker(game: GolfGame): void {
+  const b = game.ball.pos;
+  const far = Math.hypot(game.hole.pin.x - b.x, game.hole.pin.z - b.z) > 25;
+  pinScreen.copy(game.pinTop).project(camera);
+  const inView = pinScreen.z < 1 && Math.abs(pinScreen.x) < 1 && Math.abs(pinScreen.y) < 1;
+  if (!far || !inView) {
+    overlay.setPinMarker(null);
+    return;
+  }
+  overlay.setPinMarker({
+    x: ((pinScreen.x + 1) / 2) * innerWidth,
+    y: ((1 - pinScreen.y) / 2) * innerHeight,
+  });
+}
+
 const timer = new THREE.Timer();
 let elapsed = 0;
 renderer.setAnimationLoop(() => {
   timer.update();
   const dt = Math.min(timer.getDelta(), 0.1);
   elapsed += dt;
-  if (playing && player) {
+  if (playing && scout && player) {
     player.update(dt, camera, reducedMotion);
     touchControls?.update();
     chunks?.update(player.position.x, player.position.z);
@@ -535,9 +696,13 @@ renderer.setAnimationLoop(() => {
         void releaseWakeLock();
       }
     }
+  } else if (playing && golf) {
+    golf.update(dt);
+    golf.updateCamera(camera, dt);
+    chunks?.update(camera.position.x, camera.position.z);
+    placePinMarker(golf);
   } else {
     controls.update();
-    overlay.setFlightInfo(false, 0, 0, false);
   }
   frameIsland(dt);
   fitNearPlane();
@@ -560,10 +725,13 @@ if (import.meta.env.DEV) {
     sky,
     player: () => player,
     island: () => island,
-    // 自動ブラウザは Pointer Lock を持たないので、入口を省いて飛び始める。
-    fly: () => {
-      if (preparePlayer()) startPlaying();
+    hole: () => hole,
+    golf: () => golf,
+    // 自動ブラウザは Pointer Lock を持たないので、入口を省いて始める。
+    play: () => {
+      if (ensureGolf()) startPlaying();
     },
+    scout: () => toggleScout(),
   };
 }
 // 開いたら、まず粗い下見（約 0.3 秒）で島を見せ、続けて本番の細かさで作り直す。

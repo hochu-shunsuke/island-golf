@@ -523,6 +523,22 @@ kbd {
   bottom: 106px;
 }
 
+/* ゴルフでは画面の下を球と力のメーターに使うので、操作ガイドとお知らせは上（打数の下）へ。 */
+#ui.golfing .keyboard-guide {
+  top: max(78px, calc(env(safe-area-inset-top) + 62px));
+  bottom: auto;
+}
+
+#ui.golfing .toast {
+  top: max(78px, calc(env(safe-area-inset-top) + 62px));
+  bottom: auto;
+}
+
+#ui.golfing .keyboard-guide.on + .toast {
+  top: max(140px, calc(env(safe-area-inset-top) + 124px));
+  bottom: auto;
+}
+
 /* 指では細かい操作ができないので、当たり判定と字を大きくする。
    条件は JS が決めた結果（data-input）を見る。メディアクエリで独立に
    判定すると、JS 側の判断と食い違って中途半端な画面になる。 */
@@ -608,4 +624,240 @@ kbd {
   .toast {
     transition: none;
   }
+}
+
+/* ---- ゴルフ ---- */
+
+.golf-hud {
+  position: absolute;
+  left: 50%;
+  top: max(16px, env(safe-area-inset-top));
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 8px 16px 9px;
+  border-radius: 16px;
+  text-align: center;
+  color: rgba(255, 255, 255, 0.9);
+  background: rgba(12, 20, 26, 0.36);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(6px);
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.45);
+  opacity: 0;
+  transition: opacity 250ms ease;
+}
+
+.golf-hud.on {
+  opacity: 1;
+}
+
+/* ピンの目印: 旗の上に下向きの小さな三角。位置は JS が transform で毎フレーム決める。 */
+.pin-marker {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 0;
+  height: 0;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 200ms ease;
+}
+
+.pin-marker::before {
+  content: '';
+  position: absolute;
+  left: -7px;
+  top: -14px;
+  border-left: 7px solid transparent;
+  border-right: 7px solid transparent;
+  border-top: 10px solid #ff5a5f;
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.5));
+}
+
+.pin-marker.on {
+  opacity: 1;
+}
+
+.golf-hole {
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  color: rgba(255, 255, 255, 0.62);
+}
+
+.golf-line {
+  font-size: 13px;
+  letter-spacing: 0.04em;
+  font-variant-numeric: tabular-nums;
+}
+
+/* タッチは右上に休憩ボタンがあるので、打数の表示を左へ寄せ、1 行に収める。 */
+:root[data-input='touch'] .golf-hud {
+  left: max(16px, env(safe-area-inset-left));
+  transform: none;
+  align-items: flex-start;
+  max-width: calc(100vw - 92px);
+  padding: 7px 13px 8px;
+}
+
+:root[data-input='touch'] .golf-line {
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.golf-power {
+  position: absolute;
+  left: 50%;
+  bottom: max(28px, calc(env(safe-area-inset-bottom) + 16px));
+  transform: translate(-50%, 8px);
+  width: min(360px, calc(100vw - 48px));
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 7px;
+  opacity: 0;
+  transition: opacity 250ms ease, transform 250ms ease;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
+}
+
+.golf-power.on {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
+.golf-power.done .golf-meter {
+  visibility: hidden;
+}
+
+.golf-club {
+  font-size: 14px;
+  letter-spacing: 0.1em;
+}
+
+.golf-meter {
+  width: 100%;
+  height: 8px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: rgba(12, 20, 26, 0.45);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+}
+
+.golf-fill {
+  width: 100%;
+  height: 100%;
+  transform-origin: left center;
+  transform: scaleX(0);
+  background: linear-gradient(90deg, #dfe9e6, #fff6c8 70%, #ffb46b);
+}
+
+.golf-hint {
+  font-size: 10.5px;
+  color: rgba(255, 255, 255, 0.7);
+}
+
+/* タッチのゴルフ用ボタン。見た目は stroll のタッチボタンと揃える。 */
+.golf-touch {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  display: none;
+}
+
+.golf-touch.on {
+  display: block;
+}
+
+.g-btn {
+  position: absolute;
+  pointer-events: auto;
+  display: grid;
+  place-items: center;
+  color: var(--ink);
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  background: rgba(14, 22, 28, 0.42);
+  border: 1.5px solid rgba(255, 255, 255, 0.24);
+  backdrop-filter: blur(2px);
+  touch-action: none;
+}
+
+.g-btn:active {
+  background: rgba(255, 255, 255, 0.28);
+}
+
+.g-shot {
+  right: max(24px, env(safe-area-inset-right));
+  bottom: max(96px, calc(env(safe-area-inset-bottom) + 80px));
+  width: 86px;
+  height: 86px;
+  font-size: 15px;
+}
+
+.g-prev,
+.g-next {
+  bottom: max(104px, calc(env(safe-area-inset-bottom) + 88px));
+  width: 48px;
+  height: 48px;
+  font-size: 22px;
+}
+
+.g-prev {
+  left: max(20px, env(safe-area-inset-left));
+}
+
+.g-next {
+  left: calc(max(20px, env(safe-area-inset-left)) + 58px);
+}
+
+.g-scout {
+  right: max(24px, env(safe-area-inset-right));
+  bottom: max(196px, calc(env(safe-area-inset-bottom) + 180px));
+  width: 64px;
+  height: 36px;
+  font-size: 11px;
+}
+
+/* 空から見ている間は「球へ戻る」だけを、休憩ボタンの下に出す（飛ぶ操作のボタンと重ねない）。 */
+.golf-touch.scouting .g-btn:not(.g-scout) {
+  display: none;
+}
+
+.golf-touch.scouting .g-scout {
+  top: max(68px, calc(env(safe-area-inset-top) + 52px));
+  bottom: auto;
+  right: max(16px, env(safe-area-inset-right));
+  width: 76px;
+}
+
+.g-pause {
+  right: max(16px, env(safe-area-inset-right));
+  top: max(16px, env(safe-area-inset-top));
+  width: 42px;
+  height: 42px;
+}
+
+.g-pause::before,
+.g-pause::after {
+  content: '';
+  width: 2.5px;
+  height: 13px;
+  border-radius: 2px;
+  background: var(--ink);
+  grid-area: 1 / 1;
+}
+
+.g-pause::before {
+  transform: translateX(-4px);
+}
+
+.g-pause::after {
+  transform: translateX(4px);
+}
+
+/* タッチでは力のメーターを打つボタンの上に寄せない（中央下のまま）。 */
+:root[data-input='touch'] .golf-power {
+  bottom: max(28px, calc(env(safe-area-inset-bottom) + 14px));
 }

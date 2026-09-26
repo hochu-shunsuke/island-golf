@@ -12,6 +12,25 @@
   島の仕組みの改良を取り込むときは `git fetch upstream && git merge upstream/main`
 - 以下は island-maker から引き継いだ作業メモ。島の仕組みの決まりはそのまま有効
 
+## ゴルフ（`src/golf/`）
+
+今は 1 ホール・1 人（狙う → 力をためる → 飛ぶ・転がる → カップ）。次は複数ホールのコース、その次に友達と回る。
+
+- **ホールは島の格子と合言葉だけで決まる**（`course.ts` の `pickHole`）。同じ URL なら誰でも同じホール。
+  乱数は `hashSeed(seed + ':hole')`。決定性の決まり（四則演算・sqrt・floor だけ）の内側に置く
+- **グリーンとティーを均すのは 2 か所で同じ形を使う。** 描く面は `Terrain.heightAt` が `flattenAt` へ寄せ、
+  島の格子（遠景・地図・光の焼き込み）は `island/worker.ts` の `flattenGrid` が同じ `flattenAt` で直す。
+  片方だけ変えると、近くと遠くでグリーンの高さがずれる
+- 刈り込み（フェアウェイ・グリーン・ティー）は `mownAt` 1 つが持つ。色は `Terrain.paintMown`、
+  木を生やさないのは `scatter.ts` と `forest.ts`、転がり方は `Terrain.surfaceKind` → `ball.ts` の `SURFACE_FEEL`
+- 球の物理（`ball.ts`）は three に触らない。飛距離は `npm test`（`test/ball.test.mjs`）が平らな地面で守る。
+  クラブ（`clubs.ts`）を変えたら `game.ts` の `pickClub` の距離の区切りも合わせる
+- 球は描いている地面と同じ三角形（`heightOnGrid(x, z, 2)`）の上を転がる。`heightAt` を使うと、
+  描いた面から浮いたり沈んだりする
+- **three の `setFromPoints` は頂点の入れ物を大きさを変えずに使い回す。** 点の数が変わる線は
+  `game.ts` の `setLine` で作り直す（前の線の残りが描かれ、空で作った軌跡は描かれなかった）
+- 画面の下は球と力のメーターに使う。操作ガイドとお知らせはゴルフ中は上（打数の下）へ出す
+
 **つまみで島をつくり、鳥になって自分の島を飛び、URL を送って友達と一緒に飛ぶ。**
 目的も期限もない。作った島を見せたくなることが芯。
 

@@ -287,6 +287,8 @@ export function buildScatterData(
         // 海と同じ判定では拾えない。heightAt が既に区画を引いているため、
         // ここでの引き直しは覚えてある値の読み出しで済む。
         if (h < terrain.waterLevelAt(x, z) + 0.6) continue;
+        // ゴルフで刈り込んだ所（グリーン・ティー・フェアウェイ）には生やさない。
+        if (terrain.mownAt(x, z) > 0.05) continue;
         CTX.h = h;
         CTX.r = r;
         if (spec.specialIndex === undefined) {

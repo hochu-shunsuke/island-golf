@@ -102,6 +102,8 @@ export function plantForest(terrain: Terrain, island: Island): ForestBatch[] {
         const h = bilinear(height, x, z);
         if (h < 0.8) continue;
         if (h < terrain.waterLevelAt(x, z) + 0.6) continue;
+        // ゴルフで刈り込んだ所（グリーン・ティー・フェアウェイ）には生やさない。
+        if (terrain.mownAt(x, z) > 0.05) continue;
 
         ctx.h = h;
         ctx.r = r;

@@ -5,6 +5,8 @@ import { Terrain } from '../world/terrain';
 import { type ForestBatch, plantForest } from './forest';
 import { type Island, generateIsland } from './generate';
 import { FULL_RES } from './grid';
+import { type Hole, GREEN_BLEND, GREEN_RADIUS, TEE_BLEND, TEE_RADIUS, pickHole } from '../golf/course';
+import { gridToWorld } from './ground';
 import { type IslandLighting, bakeLighting } from './lighting';
 import { type OverviewArrays, buildOverviewArrays, buildOverviewWaterArray } from './overviewArrays';
 import type { IslandParams } from './params';
@@ -40,6 +42,8 @@ export interface GenerateResult {
   overview: OverviewArrays;
   overviewWater: Float32Array | null;
   map: IslandMap;
+  /** この島のホール。見つからなければ null。 */
+  hole: Hole | null;
   /** 島が見えるまでにかかった時間（ms）。 */
   ms: number;
 }
@@ -71,7 +75,9 @@ self.onmessage = (ev: MessageEvent<GenerateRequest>) => {
   const { id, params, n, erosionN, sun } = ev.data;
   const started = performance.now();
   const island = generateIsland(params, n, erosionN);
-  const terrain = new Terrain(params, island.landscape, new IslandWater(island.water));
+  const hole = pickHole(island, params.seed);
+  const terrain = new Terrain(params, island.landscape, new IslandWater(island.water), hole);
+  if (hole) flattenGrid(island, terrain, hole);
   const overview = buildOverviewArrays(island, terrain);
   const overviewWater = buildOverviewWaterArray(island);
   const map = renderIslandMap(island, terrain);
@@ -80,7 +86,7 @@ self.onmessage = (ev: MessageEvent<GenerateRequest>) => {
   // 大きな形と水（landscape・water）は地形（terrain）が読み続けるので、転送せず写しで送る。
   const height = island.height.slice();
   const moisture = island.moisture.slice();
-  post({ type: 'island', id, island, params, overview, overviewWater, map, ms: performance.now() - started }, [
+  post({ type: 'island', id, island, params, overview, overviewWater, map, hole, ms: performance.now() - started }, [
     island.height.buffer,
     island.waterLevel.buffer,
     island.waterKind.buffer,
@@ -106,3 +112,24 @@ self.onmessage = (ev: MessageEvent<GenerateRequest>) => {
   const lighting = bakeLighting(height, n, island.cell, sun);
   post({ type: 'light', id, lighting, ms: performance.now() - lit }, [lighting.data.buffer]);
 };
+
+/**
+ * 島の細かい格子の高さを、均したグリーンとティーに合わせる（見渡す島・光・木が同じ地面を見るように）。
+ * 島の格子はホールを決める前に作るので、ホールの周りだけ地形（terrain.heightAt）から引き直す。
+ */
+function flattenGrid(island: Island, terrain: Terrain, hole: Hole): void {
+  const { n, height } = island;
+  const patch = (cx: number, cz: number, radius: number) => {
+    for (let j = 0; j < n; j++) {
+      const z = gridToWorld(j, n);
+      if (Math.abs(z - cz) > radius) continue;
+      for (let i = 0; i < n; i++) {
+        const x = gridToWorld(i, n);
+        if (Math.hypot(x - cx, z - cz) > radius) continue;
+        height[j * n + i] = terrain.heightAt(x, z);
+      }
+    }
+  };
+  patch(hole.pin.x, hole.pin.z, GREEN_RADIUS + GREEN_BLEND + 2);
+  patch(hole.tee.x, hole.tee.z, TEE_RADIUS + TEE_BLEND + 2);
+}
