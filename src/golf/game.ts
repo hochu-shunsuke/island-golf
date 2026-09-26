@@ -6,12 +6,10 @@ import { CLUBS } from './clubs';
 import type { Hole } from './course';
 
 /**
- * 島で打つ。狙う → 力をためる → 飛ぶ・転がる → 止まる、を繰り返し、目標の旗のカップに入れば 1 つ終わり。
+ * コースを回る。狙う → 力をためる → 飛ぶ・転がる → 止まる、を繰り返し、カップに入れば次のホールのティーへ。
+ * 最後のホールの後は 1 番へ戻り、通算の打数を数え直す。
  *
- * 旗は 2 種類（golf/course.ts）: 島に最初から立っている**おすすめの旗**（番号・ティー・パーがある）と、
- * 遊んでいる人が立てる**自分の旗**（1 本だけ）。どの旗を目標にするかは自由で、球もどこへでも置ける
- * （空から降りた所）。おすすめの旗をティーから回ったときだけパーと比べる。
- *
+ * コースは遊ぶために設計したもの（golf/design.ts）で、地形はそれに合わせて造成してある（golf/field.ts）。
  * 入力は main.ts から呼ぶ（キー・マウス・タッチを同じ関数に集める）。画面の表示（打数・距離・力）は
  * onStatus で main へ渡す。球の物理は golf/ball.ts。
  */
@@ -19,11 +17,13 @@ import type { Hole } from './course';
 export type GolfPhase = 'aim' | 'charge' | 'moving' | 'holed';
 
 export interface GolfStatus {
-  /** 目標の旗。 */
+  /** 回っているホール。 */
   target: Hole;
-  /** 目標のティーから打ち始めたか（パーと比べるのはこのときだけ）。 */
-  fromTee: boolean;
+  holeCount: number;
   strokes: number;
+  /** 回り終えたホールの打数の合計と、そのパーの合計。 */
+  total: number;
+  totalPar: number;
   club: string;
   /** ピンまでの水平距離（m）。 */
   toPin: number;
@@ -31,8 +31,8 @@ export interface GolfStatus {
   phase: GolfPhase;
   /** ためている力 0..1（charge のときだけ）。 */
   power: number;
-  /** カップに入った後に次に進む先。おすすめの旗なら次の番号、自分の旗なら同じ所からもう一度。 */
-  next: Hole | null;
+  /** カップに入った後に進む先（最後のホールの後は 1 番）。 */
+  next: Hole;
 }
 
 /** 地面の種類の呼び名。 */
@@ -58,9 +58,19 @@ export function scoreName(strokes: number, par: number): string {
   return `+${d}`;
 }
 
-/** 旗の呼び名。 */
-export function flagName(h: Hole): string {
-  return h.number > 0 ? `${h.number} 番` : '自分の旗';
+/** パーとの差（+2・-1・±0）。 */
+export function toPar(strokes: number, par: number): string {
+  const d = strokes - par;
+  return d === 0 ? '±0' : d > 0 ? `+${d}` : `${d}`;
+}
+
+/** ホールの紹介（上空からの眺め）の長さと、そこから打つ構えへ降りてくる時間（s）。 */
+const INTRO_TIME = 3.4;
+const INTRO_OUT = 1.4;
+
+function smoothstep(a: number, b: number, x: number): number {
+  const t = Math.max(0, Math.min(1, (x - a) / (b - a)));
+  return t * t * (3 - 2 * t);
 }
 
 /** カップの半径（m）。本物は 54mm。遊びやすいよう大きめ。 */
@@ -81,42 +91,43 @@ export class GolfGame {
   power = 0;
   /** 左右キーを押している向き（-1..1）。 */
   aimInput = 0;
-  /** 目標の旗。 */
+  /** 回っているホール。 */
   target: Hole;
-  fromTee = true;
-  /** 自分の旗（1 本だけ）。 */
-  private flag: Hole | null = null;
+  /** 回り終えたホールの打数（番号 - 1 の位置）。1 番のティーに立つと数え直す。 */
+  private readonly scores: number[] = [];
 
   private readonly ballMesh: THREE.Mesh;
   private readonly aimLine: THREE.Line;
   private readonly landing: THREE.Mesh;
   private readonly trail: THREE.Line;
   private readonly trailPoints: THREE.Vector3[] = [];
-  private readonly pins = new Map<Hole, THREE.Group>();
   private chargeTime = 0;
   /** 打つ前の球の位置（池に入ったらここへ戻す）。 */
   private readonly lastSpot = { x: 0, z: 0 };
-  /** 今の目標へ打ち始めた所（自分の旗は、入った後にここからもう一度）。 */
-  private readonly startSpot = { x: 0, z: 0 };
   private restTimer = 0;
   private readonly camPos = new THREE.Vector3();
   private readonly camLook = new THREE.Vector3();
   private cameraReady = false;
   private previewDirty = true;
   private landingSize = 1;
+  /** ホールに立った直後、上空からホール全体を見せる残り時間（s）。 */
+  private intro = 0;
   private readonly golfGround: GolfGround;
 
   constructor(
     terrain: Terrain,
-    /** おすすめの旗（1 本以上）。 */
+    /** コースのホール（1 つ以上）。 */
     readonly course: readonly Hole[],
     private readonly onStatus: (s: GolfStatus) => void,
     private readonly onMessage: (text: string) => void,
+    /** 球が当たる木（render/chunkManager.ts が知っている）。 */
+    trees: GolfGround['trees'] = undefined,
   ) {
     this.golfGround = {
       height: (x, z) => terrain.heightOnGrid(x, z, 2),
       water: (x, z) => Math.max(SEA_LEVEL, terrain.waterLevelAt(x, z)),
       surface: (x, z) => terrain.surfaceKind(x, z),
+      trees,
     };
     this.ball = new Ball(this.golfGround);
     this.target = course[0];
@@ -126,11 +137,7 @@ export class GolfGame {
       new THREE.MeshLambertMaterial({ color: 0xffffff, emissive: 0x333333 }),
     );
     this.group.add(this.ballMesh);
-    for (const h of course) {
-      const pin = buildPin(h, this.golfGround);
-      this.pins.set(h, pin);
-      this.group.add(pin, buildTee(h, this.golfGround));
-    }
+    for (const h of course) this.group.add(buildPin(h, this.golfGround), buildTee(h, this.golfGround));
 
     this.aimLine = new THREE.Line(
       new THREE.BufferGeometry(),
@@ -159,120 +166,46 @@ export class GolfGame {
     return CLUBS[this.clubIndex];
   }
 
-  /** 立っている旗すべて（おすすめの旗と自分の旗）。 */
-  get holes(): readonly Hole[] {
-    return this.flag ? [...this.course, this.flag] : this.course;
-  }
-
-  get ownFlag(): Hole | null {
-    return this.flag;
-  }
-
   /** 旗の上の位置（画面に目印を出すため）。 */
   pinTop(h: Hole, out: THREE.Vector3): THREE.Vector3 {
     return out.set(h.pin.x, this.golfGround.height(h.pin.x, h.pin.z) + 3.2, h.pin.z);
   }
 
-  /** おすすめの旗のティーから打ち始める。 */
+  /** ホールのティーから打ち始める。1 番からなら通算を数え直す。 */
   teeOff(hole: Hole): void {
-    if (!hole.tee) return;
+    if (hole.number === 1) this.scores.length = 0;
     this.target = hole;
-    this.fromTee = true;
     this.strokes = 0;
     this.ball.place(hole.tee.x, hole.tee.z);
     this.ball.lie = 'fairway';
-    this.startSpot.x = hole.tee.x;
-    this.startSpot.z = hole.tee.z;
+    this.intro = INTRO_TIME;
     this.readyToAim();
   }
 
-  /**
-   * 好きな所に球を置く（空から降りた所）。目標は自分の旗があればそれ、無ければ一番近いおすすめの旗。
-   * 水の上なら置かずに false。
-   */
-  dropBall(x: number, z: number): boolean {
-    if (this.golfGround.water(x, z) >= this.golfGround.height(x, z) - 0.05) return false;
-    this.ball.place(x, z);
-    this.startSpot.x = x;
-    this.startSpot.z = z;
-    this.target = this.flag ?? this.nearestCourseHole(x, z);
-    this.fromTee = false;
-    this.strokes = 0;
-    this.readyToAim();
-    return true;
-  }
-
-  /** 目標を変える。打数は数え直す（ここからその旗へ）。 */
-  setTarget(hole: Hole): void {
-    if (this.phase === 'moving') return;
-    this.target = hole;
-    this.fromTee = false;
-    this.strokes = 0;
-    this.startSpot.x = this.ball.pos.x;
-    this.startSpot.z = this.ball.pos.z;
-    this.readyToAim();
-  }
-
-  /** 目標を、球から近い順に次の旗へ。 */
-  cycleTarget(): void {
-    if (this.phase === 'moving') return;
-    const b = this.ball.pos;
-    const sorted = [...this.holes].sort(
-      (p, q) => Math.hypot(p.pin.x - b.x, p.pin.z - b.z) - Math.hypot(q.pin.x - b.x, q.pin.z - b.z),
-    );
-    const k = sorted.indexOf(this.target);
-    this.setTarget(sorted[(k + 1) % sorted.length]);
-  }
-
-  /** 自分の旗を立てる（前の旗は抜く）。地形は main.ts が先に差し替えておく。立てた旗を目標にする。 */
-  setFlag(flag: Hole): void {
-    if (this.flag) {
-      this.group.remove(this.pins.get(this.flag)!);
-      this.pins.delete(this.flag);
-    }
-    this.flag = flag;
-    const pin = buildPin(flag, this.golfGround);
-    this.pins.set(flag, pin);
-    this.group.add(pin);
-    // 地面が変わったので、止まっている球は新しい地面に置き直す。
-    if (this.phase !== 'moving') this.ball.place(this.ball.pos.x, this.ball.pos.z);
-    this.setTarget(flag);
-  }
-
-  /** カップに入った後に進む。おすすめの旗なら次の番号のティーへ、自分の旗なら同じ所からもう一度。 */
+  /** カップに入った後に、次のホールのティーへ。 */
   next(): void {
-    const n = this.nextHole();
-    if (n?.tee) this.teeOff(n);
-    else this.dropBall(this.startSpot.x, this.startSpot.z);
+    this.teeOff(this.nextHole());
   }
 
-  private nextHole(): Hole | null {
-    if (this.target.number === 0) return null;
+  private nextHole(): Hole {
     const k = this.course.indexOf(this.target);
     return this.course[(k + 1) % this.course.length];
   }
 
-  private nearestCourseHole(x: number, z: number): Hole {
-    let best = this.course[0];
-    let bestD = Infinity;
-    for (const h of this.course) {
-      const d = Math.hypot(h.pin.x - x, h.pin.z - z);
-      if (d < bestD) {
-        bestD = d;
-        best = h;
-      }
-    }
-    return best;
-  }
-
-  /** 次の一打の準備。ピンの方を向き、距離でクラブを選ぶ。 */
+  /**
+   * 次の一打の準備。ティーからは設計した落とし所（曲がったホールでは角の手前）へ、
+   * それ以外はピンへ向く。距離でクラブを選ぶ。
+   */
   private readyToAim(): void {
     this.phase = 'aim';
     this.power = 0;
-    const dx = this.target.pin.x - this.ball.pos.x;
-    const dz = this.target.pin.z - this.ball.pos.z;
+    const onTee = this.strokes === 0;
+    const aim = onTee ? this.target.aim : this.target.pin;
+    const dx = aim.x - this.ball.pos.x;
+    const dz = aim.z - this.ball.pos.z;
     this.aimYaw = Math.atan2(-dx, -dz);
-    this.clubIndex = pickClub(Math.hypot(dx, dz), this.ball.lie);
+    const toPin = Math.hypot(this.target.pin.x - this.ball.pos.x, this.target.pin.z - this.ball.pos.z);
+    this.clubIndex = pickClub(onTee ? Math.max(Math.hypot(dx, dz), Math.min(toPin, 250)) : toPin, this.ball.lie);
     this.trailPoints.length = 0;
     setLine(this.trail, []);
     this.previewDirty = true;
@@ -281,6 +214,7 @@ export class GolfGame {
 
   rotateAim(delta: number): void {
     if (this.phase !== 'aim' && this.phase !== 'charge') return;
+    this.intro = Math.min(this.intro, INTRO_OUT);
     this.aimYaw += delta;
     this.previewDirty = true;
   }
@@ -294,6 +228,7 @@ export class GolfGame {
 
   startCharge(): void {
     if (this.phase !== 'aim') return;
+    this.intro = 0;
     this.phase = 'charge';
     this.chargeTime = 0;
     this.power = 0;
@@ -318,6 +253,7 @@ export class GolfGame {
   }
 
   update(dt: number): void {
+    this.intro = Math.max(0, this.intro - dt);
     if (this.aimInput !== 0) this.rotateAim(this.aimInput * AIM_KEY_SPEED * dt);
     if (this.phase === 'charge') {
       this.chargeTime += dt;
@@ -342,16 +278,16 @@ export class GolfGame {
       if (this.trailPoints.length > 400) this.trailPoints.shift();
       setLine(this.trail, this.trailPoints);
     }
-    // 目標でない旗のカップにも入る（入ったらその旗を回ったことにする）。
-    for (const h of this.holes) {
-      if (!this.ball.checkCup(h.pin.x, h.pin.z, CUP_RADIUS)) continue;
-      if (h !== this.target) {
-        this.target = h;
-        this.fromTee = false;
-      }
+    const h = this.target;
+    if (this.ball.checkCup(h.pin.x, h.pin.z, CUP_RADIUS)) {
       this.phase = 'holed';
-      const par = this.fromTee ? `（${scoreName(this.strokes, h.par)}）` : '';
-      this.onMessage(`${flagName(h)}にカップイン！ ${this.strokes} 打${par}`);
+      this.scores[h.number - 1] = this.strokes;
+      let text = `${h.number} 番 カップイン！ ${this.strokes} 打（${scoreName(this.strokes, h.par)}）`;
+      if (h.number === this.course.length) {
+        const { total, totalPar } = this.totals();
+        text += ` · ${this.course.length} ホールで ${total} 打（${toPar(total, totalPar)}）`;
+      }
+      this.onMessage(text);
       this.emit();
       return;
     }
@@ -368,6 +304,17 @@ export class GolfGame {
       if (this.restTimer > 0.7) this.readyToAim();
     }
     this.emit();
+  }
+
+  private totals(): { total: number; totalPar: number } {
+    let total = 0;
+    let totalPar = 0;
+    this.course.forEach((h, k) => {
+      if (this.scores[k] === undefined) return;
+      total += this.scores[k];
+      totalPar += h.par;
+    });
+    return { total, totalPar };
   }
 
   /**
@@ -430,6 +377,24 @@ export class GolfGame {
     }
     // カメラが地面に埋まらないように。
     pos.y = Math.max(pos.y, this.golfGround.height(pos.x, pos.z) + 1.2);
+    // ホールに立った直後は、上空の後ろからホール全体を見せ、打つ構えのカメラへ降りてくる。
+    if (this.intro > 0) {
+      const { tee, aim, pin } = this.target;
+      const lx = (aim.x + pin.x) / 2;
+      const lz = (aim.z + pin.z) / 2;
+      const dx = lx - tee.x;
+      const dz = lz - tee.z;
+      const d = Math.hypot(dx, dz) || 1;
+      const high = this.target.par === 3 ? 38 : 60;
+      const air = new THREE.Vector3(tee.x - (dx / d) * high, tee.h + high, tee.z - (dz / d) * high);
+      const airLook = new THREE.Vector3(lx, this.golfGround.height(lx, lz), lz);
+      const a = smoothstep(0, INTRO_OUT, this.intro);
+      pos.lerp(air, a);
+      look.lerp(airLook, a);
+      this.camPos.copy(pos);
+      this.camLook.copy(look);
+      this.cameraReady = true;
+    }
     if (!this.cameraReady) {
       this.camPos.copy(pos);
       this.camLook.copy(look);
@@ -454,10 +419,13 @@ export class GolfGame {
 
   /** 画面の表示（打数・距離・力）を送り直す。 */
   emit(): void {
+    const { total, totalPar } = this.totals();
     this.onStatus({
       target: this.target,
-      fromTee: this.fromTee,
+      holeCount: this.course.length,
       strokes: this.strokes,
+      total,
+      totalPar,
       club: this.club.name,
       toPin: Math.hypot(this.target.pin.x - this.ball.pos.x, this.target.pin.z - this.ball.pos.z),
       lie: this.ball.lie,
@@ -496,7 +464,7 @@ function pickClub(distance: number, lie: Surface): number {
   return 0;
 }
 
-/** ピン: 白い旗竿と旗、カップの黒い穴。おすすめの旗は赤、自分の旗は黄色。 */
+/** ピン: 白い旗竿と赤い旗、カップの黒い穴。 */
 function buildPin(hole: Hole, ground: GolfGround): THREE.Group {
   const g = new THREE.Group();
   const y = ground.height(hole.pin.x, hole.pin.z);
@@ -506,7 +474,7 @@ function buildPin(hole: Hole, ground: GolfGround): THREE.Group {
   );
   const flag = new THREE.Mesh(
     new THREE.PlaneGeometry(0.9, 0.55).translate(0.45, 2.3, 0),
-    new THREE.MeshLambertMaterial({ color: hole.number > 0 ? 0xd8323a : 0xf2c230, side: THREE.DoubleSide }),
+    new THREE.MeshLambertMaterial({ color: 0xd8323a, side: THREE.DoubleSide }),
   );
   const cup = new THREE.Mesh(
     new THREE.CircleGeometry(CUP_RADIUS, 24).rotateX(-Math.PI / 2),
@@ -521,10 +489,9 @@ function buildPin(hole: Hole, ground: GolfGround): THREE.Group {
 /** ティーの目印: 打つ向きの左右に青い玉。 */
 function buildTee(hole: Hole, ground: GolfGround): THREE.Group {
   const g = new THREE.Group();
-  if (!hole.tee) return g;
-  const { tee } = hole;
-  const dx = hole.pin.x - tee.x;
-  const dz = hole.pin.z - tee.z;
+  const { tee, aim } = hole;
+  const dx = aim.x - tee.x;
+  const dz = aim.z - tee.z;
   const d = Math.hypot(dx, dz) || 1;
   const sx = -dz / d;
   const sz = dx / d;

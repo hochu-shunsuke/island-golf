@@ -29,6 +29,21 @@ export const SURFACE_FEEL: Record<Surface, SurfaceFeel> = {
   snow: { bounce: 0.1, grip: 0.6, roll: 0.4 },
 };
 
+/**
+ * 木。幹（縦の円柱）は球を跳ね返し、葉のかたまり（少しつぶした球）は球の勢いを殺す。
+ * 高さはすべて海面からの m。
+ */
+export interface Tree {
+  x: number;
+  z: number;
+  /** 根元の高さ。 */
+  y: number;
+  trunkR: number;
+  trunkTop: number;
+  canopyY: number;
+  canopyR: number;
+}
+
 /** 球が地面について知りたいこと。 */
 export interface GolfGround {
   /** 地面の高さ（m）。描いている地面と同じ三角形で補間したもの。 */
@@ -36,6 +51,8 @@ export interface GolfGround {
   /** 水面の高さ（m）。海は 0、湖と川はその水面。水が無ければ -Infinity。 */
   water(x: number, z: number): number;
   surface(x: number, z: number): Surface;
+  /** (x, z) から半径 r の中の木を visit に渡す。無ければ木に当たらない。 */
+  trees?: (x: number, z: number, r: number, visit: (t: Tree) => void) => void;
 }
 
 export type BallState = 'rest' | 'flight' | 'roll' | 'holed' | 'water';
@@ -50,6 +67,15 @@ const LIFT = 0.0042;
 const SPIN_DECAY = 6;
 /** 1 回の計算の刻み（s）。速い球でも地面をすり抜けないよう細かく。 */
 export const BALL_STEP = 1 / 240;
+/** 葉の中で勢いが減る速さ（1/s）。3m の葉を 40m/s で抜けると 7 割ほど減る。 */
+const CANOPY_DRAG = 8;
+/** 幹で跳ね返る強さ。 */
+const TRUNK_BOUNCE = 0.35;
+/**
+ * 打った直後、打った所の真上に葉がある木はこの時間だけ葉を無視する（幹は当たる）。
+ * 木の下で止まった球が、真上の葉に当たって出せなくなるのを防ぐ（ゴルフゲームの開発記録で踏まれた穴）。
+ */
+const UNDER_CANOPY_GRACE = 0.6;
 
 export class Ball {
   readonly pos = { x: 0, y: 0, z: 0 };
@@ -59,6 +85,9 @@ export class Ball {
   private spin = 0;
   /** 最後に地面に触れた場所の種類。 */
   lie: Surface = 'fairway';
+  /** 打った所と、打ってからの時間（木の下から打つときの決まりに使う）。 */
+  private readonly start = { x: 0, z: 0 };
+  private airTime = 0;
 
   constructor(private readonly ground: GolfGround) {}
 
@@ -85,6 +114,9 @@ export class Ball {
     this.vel.y = Math.sin(loft) * speed;
     this.spin = spin;
     this.state = loftDeg > 0.5 ? 'flight' : 'roll';
+    this.start.x = this.pos.x;
+    this.start.z = this.pos.z;
+    this.airTime = 0;
   }
 
   get speed(): number {
@@ -137,6 +169,8 @@ export class Ball {
     p.x += v.x * h;
     p.y += v.y * h;
     p.z += v.z * h;
+    this.airTime += h;
+    this.hitTrees(h, true);
 
     if (p.y - BALL_RADIUS < this.ground.water(p.x, p.z)) {
       this.state = 'water';
@@ -225,6 +259,7 @@ export class Ball {
 
     p.x += v.x * h;
     p.z += v.z * h;
+    this.hitTrees(h, false);
     const ahead = p.y + v.y * h;
     const floor = this.ground.height(p.x, p.z) + BALL_RADIUS;
     if (ahead > floor + 0.08) {
@@ -235,6 +270,43 @@ export class Ball {
     }
     p.y = floor;
     if (p.y - BALL_RADIUS < this.ground.water(p.x, p.z) - 0.05) this.state = 'water';
+  }
+
+  /** 木に当たる。幹は跳ね返し、葉（飛んでいるときだけ）は勢いを殺す。 */
+  private hitTrees(h: number, flying: boolean): void {
+    if (!this.ground.trees) return;
+    const p = this.pos;
+    const v = this.vel;
+    this.ground.trees(p.x, p.z, 8, (t) => {
+      const dx = p.x - t.x;
+      const dz = p.z - t.z;
+      const d = Math.sqrt(dx * dx + dz * dz);
+      if (p.y < t.trunkTop && p.y > t.y - 0.5 && d < t.trunkR + BALL_RADIUS) {
+        const nx = d > 1e-6 ? dx / d : 1;
+        const nz = d > 1e-6 ? dz / d : 0;
+        const vn = v.x * nx + v.z * nz;
+        if (vn < 0) {
+          v.x = (v.x - (1 + TRUNK_BOUNCE) * vn * nx) * 0.7;
+          v.z = (v.z - (1 + TRUNK_BOUNCE) * vn * nz) * 0.7;
+          this.spin = 0;
+        }
+        p.x = t.x + nx * (t.trunkR + BALL_RADIUS + 0.01);
+        p.z = t.z + nz * (t.trunkR + BALL_RADIUS + 0.01);
+        return;
+      }
+      if (!flying) return;
+      const underStart =
+        this.airTime < UNDER_CANOPY_GRACE && Math.hypot(t.x - this.start.x, t.z - this.start.z) < t.canopyR + 0.5;
+      if (underStart) return;
+      const dy = (p.y - t.canopyY) / 0.8;
+      if (dx * dx + dz * dz + dy * dy < t.canopyR * t.canopyR) {
+        const k = Math.exp(-CANOPY_DRAG * h);
+        v.x *= k;
+        v.y *= k;
+        v.z *= k;
+        this.spin *= k;
+      }
+    });
   }
 
   /** カップに入ったか。転がりながら、または遅く落ちてきて、縁の内側に来たら入る。 */

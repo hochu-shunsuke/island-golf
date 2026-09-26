@@ -5,7 +5,8 @@ import { RENDER_ORDER } from './order';
 import { createTerrainMaterial } from './terrainMaterial';
 import { ISLAND_SIZE } from '../island/grid';
 import type { BuiltChunk, InitRequest, WorkerRequest } from '../world/worker';
-import type { Hole } from '../golf/course';
+import type { Tree } from '../golf/ball';
+import { KIND_BUSH, KIND_ROCK } from '../world/vegetationKinds';
 
 const MAX_RING = LOD_RINGS[LOD_RINGS.length - 1];
 
@@ -19,6 +20,9 @@ export const COVERAGE_OFFSET = COVERAGE_SIZE / 2;
 
 /** 本物の木を置くチャンクの粗さの上限（vegetationSpecs.ts の maxLod のうち木のもの）。 */
 const TREE_LOD = 1;
+/** 球が当たる木を探す升目（m）と、チャンクの 1 辺の升目の数。 */
+const TREE_BUCKET = 16;
+const TREE_BUCKETS = Math.ceil(CHUNK_SIZE / TREE_BUCKET);
 
 interface Chunk {
   mesh: THREE.Mesh;
@@ -28,16 +32,8 @@ interface Chunk {
   lod: number;
   cx: number;
   cz: number;
-  /** どの旗の並び（setHoles の回数）で作ったか。 */
-  version: number;
-}
-
-/** 旗を差し替えて地面が変わった範囲。これより古い版で作ったチャンクは作り直す。 */
-interface Change {
-  x: number;
-  z: number;
-  r: number;
-  version: number;
+  /** 球が当たる木（16m の升目ごと）。木の無いチャンクは null。 */
+  trees: Tree[][] | null;
 }
 
 interface Pending {
@@ -57,16 +53,16 @@ export class ChunkManager {
   private material: THREE.Material;
   private waterMaterial: THREE.Material;
   private chunks = new Map<string, Chunk>();
-  /** 作成中のチャンク（依頼番号 → 場所と、頼んだときの旗の並びの版）。 */
-  private inFlight = new Map<number, { key: string; version: number }>();
-  private version = 0;
-  private changes: Change[] = [];
+  private inFlight = new Map<number, string>();
   private queue: Pending[] = [];
   private workers: Worker[] = [];
   private freeWorkers: Worker[] = [];
   private nextId = 1;
   private lastChunkX = Number.NaN;
   private lastChunkZ = Number.NaN;
+
+  /** 木の形ごとの大きさ（形の外接箱から。高さと葉の広がり）。 */
+  private treeDims = new Map<number, { top: number; radius: number }>();
 
   /** 足元付近のチャンクが揃ったか（開始画面を閉じる判定に使う）。 */
   ready = false;
@@ -129,35 +125,6 @@ export class ChunkManager {
     return `${cx},${cz}`;
   }
 
-  /**
-   * 旗を差し替える（自分の旗を立てた・抜いた）。Worker の地形を差し替え、areas に掛かる
-   * チャンクを今の粗さのまま作り直す。Worker は届いた順に処理するので、この後に頼んだ
-   * チャンクは新しい地面で作られる。先に頼んであった分は、届いたときに古いと分かって作り直す。
-   */
-  setHoles(holes: readonly Hole[], areas: readonly { x: number; z: number; r: number }[]): void {
-    this.version++;
-    for (const w of this.workers) w.postMessage({ type: 'course', holes } satisfies WorkerRequest);
-    for (const a of areas) this.changes.push({ ...a, version: this.version });
-    for (const [key, chunk] of this.chunks) {
-      if (!this.isStale(chunk.cx, chunk.cz, chunk.version)) continue;
-      const dist = Math.max(Math.abs(chunk.cx - this.lastChunkX), Math.abs(chunk.cz - this.lastChunkZ));
-      this.queue.push({ key, cx: chunk.cx, cz: chunk.cz, lod: chunk.lod, dist });
-    }
-    this.queue.sort((a, b) => a.dist - b.dist);
-  }
-
-  /** 版 version で作ったチャンクが、その後に変わった地面に掛かっているか。 */
-  private isStale(cx: number, cz: number, version: number): boolean {
-    for (const c of this.changes) {
-      if (c.version <= version) continue;
-      // チャンクの四角の中で円の中心に一番近い点までの距離。
-      const nx = Math.max(cx * CHUNK_SIZE, Math.min(c.x, (cx + 1) * CHUNK_SIZE));
-      const nz = Math.max(cz * CHUNK_SIZE, Math.min(c.z, (cz + 1) * CHUNK_SIZE));
-      if (Math.hypot(nx - c.x, nz - c.z) <= c.r) return true;
-    }
-    return false;
-  }
-
   /** チェビシェフ距離から、そのチャンクを作るべき粗さを決める。範囲外は -1。 */
   private lodFor(dist: number): number {
     for (let i = 0; i < LOD_RINGS.length; i++) {
@@ -204,7 +171,7 @@ export class ChunkManager {
         const cz = pcz + dz;
         const key = this.key(cx, cz);
         const existing = this.chunks.get(key);
-        if (existing && existing.lod === lod && !this.isStale(cx, cz, existing.version)) continue;
+        if (existing && existing.lod === lod) continue;
         this.queue.push({ key, cx, cz, lod, dist });
       }
     }
@@ -216,26 +183,24 @@ export class ChunkManager {
     while (this.freeWorkers.length > 0 && this.queue.length > 0) {
       const job = this.queue.shift()!;
 
-      // 既に同じ粗さで作り終えている（地面も新しい）／作成中なら飛ばす。
-      // 作成中のものが古い地面なら、届いたときに作り直す（onBuilt）。
+      // 既に同じ粗さで作り終えている／作成中なら飛ばす。
       const existing = this.chunks.get(job.key);
-      if (existing && existing.lod === job.lod && !this.isStale(job.cx, job.cz, existing.version)) continue;
+      if (existing && existing.lod === job.lod) continue;
       let already = false;
-      for (const f of this.inFlight.values()) {
-        if (f.key === job.key) { already = true; break; }
+      for (const k of this.inFlight.values()) {
+        if (k === job.key) { already = true; break; }
       }
       if (already) continue;
 
       const w = this.freeWorkers.pop()!;
       const id = this.nextId++;
-      this.inFlight.set(id, { key: job.key, version: this.version });
+      this.inFlight.set(id, job.key);
       w.postMessage({ type: 'build', id, cx: job.cx, cz: job.cz, lod: job.lod } satisfies WorkerRequest);
     }
   }
 
   private onBuilt(w: Worker, data: BuiltChunk): void {
     this.freeWorkers.push(w);
-    const version = this.inFlight.get(data.id)?.version ?? 0;
     this.inFlight.delete(data.id);
 
     const key = this.key(data.cx, data.cz);
@@ -302,16 +267,94 @@ export class ChunkManager {
     const old = this.chunks.get(key);
     if (old) this.disposeChunk(old);
 
-    this.chunks.set(key, { mesh, scatter, lake, lod: data.lod, cx: data.cx, cz: data.cz, version });
+    this.chunks.set(key, {
+      mesh,
+      scatter,
+      lake,
+      lod: data.lod,
+      cx: data.cx,
+      cz: data.cz,
+      trees: this.indexTrees(data),
+    });
     // 本物の木を置く粗さ（TREE_LOD 以下）なら、遠目の木をここで消す。
     this.setCoverage(data.cx, data.cz, data.lod <= TREE_LOD ? 255 : 128);
 
     // 生成中にプレイヤーが動いて、必要な粗さが変わっていることがある。
     // ここで積み直さないと、次にチャンク境界を跨ぐまで粗いまま残る。
-    // 作っている間に旗が差し替わった場合も同じ。
-    if (desired !== data.lod || this.isStale(data.cx, data.cz, version)) {
+    if (desired !== data.lod) {
       this.queue.push({ key, cx: data.cx, cz: data.cz, lod: desired, dist });
       this.queue.sort((a, b) => a.dist - b.dist);
+    }
+  }
+
+  /** 届いたチャンクの木を、球が当たる形（幹の円柱と葉のかたまり）にして升目に分ける。岩と茂みは除く。 */
+  private indexTrees(data: BuiltChunk): Tree[][] | null {
+    let buckets: Tree[][] | null = null;
+    for (const b of data.batches) {
+      if (b.kind === KIND_ROCK || b.kind === KIND_BUSH) continue;
+      const dims = this.dimsOf(b.kind);
+      const m = b.matrices;
+      for (let o = 0; o < m.length; o += 16) {
+        const sxz = Math.hypot(m[o], m[o + 1], m[o + 2]);
+        const sy = Math.hypot(m[o + 4], m[o + 5], m[o + 6]);
+        const lx = m[o + 12];
+        const ly = m[o + 13];
+        const lz = m[o + 14];
+        const height = dims.top * sy;
+        const radius = dims.radius * sxz;
+        const tree: Tree = {
+          x: data.cx * CHUNK_SIZE + lx,
+          z: data.cz * CHUNK_SIZE + lz,
+          y: ly,
+          trunkR: Math.max(0.15, height * 0.03),
+          trunkTop: ly + height * 0.55,
+          canopyY: ly + height - radius * 0.85,
+          canopyR: radius * 0.9,
+        };
+        const bi = Math.max(0, Math.min(TREE_BUCKETS - 1, Math.floor(lx / TREE_BUCKET)));
+        const bj = Math.max(0, Math.min(TREE_BUCKETS - 1, Math.floor(lz / TREE_BUCKET)));
+        buckets ??= Array.from({ length: TREE_BUCKETS * TREE_BUCKETS }, () => []);
+        buckets[bj * TREE_BUCKETS + bi].push(tree);
+      }
+    }
+    return buckets;
+  }
+
+  private dimsOf(kind: number): { top: number; radius: number } {
+    let d = this.treeDims.get(kind);
+    if (!d) {
+      const geo = vegetation().geometries[kind];
+      geo.computeBoundingBox();
+      const box = geo.boundingBox!;
+      const spread = Math.max(-box.min.x, box.max.x, -box.min.z, box.max.z);
+      d = { top: box.max.y, radius: spread * 0.85 };
+      this.treeDims.set(kind, d);
+    }
+    return d;
+  }
+
+  /** (x, z) から半径 r の中の木を visit に渡す（球の物理が使う）。 */
+  treesNear(x: number, z: number, r: number, visit: (t: Tree) => void): void {
+    const cx0 = Math.floor((x - r) / CHUNK_SIZE);
+    const cx1 = Math.floor((x + r) / CHUNK_SIZE);
+    const cz0 = Math.floor((z - r) / CHUNK_SIZE);
+    const cz1 = Math.floor((z + r) / CHUNK_SIZE);
+    for (let cz = cz0; cz <= cz1; cz++) {
+      for (let cx = cx0; cx <= cx1; cx++) {
+        const trees = this.chunks.get(this.key(cx, cz))?.trees;
+        if (!trees) continue;
+        const ox = cx * CHUNK_SIZE;
+        const oz = cz * CHUNK_SIZE;
+        const bi0 = Math.max(0, Math.floor((x - r - ox) / TREE_BUCKET));
+        const bi1 = Math.min(TREE_BUCKETS - 1, Math.floor((x + r - ox) / TREE_BUCKET));
+        const bj0 = Math.max(0, Math.floor((z - r - oz) / TREE_BUCKET));
+        const bj1 = Math.min(TREE_BUCKETS - 1, Math.floor((z + r - oz) / TREE_BUCKET));
+        for (let bj = bj0; bj <= bj1; bj++) {
+          for (let bi = bi0; bi <= bi1; bi++) {
+            for (const t of trees[bj * TREE_BUCKETS + bi]) visit(t);
+          }
+        }
+      }
     }
   }
 

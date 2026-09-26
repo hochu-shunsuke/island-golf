@@ -5,7 +5,9 @@ import { Terrain } from '../world/terrain';
 import { type ForestBatch, plantForest } from './forest';
 import { type Island, generateIsland } from './generate';
 import { FULL_RES } from './grid';
-import { type Hole, TEE_BLEND, TEE_RADIUS, flagArea, pickCourse } from '../golf/course';
+import { type Hole, holesOf } from '../golf/course';
+import { designCourse } from '../golf/design';
+import { CourseField, type FieldArrays, buildCourseField } from '../golf/field';
 import { gridToWorld } from './ground';
 import { type IslandLighting, bakeLighting } from './lighting';
 import { type OverviewArrays, buildOverviewArrays, buildOverviewWaterArray } from './overviewArrays';
@@ -42,8 +44,8 @@ export interface GenerateResult {
   overview: OverviewArrays;
   overviewWater: Float32Array | null;
   map: IslandMap;
-  /** この島のコース（おすすめの旗）。下見の島では空。 */
-  course: Hole[];
+  /** この島のコース（ホールと造成の格子）。下見の島では入れない。 */
+  course: { holes: Hole[]; field: FieldArrays | null };
   /** 島が見えるまでにかかった時間（ms）。 */
   ms: number;
 }
@@ -76,9 +78,17 @@ self.onmessage = (ev: MessageEvent<GenerateRequest>) => {
   const started = performance.now();
   const island = generateIsland(params, n, erosionN);
   // コースは本番の格子の島だけ（下見の島では入れないので、作る手間も省く）。
-  const course = n === FULL_RES ? pickCourse(island, params.seed) : [];
-  const terrain = new Terrain(params, island.landscape, new IslandWater(island.water), course);
-  for (const hole of course) flattenGrid(island, terrain, hole);
+  // 遊ぶ場所を先に設計し（design）、地形をそれに合わせて造成する（field）。
+  const design = n === FULL_RES ? designCourse(island, params.seed) : { holes: [] };
+  const field = buildCourseField(island, design, params.seed);
+  const terrain = new Terrain(
+    params,
+    island.landscape,
+    new IslandWater(island.water),
+    field ? new CourseField(field) : null,
+  );
+  if (field) shapeGrid(island, terrain, field);
+  const course = { holes: holesOf(design), field };
   const overview = buildOverviewArrays(island, terrain);
   const overviewWater = buildOverviewWaterArray(island);
   const map = renderIslandMap(island, terrain);
@@ -115,23 +125,27 @@ self.onmessage = (ev: MessageEvent<GenerateRequest>) => {
 };
 
 /**
- * 島の細かい格子の高さを、均したグリーンとティーに合わせる（見渡す島・光・木が同じ地面を見るように）。
- * 島の格子はホールを決める前に作るので、ホールの周りだけ地形（terrain.heightAt）から引き直す。
+ * 島の細かい格子を、造成したコースに合わせる（見渡す島・地図・光・木が同じ地面を見るように）。
+ * 島の格子はコースを設計する前に作るので、造成の範囲だけ地形（terrain.heightAt）から引き直し、
+ * 池を湖として書き足す。
  */
-function flattenGrid(island: Island, terrain: Terrain, hole: Hole): void {
-  const { n, height } = island;
-  const patch = (cx: number, cz: number, radius: number) => {
-    for (let j = 0; j < n; j++) {
-      const z = gridToWorld(j, n);
-      if (Math.abs(z - cz) > radius) continue;
-      for (let i = 0; i < n; i++) {
-        const x = gridToWorld(i, n);
-        if (Math.hypot(x - cx, z - cz) > radius) continue;
-        height[j * n + i] = terrain.heightAt(x, z);
+function shapeGrid(island: Island, terrain: Terrain, field: FieldArrays): void {
+  const { n, height, waterLevel, waterKind } = island;
+  const x1 = field.x0 + (field.nx - 1) * field.step;
+  const z1 = field.z0 + (field.nz - 1) * field.step;
+  for (let j = 0; j < n; j++) {
+    const z = gridToWorld(j, n);
+    if (z < field.z0 || z > z1) continue;
+    for (let i = 0; i < n; i++) {
+      const x = gridToWorld(i, n);
+      if (x < field.x0 || x > x1) continue;
+      const k = j * n + i;
+      height[k] = terrain.heightAt(x, z);
+      const pond = terrain.waterLevelAt(x, z);
+      if (Number.isFinite(pond) && !Number.isFinite(waterLevel[k])) {
+        waterLevel[k] = pond;
+        waterKind[k] = 2;
       }
     }
-  };
-  const green = flagArea(hole);
-  patch(green.x, green.z, green.r);
-  if (hole.tee) patch(hole.tee.x, hole.tee.z, TEE_RADIUS + TEE_BLEND + 2);
+  }
 }
