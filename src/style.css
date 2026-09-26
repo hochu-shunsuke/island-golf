@@ -653,31 +653,63 @@ kbd {
   opacity: 1;
 }
 
-/* ピンの目印: 旗の上に下向きの小さな三角。位置は JS が transform で毎フレーム決める。 */
-.pin-marker {
+/* 旗の目印: 旗の上に番号と距離。位置は JS が transform で毎フレーム決める（CSS で位置を動かさない）。
+   目標の旗は赤い三角を付けて大きく、自分の旗は黄色。 */
+.flag-markers {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.flag-marker {
   position: absolute;
   left: 0;
   top: 0;
-  width: 0;
-  height: 0;
-  pointer-events: none;
-  opacity: 0;
-  transition: opacity 200ms ease;
+  display: none;
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  line-height: 1.4;
+  white-space: nowrap;
+  color: rgba(255, 255, 255, 0.92);
+  background: rgba(12, 20, 26, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  translate: -50% -100%;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+  font-variant-numeric: tabular-nums;
 }
 
-.pin-marker::before {
+.flag-marker.on {
+  display: block;
+}
+
+.flag-marker.target {
+  font-size: 12px;
+  padding: 3px 9px;
+  background: rgba(200, 40, 48, 0.72);
+  border-color: rgba(255, 255, 255, 0.35);
+}
+
+.flag-marker.own {
+  color: #231d05;
+  background: rgba(242, 194, 48, 0.85);
+  text-shadow: none;
+}
+
+.flag-marker.target::after {
   content: '';
   position: absolute;
-  left: -7px;
-  top: -14px;
-  border-left: 7px solid transparent;
-  border-right: 7px solid transparent;
-  border-top: 10px solid #ff5a5f;
-  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.5));
+  left: 50%;
+  bottom: -9px;
+  translate: -50% 0;
+  border-left: 6px solid transparent;
+  border-right: 6px solid transparent;
+  border-top: 8px solid rgba(200, 40, 48, 0.85);
 }
 
-.pin-marker.on {
-  opacity: 1;
+.flag-marker.own.target::after {
+  border-top-color: rgba(242, 194, 48, 0.9);
 }
 
 .golf-hole {
@@ -820,16 +852,80 @@ kbd {
   font-size: 11px;
 }
 
-/* 空から見ている間は「球へ戻る」だけを、休憩ボタンの下に出す（飛ぶ操作のボタンと重ねない）。 */
-.golf-touch.scouting .g-btn:not(.g-scout) {
+/* 空から見ている間の照準。旗は画面の真ん中に見えている地面に立つ。 */
+.reticle {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 22px;
+  height: 22px;
+  translate: -50% -50%;
+  border-radius: 50%;
+  border: 1.5px solid rgba(255, 255, 255, 0.75);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.18);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 200ms ease;
+}
+
+.reticle::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 3px;
+  height: 3px;
+  translate: -50% -50%;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.9);
+}
+
+.reticle.on {
+  opacity: 1;
+}
+
+/* 旗を替える: クラブのボタンの上。 */
+.g-target {
+  left: max(20px, env(safe-area-inset-left));
+  bottom: max(164px, calc(env(safe-area-inset-bottom) + 148px));
+  width: 64px;
+  height: 36px;
+  font-size: 11px;
+}
+
+/* 空から見ている間だけのボタン。 */
+.g-here,
+.g-flag {
   display: none;
+}
+
+/* 空から見ている間は「球へ戻る」「ここで打つ」「旗を立てる」を、休憩ボタンの下に縦に並べる
+   （飛ぶ操作のボタンは右下にあるので重ねない）。 */
+.golf-touch.scouting .g-btn:not(.g-scout, .g-here, .g-flag) {
+  display: none;
+}
+
+.golf-touch.scouting .g-scout,
+.golf-touch.scouting .g-here,
+.golf-touch.scouting .g-flag {
+  display: grid;
+  bottom: auto;
+  right: max(16px, env(safe-area-inset-right));
+  width: 84px;
+  height: 36px;
+  font-size: 11px;
 }
 
 .golf-touch.scouting .g-scout {
   top: max(68px, calc(env(safe-area-inset-top) + 52px));
-  bottom: auto;
-  right: max(16px, env(safe-area-inset-right));
-  width: 76px;
+}
+
+.golf-touch.scouting .g-here {
+  top: max(112px, calc(env(safe-area-inset-top) + 96px));
+}
+
+.golf-touch.scouting .g-flag {
+  top: max(156px, calc(env(safe-area-inset-top) + 140px));
 }
 
 .g-pause {

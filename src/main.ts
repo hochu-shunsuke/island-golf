@@ -25,9 +25,9 @@ import { Overlay } from './ui/overlay';
 import { type TouchControls, createTouchControls, hasTouchInput, isTouchDevice } from './ui/touch';
 import { drawIslandMap } from './view/mapView';
 import { IslandWater } from './world/islandWater';
-import { Terrain } from './world/terrain';
-import type { Hole } from './golf/course';
-import { GolfGame } from './golf/game';
+import { SEA_LEVEL, Terrain } from './world/terrain';
+import { type Hole, flagArea, makeFlag } from './golf/course';
+import { GolfGame, flagName } from './golf/game';
 
 /**
  * island golf（island-maker の島で回るゴルフ。作り始め）。カードのつまみで島を作りながら見渡し、
@@ -161,8 +161,8 @@ let island: Island | null = null;
 let terrain: Terrain | null = null;
 let chunks: ChunkManager | null = null;
 let madeParams: IslandParams | null = null;
-/** この島のホール（golf/course.ts）。 */
-let hole: Hole | null = null;
+/** この島のコース（おすすめの旗、golf/course.ts）。自分の旗は golf が持つ。 */
+let course: Hole[] = [];
 
 function request(n: number): void {
   const erosionN = n === FULL_RES ? EROSION_RES : EROSION_PREVIEW_RES;
@@ -182,13 +182,13 @@ function show(msg: GenerateResult): void {
   const { island: next, params: made } = msg;
   island = next;
   madeParams = made;
-  hole = msg.hole;
+  course = msg.course;
   // 島（とホール）が変わったら、回っていたゲームは作り直す。
   if (golf) {
     scene.remove(golf.group);
     golf = null;
   }
-  terrain = new Terrain(made, next.landscape, new IslandWater(next.water), hole);
+  terrain = new Terrain(made, next.landscape, new IslandWater(next.water), course);
   // 見渡す島の 1 枚と地図は Worker が作ってある。ここでは貼るだけ（画面を止めない）。
   overview.set(msg.overview, msg.overviewWater);
   drawIslandMap(overlay.minimap, msg.map);
@@ -266,10 +266,10 @@ function applyTouchUi(): void {
 
 /** ホールを回るゲームを用意する。ホールが無い島（小さすぎる・全部が山や水）なら null。 */
 function ensureGolf(): GolfGame | null {
-  if (golf || !terrain || !hole) return golf;
+  if (golf || !terrain || course.length === 0) return golf;
   golf = new GolfGame(
     terrain,
-    hole,
+    course,
     (status) => overlay.setGolf(playing && !scout ? status : null),
     (text) => overlay.flash(text),
   );
@@ -306,12 +306,15 @@ function toggleScout(): void {
     if (!preparePlayer()) return;
     scout = true;
     overlay.setGolf(null);
-    overlay.setPinMarker(null);
+    overlay.setReticle(true);
     overlay.flash(
-      inputMode === 'touch' ? '空から見ています。「球へ戻る」で打つ所へ。' : '空から見ています。F で球へ戻ります。',
+      inputMode === 'touch'
+        ? '空から見ています。好きな所で「ここで打つ」、見ている所に「旗を立てる」。'
+        : '空から見ています。G ここで打つ · T 見ている所に旗 · F 球へ戻る',
     );
   } else {
     scout = false;
+    overlay.setReticle(false);
     player?.clearKeys();
     golf?.resetCamera();
     camera.fov = GOLF_FOV;
@@ -354,7 +357,7 @@ function startPlaying(): void {
   if (island && madeParams) {
     chunks = new ChunkManager(
       scene,
-      { params: madeParams, landscape: island.landscape, water: island.water, hole },
+      { params: madeParams, landscape: island.landscape, water: island.water, holes: terrain?.holes ?? course },
       water.material,
     );
     overview.setCoverage(chunks.coverage);
@@ -368,6 +371,7 @@ function startPlaying(): void {
     golf?.emit();
   }
   fog.density = FOG_FLY;
+  overlay.setReticle(scout);
   overlay.hide();
   overlay.showKeyboardGuide();
   applyTouchUi();
@@ -382,7 +386,8 @@ function stopPlaying(): void {
   if (golf) golf.aimInput = 0;
   applyTouchUi();
   overlay.setGolf(null);
-  overlay.setPinMarker(null);
+  overlay.setFlagMarkers([]);
+  overlay.setReticle(false);
   overlay.setFlightInfo(false, 0, 0, false);
   void releaseWakeLock();
   chunks?.dispose();
@@ -486,10 +491,104 @@ addEventListener('blur', () => {
 function shotDown(): void {
   if (!golf || scout) return;
   if (golf.phase === 'holed') {
-    golf.restart();
+    golf.next();
     return;
   }
   golf.startCharge();
+}
+
+/** 空から: 真下（歩いていれば足元）に球を置いて、そこから打つ。 */
+function dropHere(): void {
+  if (!golf || !scout || !player) return;
+  const { x, z } = player.position;
+  if (!golf.dropBall(x, z)) {
+    overlay.flash('水の上には置けません。陸の上で押してください。');
+    return;
+  }
+  toggleScout();
+  overlay.flash(`ここから${flagName(golf.target)}へ。${inputMode === 'touch' ? '「旗 ⇄」' : 'Q'}で目標を替えられます。`);
+}
+
+/**
+ * 空から: 画面の真ん中に見えている地面に自分の旗を立てる（前の自分の旗は抜く）。
+ * 地形の三者（ここの Terrain・チャンクの Worker・球の地面）を同じ旗の並びに揃える。
+ */
+function plantFlag(): void {
+  if (!golf || !terrain || !scout) return;
+  const dir = new THREE.Vector3();
+  camera.updateMatrixWorld();
+  camera.getWorldDirection(dir);
+  const hit = groundHit(camera.position, dir);
+  if (!hit) {
+    overlay.flash('地面に向けてから押してください。');
+    return;
+  }
+  // おすすめの旗のグリーンを指したら、その旗を目標にする。
+  for (const h of course) {
+    if (Math.hypot(hit.x - h.pin.x, hit.z - h.pin.z) < h.green.radius + h.green.blend + 9) {
+      golf.setTarget(h);
+      overlay.flash(`${flagName(h)}のグリーンです。${flagName(h)}を目標にしました。`);
+      return;
+    }
+  }
+  const old = golf.ownFlag;
+  // 前の自分の旗を外した地形で、新しい旗のグリーンを合わせる。
+  terrain.setHoles(course);
+  const t = terrain;
+  const made = makeFlag(
+    (x, z) => t.heightAt(x, z),
+    (x, z) => t.heightAt(x, z) < 1 || Number.isFinite(t.waterLevelAt(x, z)),
+    course,
+    hit.x,
+    hit.z,
+  );
+  if (typeof made === 'string') {
+    if (old) terrain.setHoles([...course, old]);
+    overlay.flash(
+      made === 'water'
+        ? '水辺には旗を立てられません。'
+        : made === 'steep'
+          ? '斜面が急すぎて旗を立てられません。'
+          : 'ティーの近くには旗を立てられません。',
+    );
+    return;
+  }
+  const holes = [...course, made];
+  terrain.setHoles(holes);
+  chunks?.setHoles(holes, old ? [flagArea(old), flagArea(made)] : [flagArea(made)]);
+  golf.setFlag(made);
+  const d = Math.hypot(made.pin.x - golf.ball.pos.x, made.pin.z - golf.ball.pos.z);
+  overlay.flash(`旗を立てました（球から ${Math.round(d)} m）。${inputMode === 'touch' ? '「ここで打つ」' : 'G'}で好きな所から。`);
+}
+
+/** 視線の先の地面（水面も地面とみなす）。見つからなければ null。 */
+function groundHit(from: THREE.Vector3, dir: THREE.Vector3, max = 5000): { x: number; z: number } | null {
+  if (!terrain) return null;
+  const t = terrain;
+  const above = (d: number) => {
+    const x = from.x + dir.x * d;
+    const z = from.z + dir.z * d;
+    return from.y + dir.y * d - Math.max(t.heightAt(x, z), SEA_LEVEL, t.waterLevelAt(x, z));
+  };
+  if (above(0) < 0) return null;
+  let d = 0;
+  let step = 2;
+  while (d < max) {
+    const next = d + step;
+    if (above(next) <= 0) {
+      let lo = d;
+      let hi = next;
+      for (let k = 0; k < 14; k++) {
+        const mid = (lo + hi) / 2;
+        if (above(mid) > 0) lo = mid;
+        else hi = mid;
+      }
+      return { x: from.x + dir.x * hi, z: from.z + dir.z * hi };
+    }
+    d = next;
+    step = Math.min(24, step * 1.08);
+  }
+  return null;
 }
 function shotUp(): void {
   if (!golf || scout) return;
@@ -504,10 +603,13 @@ addEventListener('keydown', (e: KeyboardEvent) => {
     return;
   }
   if (scout) {
-    player?.onKey(e.code, true, e.repeat);
+    if (e.code === 'KeyG' && !e.repeat) dropHere();
+    else if (e.code === 'KeyT' && !e.repeat) plantFlag();
+    else player?.onKey(e.code, true, e.repeat);
     return;
   }
   if (!golf) return;
+  if (e.code === 'KeyQ' && !e.repeat) golf.cycleTarget();
   if (e.code === 'KeyA' || e.code === 'ArrowLeft') golf.aimInput = 1;
   else if (e.code === 'KeyD' || e.code === 'ArrowRight') golf.aimInput = -1;
   else if ((e.code === 'KeyW' || e.code === 'ArrowUp') && !e.repeat) golf.changeClub(-1);
@@ -568,6 +670,9 @@ overlay.bindGolfTouch({
   onClub: (step) => golf?.changeClub(step),
   onScout: toggleScout,
   onPause: stopPlaying,
+  onTarget: () => golf?.cycleTarget(),
+  onHere: dropHere,
+  onFlag: plantFlag,
 });
 
 let resizeQueued = false;
@@ -658,20 +763,32 @@ function frameIsland(dt: number): void {
 }
 
 const pinScreen = new THREE.Vector3();
-/** ピンの目印を、旗の上の実際の画面位置へ（遠いと旗が小さくて見えないため）。近ければ出さない。 */
-function placePinMarker(game: GolfGame): void {
-  const b = game.ball.pos;
-  const far = Math.hypot(game.hole.pin.x - b.x, game.hole.pin.z - b.z) > 25;
-  pinScreen.copy(game.pinTop).project(camera);
-  const inView = pinScreen.z < 1 && Math.abs(pinScreen.x) < 1 && Math.abs(pinScreen.y) < 1;
-  if (!far || !inView) {
-    overlay.setPinMarker(null);
-    return;
+const flagMarkers: { x: number; y: number; text: string; target: boolean; own: boolean }[] = [];
+/**
+ * 旗の目印（番号と距離）を、旗の上の実際の画面位置へ（遠いと旗が小さくて見えないため）。
+ * 打っている間は目標の旗に距離を付け、他の旗は番号だけ。空からは全部に距離を付ける。
+ * 目標のすぐ近く（旗そのものが見える）では出さない。
+ */
+function placeFlagMarkers(game: GolfGame, from: { x: number; z: number }): void {
+  flagMarkers.length = 0;
+  // このフレームで動かしたカメラから投影する（描画の前なので自分で行列を更新する）。
+  camera.updateMatrixWorld();
+  for (const h of game.holes) {
+    const target = h === game.target;
+    const d = Math.hypot(h.pin.x - from.x, h.pin.z - from.z);
+    if (target && !scout && d < 25) continue;
+    game.pinTop(h, pinScreen).project(camera);
+    if (pinScreen.z >= 1 || Math.abs(pinScreen.x) > 1 || Math.abs(pinScreen.y) > 1) continue;
+    const name = h.number > 0 ? `${h.number}` : '旗';
+    flagMarkers.push({
+      x: ((pinScreen.x + 1) / 2) * innerWidth,
+      y: ((1 - pinScreen.y) / 2) * innerHeight - (target ? 10 : 2),
+      text: target || scout ? `${name} · ${Math.round(d)} m` : name,
+      target,
+      own: h.number === 0,
+    });
   }
-  overlay.setPinMarker({
-    x: ((pinScreen.x + 1) / 2) * innerWidth,
-    y: ((1 - pinScreen.y) / 2) * innerHeight,
-  });
+  overlay.setFlagMarkers(flagMarkers);
 }
 
 const timer = new THREE.Timer();
@@ -686,6 +803,7 @@ renderer.setAnimationLoop(() => {
     chunks?.update(player.position.x, player.position.z);
     updateCameraFeel(dt, player);
     updateAerialVisibility(dt, player.altitudeAboveGround);
+    if (golf) placeFlagMarkers(golf, player.position);
     overlay.setFlightInfo(player.flying, player.speed, player.altitudeAboveSeaLevel, player.autoFlight);
     if (player.autoFlight !== lastAutoFlight) {
       lastAutoFlight = player.autoFlight;
@@ -700,7 +818,7 @@ renderer.setAnimationLoop(() => {
     golf.update(dt);
     golf.updateCamera(camera, dt);
     chunks?.update(camera.position.x, camera.position.z);
-    placePinMarker(golf);
+    placeFlagMarkers(golf, golf.ball.pos);
   } else {
     controls.update();
   }
@@ -725,7 +843,15 @@ if (import.meta.env.DEV) {
     sky,
     player: () => player,
     island: () => island,
-    hole: () => hole,
+    course: () => course,
+    // 空から見ている前提の操作を、自動ブラウザから位置を指定して試す。
+    drop: (x: number, z: number) => golf?.dropBall(x, z),
+    flag: (x: number, z: number) => {
+      if (!scout) toggleScout();
+      camera.position.set(x, (terrain?.heightAt(x, z) ?? 0) + 120, z + 1);
+      camera.lookAt(x, terrain?.heightAt(x, z) ?? 0, z);
+      plantFlag();
+    },
     golf: () => golf,
     // 自動ブラウザは Pointer Lock を持たないので、入口を省いて始める。
     play: () => {

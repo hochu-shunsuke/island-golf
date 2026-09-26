@@ -1,4 +1,4 @@
-import { LIE_NAMES, scoreName, type GolfStatus } from '../golf/game';
+import { LIE_NAMES, flagName, scoreName, type GolfStatus } from '../golf/game';
 import { type IslandParams, PARAM_SPECS, type ParamKey, encodeParams } from '../island/params';
 
 /**
@@ -89,10 +89,13 @@ export class Overlay {
               <li><kbd>マウス</kbd><kbd>A</kbd><kbd>D</kbd> 狙う</li>
               <li><kbd>W</kbd><kbd>S</kbd> クラブ</li>
               <li><kbd>クリック</kbd><kbd>Space</kbd> ためて打つ</li>
-              <li><kbd>F</kbd> 空から見る</li>
+              <li><kbd>Q</kbd> 目標の旗を替える</li>
+              <li><kbd>F</kbd> 空から見る／球へ戻る</li>
+              <li><kbd>G</kbd> 空から: ここで打つ</li>
+              <li><kbd>T</kbd> 空から: 見ている所に旗</li>
               <li><kbd>Esc</kbd> 一時停止</li>
             </ul>
-            <p class="controls-note">押している間に力がたまり、離すと打ちます。点線と輪が、今のクラブで落ちる所。空から見ている間は stroll と同じく飛べます（WASD・Space 上昇・C 下降）。</p>
+            <p class="controls-note">島には番号の付いた旗が立っていて、どれを目標にしても、どこから打ってもかまいません。空から飛んで好きな所に降りて打ったり、自分の旗（黄色）を立てたりできます。押している間に力がたまり、離すと打ちます。点線と輪が、今のクラブで落ちる所。</p>
           </details>
         </div>
 
@@ -105,7 +108,8 @@ export class Overlay {
       <div class="hud dim"><span class="hud-seed"></span></div>
       <div class="flight-hud"></div>
       <div class="golf-hud"><div class="golf-hole"></div><div class="golf-line"></div></div>
-      <div class="pin-marker" aria-hidden="true"></div>
+      <div class="flag-markers" aria-hidden="true"></div>
+      <div class="reticle" aria-hidden="true"></div>
       <div class="golf-power">
         <span class="golf-club"></span>
         <div class="golf-meter"><div class="golf-fill"></div></div>
@@ -114,6 +118,9 @@ export class Overlay {
       <div class="golf-touch">
         <button class="g-btn g-pause" aria-label="休憩"></button>
         <button class="g-btn g-scout">空から</button>
+        <button class="g-btn g-target">旗 ⇄</button>
+        <button class="g-btn g-here">ここで打つ</button>
+        <button class="g-btn g-flag">旗を立てる</button>
         <button class="g-btn g-prev" aria-label="長いクラブへ">‹</button>
         <button class="g-btn g-next" aria-label="短いクラブへ">›</button>
         <button class="g-btn g-shot">打つ</button>
@@ -122,7 +129,8 @@ export class Overlay {
         <span><kbd>マウス</kbd><kbd>A</kbd><kbd>D</kbd> 狙う</span>
         <span><kbd>W</kbd><kbd>S</kbd> クラブ</span>
         <span><kbd>クリック</kbd><kbd>Space</kbd> 押してためて、離して打つ</span>
-        <span><kbd>F</kbd> 空から見る／戻る</span>
+        <span><kbd>Q</kbd> 旗を替える</span>
+        <span><kbd>F</kbd> 空から見る（<kbd>G</kbd> ここで打つ・<kbd>T</kbd> 旗を立てる）</span>
         <span><kbd>Esc</kbd> 休憩</span>
       </div>
       <div class="toast"></div>
@@ -185,7 +193,7 @@ export class Overlay {
     this.golfFill = this.root.querySelector('.golf-fill')!;
     this.golfHint = this.root.querySelector('.golf-hint')!;
     this.golfTouch = this.root.querySelector('.golf-touch')!;
-    this.pinMarker = this.root.querySelector('.pin-marker')!;
+    this.flagLayer = this.root.querySelector('.flag-markers')!;
     this.golfScoutBtn = this.root.querySelector('.g-scout')!;
   }
 
@@ -197,9 +205,9 @@ export class Overlay {
   private readonly golfFill: HTMLElement;
   private readonly golfHint: HTMLElement;
   private readonly golfTouch: HTMLElement;
-  private readonly pinMarker: HTMLElement;
+  private readonly flagLayer: HTMLElement;
+  private readonly flagEls: { el: HTMLElement; text: string; cls: string }[] = [];
   private readonly golfScoutBtn: HTMLElement;
-  private pinOn = false;
   private golfText = '';
 
   /** ゴルフの表示。null で隠す（休憩中・空から見ている間）。 */
@@ -210,8 +218,11 @@ export class Overlay {
     this.golfPower.classList.toggle('on', on && status.phase !== 'moving');
     this.golfPower.classList.toggle('done', on && status.phase === 'holed');
     if (!status) return;
-    const { hole } = status;
-    const holeText = `パー ${hole.par} · ${Math.round(hole.length)} m`;
+    const { target } = status;
+    // ティーから回っているおすすめの旗だけパーを出す。それ以外は「どこから・どの旗へ」。
+    const holeText = status.fromTee
+      ? `${target.number} 番 · パー ${target.par} · ${Math.round(target.length)} m`
+      : `${flagName(target)}へ · 好きな所から`;
     const shot = status.phase === 'holed' ? `${status.strokes} 打でカップイン` : `${status.strokes + 1} 打目`;
     const line = `${shot} · ピンまで ${Math.round(status.toPin)} m · ${LIE_NAMES[status.lie]}`;
     const text = holeText + line + status.club + status.phase;
@@ -219,12 +230,18 @@ export class Overlay {
       this.golfText = text;
       this.golfHole.textContent = holeText;
       this.golfLine.textContent = line;
-      this.golfClub.textContent = status.phase === 'holed' ? scoreName(status.strokes, hole.par) : status.club;
+      this.golfClub.textContent =
+        status.phase !== 'holed'
+          ? status.club
+          : status.fromTee
+            ? scoreName(status.strokes, target.par)
+            : `${status.strokes} 打`;
+      const press = this.touch ? '打つを押すと' : 'クリックか Space で';
       this.golfHint.textContent =
         status.phase === 'holed'
-          ? this.touch
-            ? '打つを押すと、もう一度ティーから'
-            : 'クリックか Space で、もう一度ティーから'
+          ? status.next
+            ? `${press}、${status.next.number} 番のティーへ`
+            : `${press}、同じ所からもう一度`
           : status.phase === 'charge'
             ? '離して打つ'
             : this.touch
@@ -234,24 +251,47 @@ export class Overlay {
     this.golfFill.style.transform = `scaleX(${status.power.toFixed(3)})`;
   }
 
-  /** ピンの目印。画面の位置（px）か、null で隠す。毎フレーム呼ぶので位置は transform だけで動かす。 */
-  setPinMarker(at: { x: number; y: number } | null): void {
-    const on = at !== null;
-    if (on !== this.pinOn) {
-      this.pinOn = on;
-      this.pinMarker.classList.toggle('on', on);
+  /**
+   * 旗の目印（番号と距離）。旗の上の実際の画面位置（px）に出す。毎フレーム呼ぶので、
+   * 要素は使い回して位置は transform だけで動かす（stroll の友達の名前と同じ）。
+   * target は今の目標、own は自分の旗。
+   */
+  setFlagMarkers(items: readonly { x: number; y: number; text: string; target: boolean; own: boolean }[]): void {
+    while (this.flagEls.length < items.length) {
+      const el = document.createElement('div');
+      el.className = 'flag-marker';
+      this.flagLayer.appendChild(el);
+      this.flagEls.push({ el, text: '', cls: '' });
     }
-    if (at) this.pinMarker.style.transform = `translate(${at.x.toFixed(1)}px, ${at.y.toFixed(1)}px)`;
+    this.flagEls.forEach((m, k) => {
+      const item = items[k];
+      const cls = item ? `flag-marker on${item.target ? ' target' : ''}${item.own ? ' own' : ''}` : 'flag-marker';
+      if (cls !== m.cls) {
+        m.cls = cls;
+        m.el.className = cls;
+      }
+      if (!item) return;
+      if (item.text !== m.text) {
+        m.text = item.text;
+        m.el.textContent = item.text;
+      }
+      m.el.style.transform = `translate(${item.x.toFixed(1)}px, ${item.y.toFixed(1)}px)`;
+    });
   }
 
   /**
-   * タッチのゴルフ用ボタン。scouting（空から見ている間）は「球へ戻る」だけを出す
-   * （飛ぶ操作は stroll と同じタッチ操作が受け持つ）。
+   * タッチのゴルフ用ボタン。scouting（空から見ている間）は「球へ戻る」「ここで打つ」「旗を立てる」
+   * だけを出す（飛ぶ操作は stroll と同じタッチ操作が受け持つ）。
    */
   setGolfTouch(active: boolean, scouting = false): void {
     this.golfTouch.classList.toggle('on', active);
     this.golfTouch.classList.toggle('scouting', scouting);
     this.golfScoutBtn.textContent = scouting ? '球へ戻る' : '空から';
+  }
+
+  /** 空から見ている間の照準（旗は画面の真ん中に見えている地面に立つ）。 */
+  setReticle(on: boolean): void {
+    this.root.querySelector('.reticle')!.classList.toggle('on', on);
   }
 
   /** タッチのゴルフ用ボタンに役割をつなぐ。 */
@@ -261,6 +301,9 @@ export class Overlay {
     onClub: (step: number) => void;
     onScout: () => void;
     onPause: () => void;
+    onTarget: () => void;
+    onHere: () => void;
+    onFlag: () => void;
   }): void {
     const shot = this.golfTouch.querySelector('.g-shot') as HTMLButtonElement;
     shot.addEventListener('pointerdown', (e) => {
@@ -274,6 +317,9 @@ export class Overlay {
     this.golfTouch.querySelector('.g-next')!.addEventListener('click', () => handlers.onClub(1));
     this.golfTouch.querySelector('.g-scout')!.addEventListener('click', () => handlers.onScout());
     this.golfTouch.querySelector('.g-pause')!.addEventListener('click', () => handlers.onPause());
+    this.golfTouch.querySelector('.g-target')!.addEventListener('click', () => handlers.onTarget());
+    this.golfTouch.querySelector('.g-here')!.addEventListener('click', () => handlers.onHere());
+    this.golfTouch.querySelector('.g-flag')!.addEventListener('click', () => handlers.onFlag());
   }
 
   /** つまみと合言葉の表示を島に合わせる（サイコロや URL から変わったとき）。 */
@@ -361,7 +407,7 @@ export class Overlay {
     } else if (this.entered) {
       this.startBtn.textContent = this.touch ? 'タップして続ける' : '続きから打つ';
     } else {
-      this.startBtn.textContent = this.touch ? 'タップしてホールへ' : 'このホールを回る';
+      this.startBtn.textContent = this.touch ? 'タップしてコースへ' : 'コースへ出る';
     }
   }
 

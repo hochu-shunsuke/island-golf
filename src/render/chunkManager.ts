@@ -5,6 +5,7 @@ import { RENDER_ORDER } from './order';
 import { createTerrainMaterial } from './terrainMaterial';
 import { ISLAND_SIZE } from '../island/grid';
 import type { BuiltChunk, InitRequest, WorkerRequest } from '../world/worker';
+import type { Hole } from '../golf/course';
 
 const MAX_RING = LOD_RINGS[LOD_RINGS.length - 1];
 
@@ -27,6 +28,16 @@ interface Chunk {
   lod: number;
   cx: number;
   cz: number;
+  /** どの旗の並び（setHoles の回数）で作ったか。 */
+  version: number;
+}
+
+/** 旗を差し替えて地面が変わった範囲。これより古い版で作ったチャンクは作り直す。 */
+interface Change {
+  x: number;
+  z: number;
+  r: number;
+  version: number;
 }
 
 interface Pending {
@@ -46,7 +57,10 @@ export class ChunkManager {
   private material: THREE.Material;
   private waterMaterial: THREE.Material;
   private chunks = new Map<string, Chunk>();
-  private inFlight = new Map<number, string>();
+  /** 作成中のチャンク（依頼番号 → 場所と、頼んだときの旗の並びの版）。 */
+  private inFlight = new Map<number, { key: string; version: number }>();
+  private version = 0;
+  private changes: Change[] = [];
   private queue: Pending[] = [];
   private workers: Worker[] = [];
   private freeWorkers: Worker[] = [];
@@ -115,6 +129,35 @@ export class ChunkManager {
     return `${cx},${cz}`;
   }
 
+  /**
+   * 旗を差し替える（自分の旗を立てた・抜いた）。Worker の地形を差し替え、areas に掛かる
+   * チャンクを今の粗さのまま作り直す。Worker は届いた順に処理するので、この後に頼んだ
+   * チャンクは新しい地面で作られる。先に頼んであった分は、届いたときに古いと分かって作り直す。
+   */
+  setHoles(holes: readonly Hole[], areas: readonly { x: number; z: number; r: number }[]): void {
+    this.version++;
+    for (const w of this.workers) w.postMessage({ type: 'course', holes } satisfies WorkerRequest);
+    for (const a of areas) this.changes.push({ ...a, version: this.version });
+    for (const [key, chunk] of this.chunks) {
+      if (!this.isStale(chunk.cx, chunk.cz, chunk.version)) continue;
+      const dist = Math.max(Math.abs(chunk.cx - this.lastChunkX), Math.abs(chunk.cz - this.lastChunkZ));
+      this.queue.push({ key, cx: chunk.cx, cz: chunk.cz, lod: chunk.lod, dist });
+    }
+    this.queue.sort((a, b) => a.dist - b.dist);
+  }
+
+  /** 版 version で作ったチャンクが、その後に変わった地面に掛かっているか。 */
+  private isStale(cx: number, cz: number, version: number): boolean {
+    for (const c of this.changes) {
+      if (c.version <= version) continue;
+      // チャンクの四角の中で円の中心に一番近い点までの距離。
+      const nx = Math.max(cx * CHUNK_SIZE, Math.min(c.x, (cx + 1) * CHUNK_SIZE));
+      const nz = Math.max(cz * CHUNK_SIZE, Math.min(c.z, (cz + 1) * CHUNK_SIZE));
+      if (Math.hypot(nx - c.x, nz - c.z) <= c.r) return true;
+    }
+    return false;
+  }
+
   /** チェビシェフ距離から、そのチャンクを作るべき粗さを決める。範囲外は -1。 */
   private lodFor(dist: number): number {
     for (let i = 0; i < LOD_RINGS.length; i++) {
@@ -161,7 +204,7 @@ export class ChunkManager {
         const cz = pcz + dz;
         const key = this.key(cx, cz);
         const existing = this.chunks.get(key);
-        if (existing && existing.lod === lod) continue;
+        if (existing && existing.lod === lod && !this.isStale(cx, cz, existing.version)) continue;
         this.queue.push({ key, cx, cz, lod, dist });
       }
     }
@@ -173,24 +216,26 @@ export class ChunkManager {
     while (this.freeWorkers.length > 0 && this.queue.length > 0) {
       const job = this.queue.shift()!;
 
-      // 既に同じ粗さで作り終えている／作成中なら飛ばす。
+      // 既に同じ粗さで作り終えている（地面も新しい）／作成中なら飛ばす。
+      // 作成中のものが古い地面なら、届いたときに作り直す（onBuilt）。
       const existing = this.chunks.get(job.key);
-      if (existing && existing.lod === job.lod) continue;
+      if (existing && existing.lod === job.lod && !this.isStale(job.cx, job.cz, existing.version)) continue;
       let already = false;
-      for (const k of this.inFlight.values()) {
-        if (k === job.key) { already = true; break; }
+      for (const f of this.inFlight.values()) {
+        if (f.key === job.key) { already = true; break; }
       }
       if (already) continue;
 
       const w = this.freeWorkers.pop()!;
       const id = this.nextId++;
-      this.inFlight.set(id, job.key);
+      this.inFlight.set(id, { key: job.key, version: this.version });
       w.postMessage({ type: 'build', id, cx: job.cx, cz: job.cz, lod: job.lod } satisfies WorkerRequest);
     }
   }
 
   private onBuilt(w: Worker, data: BuiltChunk): void {
     this.freeWorkers.push(w);
+    const version = this.inFlight.get(data.id)?.version ?? 0;
     this.inFlight.delete(data.id);
 
     const key = this.key(data.cx, data.cz);
@@ -257,13 +302,14 @@ export class ChunkManager {
     const old = this.chunks.get(key);
     if (old) this.disposeChunk(old);
 
-    this.chunks.set(key, { mesh, scatter, lake, lod: data.lod, cx: data.cx, cz: data.cz });
+    this.chunks.set(key, { mesh, scatter, lake, lod: data.lod, cx: data.cx, cz: data.cz, version });
     // 本物の木を置く粗さ（TREE_LOD 以下）なら、遠目の木をここで消す。
     this.setCoverage(data.cx, data.cz, data.lod <= TREE_LOD ? 255 : 128);
 
     // 生成中にプレイヤーが動いて、必要な粗さが変わっていることがある。
     // ここで積み直さないと、次にチャンク境界を跨ぐまで粗いまま残る。
-    if (desired !== data.lod) {
+    // 作っている間に旗が差し替わった場合も同じ。
+    if (desired !== data.lod || this.isStale(data.cx, data.cz, version)) {
       this.queue.push({ key, cx: data.cx, cz: data.cz, lod: desired, dist });
       this.queue.sort((a, b) => a.dist - b.dist);
     }

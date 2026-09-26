@@ -5,7 +5,7 @@ import { Terrain } from '../world/terrain';
 import { type ForestBatch, plantForest } from './forest';
 import { type Island, generateIsland } from './generate';
 import { FULL_RES } from './grid';
-import { type Hole, GREEN_BLEND, GREEN_RADIUS, TEE_BLEND, TEE_RADIUS, pickHole } from '../golf/course';
+import { type Hole, TEE_BLEND, TEE_RADIUS, flagArea, pickCourse } from '../golf/course';
 import { gridToWorld } from './ground';
 import { type IslandLighting, bakeLighting } from './lighting';
 import { type OverviewArrays, buildOverviewArrays, buildOverviewWaterArray } from './overviewArrays';
@@ -42,8 +42,8 @@ export interface GenerateResult {
   overview: OverviewArrays;
   overviewWater: Float32Array | null;
   map: IslandMap;
-  /** この島のホール。見つからなければ null。 */
-  hole: Hole | null;
+  /** この島のコース（おすすめの旗）。下見の島では空。 */
+  course: Hole[];
   /** 島が見えるまでにかかった時間（ms）。 */
   ms: number;
 }
@@ -75,9 +75,10 @@ self.onmessage = (ev: MessageEvent<GenerateRequest>) => {
   const { id, params, n, erosionN, sun } = ev.data;
   const started = performance.now();
   const island = generateIsland(params, n, erosionN);
-  const hole = pickHole(island, params.seed);
-  const terrain = new Terrain(params, island.landscape, new IslandWater(island.water), hole);
-  if (hole) flattenGrid(island, terrain, hole);
+  // コースは本番の格子の島だけ（下見の島では入れないので、作る手間も省く）。
+  const course = n === FULL_RES ? pickCourse(island, params.seed) : [];
+  const terrain = new Terrain(params, island.landscape, new IslandWater(island.water), course);
+  for (const hole of course) flattenGrid(island, terrain, hole);
   const overview = buildOverviewArrays(island, terrain);
   const overviewWater = buildOverviewWaterArray(island);
   const map = renderIslandMap(island, terrain);
@@ -86,7 +87,7 @@ self.onmessage = (ev: MessageEvent<GenerateRequest>) => {
   // 大きな形と水（landscape・water）は地形（terrain）が読み続けるので、転送せず写しで送る。
   const height = island.height.slice();
   const moisture = island.moisture.slice();
-  post({ type: 'island', id, island, params, overview, overviewWater, map, hole, ms: performance.now() - started }, [
+  post({ type: 'island', id, island, params, overview, overviewWater, map, course, ms: performance.now() - started }, [
     island.height.buffer,
     island.waterLevel.buffer,
     island.waterKind.buffer,
@@ -130,6 +131,7 @@ function flattenGrid(island: Island, terrain: Terrain, hole: Hole): void {
       }
     }
   };
-  patch(hole.pin.x, hole.pin.z, GREEN_RADIUS + GREEN_BLEND + 2);
-  patch(hole.tee.x, hole.tee.z, TEE_RADIUS + TEE_BLEND + 2);
+  const green = flagArea(hole);
+  patch(green.x, green.z, green.r);
+  if (hole.tee) patch(hole.tee.x, hole.tee.z, TEE_RADIUS + TEE_BLEND + 2);
 }

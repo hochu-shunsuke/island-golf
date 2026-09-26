@@ -8,7 +8,7 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
-    "test": "node test/ball.test.mjs",
+    "test": "node test/ball.test.mjs && node test/course.test.mjs",
     "ci": "npm run typecheck && npm run build && npm test",
     "deploy": "npm run build && wrangler deploy"
   },
