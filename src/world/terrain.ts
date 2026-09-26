@@ -17,8 +17,8 @@ const C_FAIRWAY = srgb(0x74a64c);
 const C_TEE = srgb(0x86b85a);
 const C_GREEN = srgb(0x72c95a);
 const C_SAND = srgb(0xe4d3a2);
-/** リンクスのラフ（金色のフェスク）。自然の草の色に 7 割だけ寄せて、むらを残す。 */
-const C_ROUGH = srgb(0xb3a35c);
+/** 林間コースのラフ（フェアウェイより深い緑）。自然の草の色に 7 割だけ寄せて、むらを残す。 */
+const C_ROUGH = srgb(0x5d8a3c);
 
 /**
  * 四角形をどちらの対角線で 2 つの三角形に割るか。true なら h00-h11。
@@ -91,14 +91,20 @@ export class Terrain {
     return specialAt(x, z, this.nSpecialEdge, this.specialSalt);
   }
 
-  /** 森のかたまり 0..1.4。植生の密度に掛ける。 */
+  /** 森のかたまり 0..1.4。植生の密度に掛ける。コースのホールの間は森で埋める。 */
   groveAt(x: number, z: number): number {
-    return this.climate.groveAt(x, z);
+    const g = this.climate.groveAt(x, z);
+    if (!this.course?.sample(x, z)) return g;
+    return g + (1.4 - g) * this.course.forest;
   }
 
   /** 湿り気 0..1。独立ノイズへ山塊による雨陰を重ね、湿り気のつまみでずらす。 */
   moistureAt(x: number, z: number): number {
-    return clamp(this.climate.moistureAt(x, z) + this.moistureBias, 0, 1);
+    const m = clamp(this.climate.moistureAt(x, z) + this.moistureBias, 0, 1);
+    // コースとその林は手入れされていて青々としている（山に囲まれた谷は雨陰で乾きやすいため）。
+    if (!this.course?.sample(x, z)) return m;
+    const kept = Math.max(this.course.clear, this.course.forest);
+    return m + (Math.max(m, 0.78) - m) * kept;
   }
 
   /** 気温 0..1（0 が寒い、1 が暑い）。標高が上がるほど冷え、暖かさのつまみでずらす。 */

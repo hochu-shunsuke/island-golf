@@ -51,6 +51,20 @@ try {
   // 横に傾いた所では、低い方（-x）へ曲がる。
   const side = shoot(flat('green', 0, 0.03), putter, 0.5);
   assert(side.side < -0.3, `横の傾きで低い方へ曲がりません（横 ${side.side.toFixed(2)}m）`);
+  // カップ（4m 先）: 黒い穴の真ん中を通れば速めでも入り、縁をかすめる程度なら遅いときだけ入り、外れた球は入らない。
+  // 初速 2.4m/s でカップに 1.2m/s ほどで着く（グリーンの転がりの抵抗で）。
+  const putAt = (offset, speed) => {
+    const ball = new Ball(flat('green'));
+    ball.place(offset, 0);
+    ball.cup = { x: 0, z: -4, r: 0.22 };
+    ball.hit(0, 0, speed, 0);
+    for (let t = 0; t < 20 && ball.state !== 'rest' && ball.state !== 'holed'; t += 1 / 60) ball.update(1 / 60);
+    return ball.state === 'holed';
+  };
+  assert(putAt(0, 3.5), '真ん中を 3m/s ほどで通った球が入りません');
+  assert(putAt(0.25, 2.4), '縁にかかった遅い球が入りません');
+  assert(!putAt(0.4, 2.4), '穴に触れていない球が入りました');
+  assert(!putAt(0, 7), '強すぎる球が入りました');
   console.log('PASS  球の物理', rows.join(' / '), `パター半分 ${putt.total.toFixed(1)}m（上り ${up.total.toFixed(1)} 下り ${down.total.toFixed(1)}、20% の上り ${back.total.toFixed(1)}、横の傾きで ${side.side.toFixed(1)}m 曲がる）`);
 } finally {
   await server.close();

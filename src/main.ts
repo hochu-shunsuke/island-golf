@@ -241,7 +241,13 @@ worker.onmessage = (ev: MessageEvent<WorkerResult>) => {
     drawnId = msg.id;
     show(msg);
     const full = msg.island.n === FULL_RES;
-    overlay.setStatus(full ? `${(msg.ms / 1000).toFixed(1)} 秒で島をつくりました` : '下見しています…');
+    const par = course.reduce((a, h) => a + h.par, 0);
+    const len = Math.round(course.reduce((a, h) => a + h.length, 0));
+    overlay.setStatus(
+      full
+        ? `${course.length} ホール · パー ${par} · ${len.toLocaleString('ja-JP')} m（${(msg.ms / 1000).toFixed(1)} 秒）`
+        : '下見しています…',
+    );
     overlay.setReady(full && msg.id === lastRequested);
   }
 };

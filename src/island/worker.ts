@@ -4,9 +4,9 @@ import { IslandWater } from '../world/islandWater';
 import { Terrain } from '../world/terrain';
 import { type ForestBatch, plantForest } from './forest';
 import { type Island, generateIsland } from './generate';
-import { FULL_RES } from './grid';
+import { FULL_RES, ISLAND_SIZE } from './grid';
 import { type Hole, holesOf } from '../golf/course';
-import { designCourse } from '../golf/design';
+import { routeCourse, settleCourse } from '../golf/design';
 import { CourseField, type FieldArrays, buildCourseField } from '../golf/field';
 import { gridToWorld } from './ground';
 import { type IslandLighting, bakeLighting } from './lighting';
@@ -76,10 +76,11 @@ const post = (msg: WorkerResult, transfer: Transferable[]) =>
 self.onmessage = (ev: MessageEvent<GenerateRequest>) => {
   const { id, params, n, erosionN, sun } = ev.data;
   const started = performance.now();
-  const island = generateIsland(params, n, erosionN);
-  // コースは本番の格子の島だけ（下見の島では入れないので、作る手間も省く）。
-  // 遊ぶ場所を先に設計し（design）、地形をそれに合わせて造成する（field）。
-  const design = n === FULL_RES ? designCourse(island, params.seed) : { holes: [] };
+  // コースを先に並べ（route）、その周りに世界を作り（谷底と山）、地面に合わせて高さを入れ（settle）、
+  // 造成する（field）。
+  const route = routeCourse(params.seed);
+  const island = generateIsland(params, n, erosionN, route);
+  const design = settleCourse(route, (x, z) => sampleGrid(island, x, z));
   const field = buildCourseField(island, design, params.seed);
   const terrain = new Terrain(
     params,
@@ -123,6 +124,19 @@ self.onmessage = (ev: MessageEvent<GenerateRequest>) => {
   const lighting = bakeLighting(height, n, island.cell, sun);
   post({ type: 'light', id, lighting, ms: performance.now() - lit }, [lighting.data.buffer]);
 };
+
+/** 島の格子の高さ（双一次）。 */
+function sampleGrid(island: Island, x: number, z: number): number {
+  const { n, height } = island;
+  const fx = Math.max(0, Math.min(n - 1.001, (x / ISLAND_SIZE + 0.5) * (n - 1)));
+  const fz = Math.max(0, Math.min(n - 1.001, (z / ISLAND_SIZE + 0.5) * (n - 1)));
+  const i = Math.floor(fx);
+  const j = Math.floor(fz);
+  const u = fx - i;
+  const v = fz - j;
+  const k = j * n + i;
+  return (height[k] * (1 - u) + height[k + 1] * u) * (1 - v) + (height[k + n] * (1 - u) + height[k + n + 1] * u) * v;
+}
 
 /**
  * 島の細かい格子を、造成したコースに合わせる（見渡す島・地図・光・木が同じ地面を見るように）。

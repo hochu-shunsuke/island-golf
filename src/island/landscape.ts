@@ -1,6 +1,7 @@
 import { hashSeed } from '../core/rng';
 import { Noise2D, fbm, mix, ridged, smoothstep } from '../world/noise';
-import { NEIGHBORS8, makeGrid } from './grid';
+import { type CourseDesign, lineDistance } from '../golf/design';
+import { ISLAND_SIZE, NEIGHBORS8, makeGrid } from './grid';
 import type { IslandParams } from './params';
 
 /**
@@ -118,6 +119,93 @@ export function buildLandscape(p: IslandParams, n: number): Landscape {
   const U = peak * 0.0035;
   const area = erode(h, uplift, base, n, cell, K, U);
 
+  const height = new Float32Array(N);
+  for (let k = 0; k < N; k++) height[k] = h[k];
+  return { n, height, ...surfaceFields(height, area, base, n, cell) };
+}
+
+/**
+ * ゴルフコースの世界の大きな形。**コースが先にあり、地形はその周りに作る。**
+ *
+ * - コースの周り（打つ線から 90m まで）は谷底: ゆるくうねる低い土地で、侵食では動かさない
+ *   （流れの行き着く先にする。山から下る谷はコースの縁で終わる）
+ * - その外は山: 打つ線から離れるほど高くなる輪。尾根と峰のノイズで形を揺らし、侵食で谷を刻む
+ * - さらに外は海: 世界の端を山の向こうの海岸にする（空から見ると、山に囲まれた谷のある島）
+ *
+ * 川と湖は作らない（谷底に流れが集まっても、コースを水浸しにしない。水はコースの池だけ）。
+ */
+export function buildCourseLandscape(p: IslandParams, n: number, design: CourseDesign): Landscape {
+  const grid = makeGrid(n);
+  const { cell } = grid;
+  const [a, b, c, d] = hashSeed(p.seed);
+  const nCoast = new Noise2D(b);
+  const nRidge = new Noise2D(c);
+  const nPeaks = new Noise2D(d);
+  const nFloor = new Noise2D((a ^ 0x5bd1e995) >>> 0);
+  const mountains = p.mountains / 100;
+  const peak = mix(220, 650, mountains * mountains);
+
+  // コースの中心と、島の輪郭の半径（m）。
+  let cx = 0;
+  let cz = 0;
+  let count = 0;
+  for (const h of design.holes) {
+    for (const q of h.line) {
+      cx += q.x;
+      cz += q.z;
+      count++;
+    }
+  }
+  cx /= count || 1;
+  cz /= count || 1;
+  const radius = 1780;
+
+  const N = n * n;
+  const h = new Float64Array(N);
+  const uplift = new Float64Array(N);
+  const base = new Uint8Array(N);
+  for (let j = 0; j < n; j++) {
+    for (let i = 0; i < n; i++) {
+      const k = j * n + i;
+      const u = (i / (n - 1)) * 2 - 1;
+      const v = (j / (n - 1)) * 2 - 1;
+      const x = u * (ISLAND_SIZE / 2);
+      const z = v * (ISLAND_SIZE / 2);
+      // 輪郭は円にしない（座標を揺らしてから距離を測り、さらに海岸を波打たせる）。
+      const wx = x + fbm(nCoast, u + 7.1, v - 3.3, 3, 1.1) * 520;
+      const wz = z + fbm(nCoast, u - 4.7, v + 9.2, 3, 1.1) * 520;
+      let land = 1 - Math.hypot(wx - cx, wz - cz) / radius + fbm(nCoast, u, v, 5, 2.0) * 0.22;
+      land -= smoothstep(0.86, 1.0, Math.sqrt(u * u + v * v)) * 3;
+      if (land <= 0 || i === 0 || j === 0 || i === n - 1 || j === n - 1) {
+        base[k] = 1;
+        const out = -land;
+        h[k] = Math.min(-SHELF_DEPTH * smoothstep(0, SHELF_END * 0.6, out), 0) -
+          SEA_DEPTH * smoothstep(SHELF_END, SHELF_END + 0.3, out);
+        continue;
+      }
+      // 谷底: 数百 m の波長で ±9m、百数十 m で ±2.5m うねる。海岸へ向かって浜の高さへ下りる。
+      let floor = 16 + fbm(nFloor, u, v, 3, 1.4) * 9 + fbm(nFloor, u * 4 + 5.3, v * 4 - 2.9, 2, 1.0) * 2.5;
+      floor = mix(2, floor, smoothstep(0, 0.15, land));
+      let dc = Infinity;
+      for (const hole of design.holes) dc = Math.min(dc, lineDistance(hole.line, x, z).d);
+      if (dc < 90) {
+        base[k] = 1;
+        h[k] = floor;
+        continue;
+      }
+      // 山の輪は、コースからの距離を揺らして、ゆっくり立ち上げる（そろった放射状の谷筋にしない）。
+      const dw = dc + fbm(nRidge, u * 3.1 + 11.7, v * 3.1 - 5.3, 3, 1.0) * 180;
+      const ring = smoothstep(150, 950, dw);
+      const ridge = ridged(nRidge, u, v, 4, 1.7);
+      const peaks = smoothstep(0.35, 0.9, fbm(nPeaks, u, v, 3, 1.6) * 0.5 + 0.5);
+      const profile = ring * (0.45 + ridge * 0.75) * (0.6 + 0.6 * peaks) * smoothstep(0, 0.3, land);
+      uplift[k] = profile;
+      h[k] = floor + peak * profile;
+    }
+  }
+  const K = mix(0.004, 0.03, p.erosion / 100);
+  const U = peak * 0.0035;
+  const area = erode(h, uplift, base, n, cell, K, U);
   const height = new Float32Array(N);
   for (let k = 0; k < N; k++) height[k] = h[k];
   return { n, height, ...surfaceFields(height, area, base, n, cell) };

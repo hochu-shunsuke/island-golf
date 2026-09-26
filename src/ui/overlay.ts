@@ -1,6 +1,6 @@
 import { LIE_NAMES, scoreName, toPar, type GolfStatus } from '../golf/game';
 import { KIND_NAMES } from '../golf/course';
-import { type IslandParams, PARAM_SPECS, type ParamKey, encodeParams } from '../island/params';
+import { COURSE_PARAM_SPECS, type IslandParams, type ParamKey, encodeParams } from '../island/params';
 
 /**
  * island golf の画面（island-maker と同じ作り）。見た目と入口の作りは stroll の開始画面と同じ（ガラスのカード、丸いボタン、
@@ -77,7 +77,7 @@ export class Overlay {
                   autocomplete="off" spellcheck="false" />
                 <button type="button" class="seed-dice" title="別の島を引く" aria-label="別の島を引く">⚄</button>
               </div>
-              <p class="hint">同じ合言葉とつまみなら、同じ島。サイコロでつまみも全部変わる。</p>
+              <p class="hint">同じ合言葉なら、同じコース。サイコロで別のコースへ。つまみは周りの山と気候。</p>
             </div>
             <div class="sliders"></div>
           </div>
@@ -93,13 +93,13 @@ export class Overlay {
               <li><kbd>F</kbd> 空から見る／球へ戻る</li>
               <li><kbd>Esc</kbd> 一時停止</li>
             </ul>
-            <p class="controls-note">島の海沿いに、名ホールの型で設計した 3 ホールのリンクスがあります。押している間に力がたまり、離すと打ちます。点線と輪が、今のクラブで落ちる所。空から見ている間は stroll と同じく飛べます（WASD・Space 上昇・C 下降）。</p>
+            <p class="controls-note">山に囲まれた谷に、名ホールの型で設計した 9 ホールの林間コースがあります。押している間に力がたまり、離すと打ちます。点線と輪が、今のクラブで落ちる所。空から見ている間は stroll と同じく飛べます（WASD・Space 上昇・C 下降）。</p>
           </details>
         </div>
 
         <footer class="panel-foot">
-          <button class="start" disabled>島を作っています…</button>
-          <button class="share">この島のURLをコピー</button>
+          <button class="start" disabled>コースを作っています…</button>
+          <button class="share">このコースのURLをコピー</button>
           <p class="status"></p>
         </footer>
       </aside>
@@ -142,7 +142,7 @@ export class Overlay {
     this.toast = this.root.querySelector('.toast')!;
 
     const sliders = this.root.querySelector('.sliders')!;
-    for (const spec of PARAM_SPECS) {
+    for (const spec of COURSE_PARAM_SPECS) {
       const wrap = document.createElement('label');
       wrap.className = 'slider';
       wrap.innerHTML = `
@@ -303,7 +303,7 @@ export class Overlay {
     this.params = { ...params };
     this.seedInput.value = params.seed;
     this.hudSeed.textContent = params.seed;
-    for (const spec of PARAM_SPECS) {
+    for (const spec of COURSE_PARAM_SPECS) {
       const s = this.sliders.get(spec.key)!;
       s.input.value = String(params[spec.key]);
       s.value.textContent = String(params[spec.key]);
@@ -379,7 +379,7 @@ export class Overlay {
   private updateStartLabel(): void {
     this.startBtn.disabled = !this.ready;
     if (!this.ready) {
-      this.startBtn.textContent = '島を作っています…';
+      this.startBtn.textContent = 'コースを作っています…';
     } else if (this.entered) {
       this.startBtn.textContent = this.touch ? 'タップして続ける' : '続きから打つ';
     } else {

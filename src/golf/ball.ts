@@ -76,6 +76,13 @@ const TRUNK_BOUNCE = 0.35;
  * 木の下で止まった球が、真上の葉に当たって出せなくなるのを防ぐ（ゴルフゲームの開発記録で踏まれた穴）。
  */
 const UNDER_CANOPY_GRACE = 0.6;
+/**
+ * カップに入る速さの上限（m/s）。真ん中を通れば速くても入り、縁にかかっただけなら遅いときだけ入る（蹴られない）。
+ * 本物のカップ（半径 54mm）は真ん中でも 1.6m/s ほどで蹴られるが、ここのカップは 4 倍の大きさで、
+ * 見た目に黒い穴の上を通った球が入らないと理不尽に感じる。
+ */
+const CUP_CENTER_SPEED = 4.5;
+const CUP_EDGE_SPEED = 2.2;
 
 export class Ball {
   readonly pos = { x: 0, y: 0, z: 0 };
@@ -88,6 +95,8 @@ export class Ball {
   /** 打った所と、打ってからの時間（木の下から打つときの決まりに使う）。 */
   private readonly start = { x: 0, z: 0 };
   private airTime = 0;
+  /** 狙っているカップ（中心と半径）。無ければ入らない（狙いの線を引くための試し打ちなど）。 */
+  cup: { x: number; z: number; r: number } | null = null;
 
   constructor(private readonly ground: GolfGround) {}
 
@@ -130,7 +139,30 @@ export class Ball {
       const h = Math.min(BALL_STEP, t);
       if (this.state === 'flight') this.fly(h);
       else this.rollStep(h);
+      // カップは刻みごとに見る（1 コマごとに見ると、速い球が穴の上を飛び越えて見逃す）。
+      this.dropIntoCup();
       t -= h;
+    }
+    // 縁に止まった球も落ちる。
+    if (this.state === 'rest') this.dropIntoCup();
+  }
+
+  /** 球の中心がカップの上にあり、地面すれすれで、速すぎなければ入る。 */
+  private dropIntoCup(): void {
+    const c = this.cup;
+    if (!c || this.state === 'water' || this.state === 'holed') return;
+    const d = Math.hypot(this.pos.x - c.x, this.pos.z - c.z);
+    if (d > c.r + BALL_RADIUS) return;
+    const low = this.pos.y - this.ground.height(this.pos.x, this.pos.z) < BALL_RADIUS + 0.15;
+    if (!low) return;
+    const s = this.speed;
+    const inside = d < c.r && (s < CUP_CENTER_SPEED || this.state === 'flight');
+    const edge = d < c.r + BALL_RADIUS * 0.5 && s < CUP_EDGE_SPEED;
+    if (inside || edge) {
+      this.state = 'holed';
+      this.vel.x = this.vel.y = this.vel.z = 0;
+      this.pos.x = c.x;
+      this.pos.z = c.z;
     }
   }
 
@@ -309,16 +341,4 @@ export class Ball {
     });
   }
 
-  /** カップに入ったか。転がりながら、または遅く落ちてきて、縁の内側に来たら入る。 */
-  checkCup(cx: number, cz: number, cupRadius: number): boolean {
-    if (this.state !== 'roll' && this.state !== 'rest' && this.state !== 'flight') return false;
-    const d = Math.hypot(this.pos.x - cx, this.pos.z - cz);
-    const s = this.speed;
-    const low = this.pos.y - this.ground.height(this.pos.x, this.pos.z) < BALL_RADIUS + 0.15;
-    if (low && d < cupRadius && s < 2.2) {
-      this.state = 'holed';
-      return true;
-    }
-    return false;
-  }
 }

@@ -42,6 +42,9 @@ export const PARAM_SPECS: readonly ParamSpec[] = [
   { key: 'warmth', short: 't', label: '暖かさ', low: '雪', high: '南国' },
 ];
 
+/** ゴルフの世界で効くつまみ（島の大きさと形はコースから決まるので出さない）。 */
+export const COURSE_PARAM_SPECS: readonly ParamSpec[] = PARAM_SPECS.filter((s) => s.key !== 'size' && s.key !== 'shape');
+
 export const DEFAULT_PARAMS: IslandParams = {
   seed: 'hakoniwa',
   size: 55,

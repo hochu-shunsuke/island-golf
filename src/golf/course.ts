@@ -21,6 +21,10 @@ export const KIND_NAMES: Record<HoleKind, string> = {
   cape: 'ケープ',
   redan: 'レダン',
   sahara: 'サハラ',
+  short: 'ショート',
+  straight: 'ストレート',
+  dogleg: 'ドッグレッグ',
+  lake: '池越え',
 };
 
 export function holesOf(design: CourseDesign): Hole[] {

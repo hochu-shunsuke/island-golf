@@ -4,7 +4,8 @@ import { Terrain } from '../world/terrain';
 import { gridToWorld } from './ground';
 import { makeGrid } from './grid';
 import { WATER_LAKE, WATER_RIVER, routeWater } from './hydrology';
-import { buildLandscape } from './landscape';
+import { buildCourseLandscape, buildLandscape } from './landscape';
+import type { CourseDesign } from '../golf/design';
 import type { IslandParams } from './params';
 
 /**
@@ -37,7 +38,10 @@ export interface Island {
 /** 湿り気は雨陰の計算で重い。この間隔ごとに引いて補間する。 */
 const MOISTURE_EVERY = 4;
 
-export function generateIsland(p: IslandParams, n: number, erosionN: number): Island {
+/**
+ * course を渡すと、ゴルフコースの世界を作る（コースの周りを谷底にし、外を山で囲む。川と湖は作らない）。
+ */
+export function generateIsland(p: IslandParams, n: number, erosionN: number, course?: CourseDesign): Island {
   const timings: Record<string, number> = {};
   let t = performance.now();
   const lap = (name: string) => {
@@ -47,7 +51,7 @@ export function generateIsland(p: IslandParams, n: number, erosionN: number): Is
   };
 
   // 1. 大きな形。
-  const landscape = buildLandscape(p, erosionN);
+  const landscape = course ? buildCourseLandscape(p, erosionN, course) : buildLandscape(p, erosionN);
   lap('隆起と侵食');
 
   // 2. 水。雨は湿った所ほど多く降る（川の水量の重み）。
@@ -59,7 +63,9 @@ export function generateIsland(p: IslandParams, n: number, erosionN: number): Is
     for (let i = 0; i < erosionN; i++) rain[j * erosionN + i] = 0.3 + dry.moistureAt(gridToWorld(i, erosionN), z);
   }
   const carved = landscape.height.slice();
-  const water = routeWater(carved, rain, p, eGrid);
+  const water = course
+    ? { level: new Float32Array(carved.length).fill(Number.NaN), kind: new Uint8Array(carved.length) }
+    : routeWater(carved, rain, p, eGrid);
   const carve = new Float32Array(carved.length);
   for (let k = 0; k < carved.length; k++) carve[k] = carved[k] - landscape.height[k];
   const waterArrays: IslandWaterArrays = { n: erosionN, carve, level: water.level, kind: water.kind };

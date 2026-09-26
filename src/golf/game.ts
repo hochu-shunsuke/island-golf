@@ -175,6 +175,7 @@ export class GolfGame {
   teeOff(hole: Hole): void {
     if (hole.number === 1) this.scores.length = 0;
     this.target = hole;
+    this.ball.cup = { x: hole.pin.x, z: hole.pin.z, r: CUP_RADIUS };
     this.strokes = 0;
     this.ball.place(hole.tee.x, hole.tee.z);
     this.ball.lie = 'fairway';
@@ -279,7 +280,7 @@ export class GolfGame {
       setLine(this.trail, this.trailPoints);
     }
     const h = this.target;
-    if (this.ball.checkCup(h.pin.x, h.pin.z, CUP_RADIUS)) {
+    if (this.ball.state === 'holed') {
       this.phase = 'holed';
       this.scores[h.number - 1] = this.strokes;
       let text = `${h.number} 番 カップイン！ ${this.strokes} 打（${scoreName(this.strokes, h.par)}）`;

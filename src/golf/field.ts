@@ -32,8 +32,10 @@ export interface FieldArrays {
   green: Uint8Array;
   tee: Uint8Array;
   sand: Uint8Array;
-  /** 回廊のラフ（リンクスの金色のフェスク）。 */
+  /** 回廊のラフ。 */
   rough: Uint8Array;
+  /** 林の濃さ（ホールとホールの間を森で埋める）。 */
+  forest: Uint8Array;
   /** 木を生やさない強さ（打つ回廊）。 */
   clear: Uint8Array;
   /** 池の水面（m）。池でなければ NaN。 */
@@ -42,11 +44,14 @@ export interface FieldArrays {
 
 /** 格子の刻み（m）。チャンクの一番細かい刻みと同じ。 */
 const STEP = 2;
-/** ホールの回廊の外に取る余白（m）。回廊の外側で自然の地形へ戻る幅を含む。 */
-const MARGIN = 90;
-/** フェアウェイの外のラフの帯（m）と、そこから自然の地形へ戻る幅（m）。 */
-const ROUGH = 16;
-const BLEND = 20;
+/** ホールの回廊の外に取る余白（m）。回廊の外側で自然の地形へ戻る幅と、ホールの間の林を含む。 */
+const MARGIN = 150;
+/** ホールの打つ線からこの距離までを林で埋める（外の自然の植生へ溶かす幅も）。 */
+const FOREST_NEAR = 70;
+const FOREST_FAR = 140;
+/** フェアウェイの外のラフの帯（m）と、そこから自然の地形（林）へ戻る幅（m）。 */
+const ROUGH = 10;
+const BLEND = 16;
 
 function smooth(a: number, b: number, x: number): number {
   const t = Math.max(0, Math.min(1, (x - a) / (b - a)));
@@ -169,6 +174,7 @@ export function buildCourseField(island: Island, design: CourseDesign, seed: str
     tee: new Uint8Array(size),
     sand: new Uint8Array(size),
     rough: new Uint8Array(size),
+    forest: new Uint8Array(size),
     clear: new Uint8Array(size),
     water: new Float32Array(size).fill(NaN),
   };
@@ -183,8 +189,10 @@ export function buildCourseField(island: Island, design: CourseDesign, seed: str
       let hole: HoleDesign | null = null;
       let corridor = 0;
       let at = { d: 0, s: 0 };
+      let nearest = Infinity;
       for (const h of design.holes) {
         const l = lineDistance(h.line, x, z);
+        nearest = Math.min(nearest, l.d);
         const half = Math.max(fairwayHalf(h, l.s), 14) + ROUGH;
         const c = 1 - smooth(half, half + BLEND, l.d);
         if (c > corridor) {
@@ -194,9 +202,13 @@ export function buildCourseField(island: Island, design: CourseDesign, seed: str
         }
       }
       const base = smoothAt(x, z) + rolls(x, z);
+      // 格子の縁へ向かって林を薄め、外の自然の森へつなぐ（縁で森の濃さが段にならないように）。
+      const edge = Math.min(i, j, nx - 1 - i, nz - 1 - j) * STEP;
+      const edgeFade = smooth(0, 40, edge);
       // 刈り込みの縁は定規で引いた線にしない（数十 m の波長で 3m ほど揺らす）。
       const wobble = noise.noise(x / 26 + 51.7, z / 26 - 23.9) * 3 + noise.noise(x / 9 - 7.1, z / 9 + 3.3) * 0.7;
       f.height[k] = base;
+      f.forest[k] = byte((1 - corridor) * (1 - smooth(FOREST_NEAR, FOREST_FAR, nearest)) * edgeFade);
       if (!hole) continue;
 
       let h = base;
@@ -210,7 +222,7 @@ export function buildCourseField(island: Island, design: CourseDesign, seed: str
       const tu = (x - t.x) * t.ax + (z - t.z) * t.az;
       const tv = -(x - t.x) * t.az + (z - t.z) * t.ax;
       const tOut = Math.hypot(Math.max(0, Math.abs(tu) - 6), Math.max(0, Math.abs(tv) - 4.5));
-      const teeBlend = 1 - smooth(0, 4, tOut);
+      const teeBlend = 1 - smooth(0, 3, tOut);
       h += (t.h - h) * teeBlend;
       const tee = 1 - smooth(0, 0.6, tOut);
       weight = Math.max(weight, teeBlend);
@@ -288,6 +300,7 @@ export class CourseField {
   sand = 0;
   rough = 0;
   clear = 0;
+  forest = 0;
 
   constructor(readonly a: FieldArrays) {}
 
@@ -320,7 +333,7 @@ export class CourseField {
   sample(x: number, z: number): boolean {
     const c = this.cellOf(x, z);
     if (!c) {
-      this.fairway = this.green = this.tee = this.sand = this.rough = this.clear = 0;
+      this.fairway = this.green = this.tee = this.sand = this.rough = this.clear = this.forest = 0;
       return false;
     }
     const { k, u, v } = c;
@@ -330,6 +343,7 @@ export class CourseField {
     this.sand = this.lerp(this.a.sand, k, u, v) / 255;
     this.rough = this.lerp(this.a.rough, k, u, v) / 255;
     this.clear = this.lerp(this.a.clear, k, u, v) / 255;
+    this.forest = this.lerp(this.a.forest, k, u, v) / 255;
     return true;
   }
 
