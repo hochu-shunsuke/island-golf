@@ -1,8 +1,8 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  // island game（island-maker から分かれたゲーム）。サーバの処理は無く、ビルドした静的ファイルを配るだけ。
+  // island golf（island-maker の島で回るゴルフ）。サーバの処理は無く、ビルドした静的ファイルを配るだけ。
   // 島は URL の # に載るので、サーバは島を知らない。
-  "name": "island-game",
+  "name": "island-golf",
   "compatibility_date": "2026-09-01",
   "assets": { "directory": "./dist" }
 }

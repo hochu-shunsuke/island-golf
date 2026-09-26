@@ -28,7 +28,7 @@ import { IslandWater } from './world/islandWater';
 import { Terrain } from './world/terrain';
 
 /**
- * island game（island-maker から分かれたゲーム。今はまだ island-maker と同じ）。カードのつまみで島を作りながら見渡し、
+ * island golf（island-maker の島で回るゴルフ。作り始め）。カードのつまみで島を作りながら見渡し、
  * 「この島へ入る」で鳥になって飛ぶ。
  * つまみと種は URL の `#` に載るので、URL を送れば同じ島を渡せる。
  *
