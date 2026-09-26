@@ -763,26 +763,110 @@ kbd {
   visibility: hidden;
 }
 
-.golf-club {
-  font-size: 14px;
-  letter-spacing: 0.1em;
+.shot-top {
+  width: 100%;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
 }
 
+.shot-club {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 14px;
+  letter-spacing: 0.06em;
+}
+
+/* クラブの短い名前は大きく（何を持っているか一目で分かるように）。 */
+.shot-short {
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.shot-dist {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.82);
+  font-variant-numeric: tabular-nums;
+}
+
+.shot-dist b {
+  font-size: 22px;
+  font-weight: 600;
+  color: #fff;
+}
+
+.shot-dist small {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.6);
+}
+
+/* 正確さの針: 真ん中の帯で止めるとナイスショット。構えるまでは薄く。 */
 .golf-meter {
+  position: relative;
   width: 100%;
-  height: 8px;
+  height: 12px;
   border-radius: 999px;
   overflow: hidden;
-  background: rgba(12, 20, 26, 0.45);
-  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: linear-gradient(90deg, rgba(255, 120, 90, 0.5), rgba(255, 255, 255, 0.12) 30%, rgba(255, 255, 255, 0.12) 70%, rgba(255, 120, 90, 0.5));
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  opacity: 0.45;
+  transition: opacity 150ms ease;
 }
 
-.golf-fill {
-  width: 100%;
-  height: 100%;
-  transform-origin: left center;
-  transform: scaleX(0);
-  background: linear-gradient(90deg, #dfe9e6, #fff6c8 70%, #ffb46b);
+.golf-power.swing .golf-meter {
+  opacity: 1;
+}
+
+.shot-sweet {
+  position: absolute;
+  left: 44%;
+  width: 12%;
+  top: 0;
+  bottom: 0;
+  background: rgba(150, 240, 160, 0.75);
+}
+
+.shot-needle {
+  position: absolute;
+  inset: 0;
+  transform: translateX(0%);
+}
+
+.shot-needle::before {
+  content: '';
+  position: absolute;
+  left: -1.5px;
+  top: -2px;
+  bottom: -2px;
+  width: 3px;
+  border-radius: 2px;
+  background: #fff;
+  box-shadow: 0 0 4px rgba(0, 0, 0, 0.5);
+}
+
+/* 落とし所の輪の上の距離。位置は JS が transform で毎フレーム決める。 */
+.aim-label {
+  position: absolute;
+  left: 0;
+  top: 0;
+  display: none;
+  padding: 2px 8px;
+  border-radius: 999px;
+  translate: -50% -100%;
+  font-size: 13px;
+  font-weight: 600;
+  color: #fff;
+  background: rgba(12, 20, 26, 0.55);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  pointer-events: none;
+  font-variant-numeric: tabular-nums;
+}
+
+.aim-label.on {
+  display: block;
 }
 
 .golf-hint {

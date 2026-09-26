@@ -42,8 +42,23 @@ export const PARAM_SPECS: readonly ParamSpec[] = [
   { key: 'warmth', short: 't', label: '暖かさ', low: '雪', high: '南国' },
 ];
 
-/** ゴルフの世界で効くつまみ（島の大きさと形はコースから決まるので出さない）。 */
-export const COURSE_PARAM_SPECS: readonly ParamSpec[] = PARAM_SPECS.filter((s) => s.key !== 'size' && s.key !== 'shape');
+/**
+ * ゴルフの世界の周りの山と気候（つまみは出さない。利用者の判断: 「パラメタは絶対にいらない」）。
+ * 合言葉だけでコースが決まる。URL にも合言葉だけを載せる。
+ */
+export const COURSE_WORLD: Omit<IslandParams, 'seed'> = {
+  size: 60,
+  shape: 20,
+  mountains: 60,
+  erosion: 50,
+  wetness: 60,
+  warmth: 55,
+};
+
+/** URL（#合言葉。古い URL の .z55… は読み飛ばす）からコースの世界のつまみ。 */
+export function courseParams(hash: string): IslandParams {
+  return { ...COURSE_WORLD, seed: decodeParams(hash).seed };
+}
 
 export const DEFAULT_PARAMS: IslandParams = {
   seed: 'hakoniwa',

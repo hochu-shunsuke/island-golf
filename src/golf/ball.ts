@@ -63,6 +63,8 @@ const G = 9.81;
 /** 抗力と揚力の係数（1/m）。0.5 ρ C A / m。 */
 const DRAG = 0.0047;
 const LIFT = 0.0042;
+/** 横回転で曲がる強さ（1/m）。 */
+const CURVE = 0.0022;
 /** スピンが弱まる時間（s）。 */
 const SPIN_DECAY = 6;
 /** 1 回の計算の刻み（s）。速い球でも地面をすり抜けないよう細かく。 */
@@ -90,6 +92,10 @@ export class Ball {
   state: BallState = 'rest';
   /** 揚力の強さ（打ち出しのスピン。時間で弱まる）。 */
   private spin = 0;
+  /** 落ちたときに止まる強さ（0..1）。跳ねるたびに弱まる。 */
+  private bite = 0;
+  /** 横回転（正で右へ曲がる）。スピンと同じく時間で弱まる。 */
+  private curve = 0;
   /** 最後に地面に触れた場所の種類。 */
   lie: Surface = 'fairway';
   /** 打った所と、打ってからの時間（木の下から打つときの決まりに使う）。 */
@@ -98,7 +104,14 @@ export class Ball {
   /** 狙っているカップ（中心と半径）。無ければ入らない（狙いの線を引くための試し打ちなど）。 */
   cup: { x: number; z: number; r: number } | null = null;
 
-  constructor(private readonly ground: GolfGround) {}
+  /**
+   * step は 1 回の計算の刻み。狙いの線を引くための試し打ちは粗く（1/60s）して軽くする
+   * （落ちる所は 1m ほどしか違わない）。本当に打つ球は細かい刻みのまま。
+   */
+  constructor(
+    private readonly ground: GolfGround,
+    private readonly step = BALL_STEP,
+  ) {}
 
   /** 地面に置く。 */
   place(x: number, z: number): void {
@@ -113,15 +126,19 @@ export class Ball {
 
   /**
    * 打つ。yaw は水平の向き（ラジアン、-z が 0 で左回り）、loft は打ち出し角（度）、
-   * speed は初速（m/s）、spin は揚力の強さ（0..1）。
+   * speed は初速（m/s）、spin は揚力の強さ（バックスピン）。
+   * bite は落ちたときに止まる強さ（0 はよく転がり、1 に近いほどその場で止まる。短いクラブほど強い）。
+   * curve は横回転（正で右へ曲がる。芯を外したときの曲がり）。
    */
-  hit(yaw: number, loftDeg: number, speed: number, spin: number): void {
+  hit(yaw: number, loftDeg: number, speed: number, spin: number, bite = 0, curve = 0): void {
     const loft = (loftDeg * Math.PI) / 180;
     const horizontal = Math.cos(loft) * speed;
     this.vel.x = -Math.sin(yaw) * horizontal;
     this.vel.z = -Math.cos(yaw) * horizontal;
     this.vel.y = Math.sin(loft) * speed;
     this.spin = spin;
+    this.bite = bite;
+    this.curve = curve;
     this.state = loftDeg > 0.5 ? 'flight' : 'roll';
     this.start.x = this.pos.x;
     this.start.z = this.pos.z;
@@ -136,7 +153,7 @@ export class Ball {
   update(dt: number): void {
     let t = dt;
     while (t > 1e-6 && (this.state === 'flight' || this.state === 'roll')) {
-      const h = Math.min(BALL_STEP, t);
+      const h = Math.min(this.step, t);
       if (this.state === 'flight') this.fly(h);
       else this.rollStep(h);
       // カップは刻みごとに見る（1 コマごとに見ると、速い球が穴の上を飛び越えて見逃す）。
@@ -194,6 +211,14 @@ export class Ball {
       az += uz * lift;
       this.spin *= Math.exp(-h / SPIN_DECAY);
     }
+    if (this.curve !== 0 && s > 1) {
+      // 横回転: 水平面で速さに垂直な向き（右が正）。
+      const hs = Math.max(Math.hypot(v.x, v.z), 1e-6);
+      const side = CURVE * this.curve * s * s;
+      ax += (-v.z / hs) * side;
+      az += (v.x / hs) * side;
+      this.curve *= Math.exp(-h / SPIN_DECAY);
+    }
     v.x += ax * h;
     v.y += ay * h;
     v.z += az * h;
@@ -227,14 +252,16 @@ export class Ball {
     const tx = v.x - vn * n.x;
     const ty = v.y - vn * n.y;
     const tz = v.z - vn * n.z;
-    // バックスピンが残っている球ほど、着地で面に沿った速さを失う（アイアンは止まり、ドライバーは転がる）。
-    const keep = 1 - Math.min(0.95, feel.grip + this.spin * 0.45);
+    // 短いクラブの球ほど、着地で面に沿った速さを失う（ウェッジはその場で止まり、ドライバーは転がる）。
+    const keep = Math.max(0.03, (1 - feel.grip) * (1 - this.bite));
     const out = -vn * feel.bounce;
     v.x = tx * keep + n.x * out;
     v.y = ty * keep + n.y * out;
     v.z = tz * keep + n.z * out;
-    // スピンは当たるたびにほぼ消える。
+    // スピンと止まる力は、当たるたびにほぼ消える。
     this.spin *= 0.3;
+    this.bite *= 0.35;
+    this.curve = 0;
     // 跳ねが小さくなったら転がりへ。
     if (out < 1.2) {
       v.x -= n.x * out;

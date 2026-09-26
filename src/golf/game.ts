@@ -1,20 +1,25 @@
 import * as THREE from 'three';
 import { SEA_LEVEL } from '../world/terrain';
 import type { Terrain } from '../world/terrain';
-import { BALL_RADIUS, Ball, type GolfGround, type Surface } from './ball';
-import { CLUBS } from './clubs';
+import { BALL_RADIUS, Ball, type GolfGround, SURFACE_FEEL, type Surface } from './ball';
+import { CLUBS, type Club, DRIVER, PUTTER } from './clubs';
 import { type Hole, holeIntro } from './course';
 
 /**
- * コースを回る。狙う → 力をためる → 飛ぶ・転がる → 止まる、を繰り返し、カップに入れば次のホールのティーへ。
- * 最後のホールの後は 1 番へ戻り、通算の打数を数え直す。
+ * コースを回る。**落とし所の輪を置いて狙い、正確さの針を 1 回止めて打つ**。
  *
- * コースは遊ぶために設計したもの（golf/design.ts）で、地形はそれに合わせて造成してある（golf/field.ts）。
- * 入力は main.ts から呼ぶ（キー・マウス・タッチを同じ関数に集める）。画面の表示（打数・距離・力）は
- * onStatus で main へ渡す。球の物理は golf/ball.ts。
+ * 他のゴルフゲームを調べて決めた打ち方（2026-09-26）:
+ * - 狙い: 落とし所（パットは止めたい所）の輪を地面の上で動かす（Golf Clash と同じ）。輪までの距離から、
+ *   クラブを選び（自分で替えてもよい）、輪に落ちる力を試し打ちで求める。距離をゲージで合わせない
+ * - 打つ: 押すと針が左右に振れ始め、もう一度押して止める。真ん中なら狙いどおり、ずれるほど左右に曲がり
+ *   距離も少し狂う（みんゴルのインパクト、マリオゴルフの 2 本目のゲージ）。ラフ・バンカーでは針が速い
+ * 以前は力のメーターが往復し、どこで止めると何 m 飛ぶか分からず、「操作性が悪い」と言われた。
+ *
+ * カップに入れば次のホールのティーへ。最後のホールの後は 1 番へ戻り、通算の打数を数え直す。
+ * 入力は main.ts から呼ぶ（キー・マウス・タッチを同じ関数に集める）。表示は onStatus で main へ渡す。
  */
 
-export type GolfPhase = 'aim' | 'charge' | 'moving' | 'holed';
+export type GolfPhase = 'aim' | 'swing' | 'moving' | 'holed';
 
 export interface GolfStatus {
   /** 回っているホール。 */
@@ -24,13 +29,16 @@ export interface GolfStatus {
   /** 回り終えたホールの打数の合計と、そのパーの合計。 */
   total: number;
   totalPar: number;
-  club: string;
+  club: Club;
+  /** 狙い（輪）までの距離と、今のクラブ・ライで届く一番遠い距離（m）。 */
+  aimDistance: number;
+  reach: number;
   /** ピンまでの水平距離（m）。 */
   toPin: number;
   lie: Surface;
   phase: GolfPhase;
-  /** ためている力 0..1（charge のときだけ）。 */
-  power: number;
+  /** 正確さの針 -1..1（swing のとき）。 */
+  needle: number;
   /** カップに入った後に進む先（最後のホールの後は 1 番）。 */
   next: Hole;
 }
@@ -67,18 +75,41 @@ export function toPar(strokes: number, par: number): string {
 /** ホールの紹介（上空からの眺め）の長さと、そこから打つ構えへ降りてくる時間（s）。 */
 const INTRO_TIME = 3.4;
 const INTRO_OUT = 1.4;
+/** カップの半径（m）。本物は 54mm。遊びやすいよう大きめ。 */
+const CUP_RADIUS = 0.22;
+/** 狙いを回す速さ（rad/s）と、輪を前後に動かす速さ（距離に対する割合 /s、キー）。 */
+const AIM_KEY_SPEED = 0.7;
+const DIST_KEY_SPEED = 0.55;
+/** 正確さの針: 1 秒に振れる回数（片道）。ライが悪いほど速い。パットはゆっくり。 */
+const NEEDLE_SPEED: Record<Surface, number> = {
+  green: 0.8,
+  fairway: 0.95,
+  rough: 1.35,
+  sand: 1.7,
+  rock: 1.4,
+  snow: 1.5,
+};
+const PUTT_NEEDLE_SPEED = 0.7;
+/** 真ん中とみなす幅（ナイスショット）。 */
+const PERFECT = 0.12;
+/** ライごとの飛びやすさ（初速に掛ける）。 */
+const LIE_POWER: Record<Surface, number> = {
+  green: 1,
+  fairway: 1,
+  rough: 0.84,
+  sand: 0.62,
+  rock: 0.9,
+  snow: 0.72,
+};
+/** 狙いの試し打ちの刻み（s）。粗くして軽く。 */
+const PREVIEW_STEP = 1 / 60;
+/** 狙いを動かしている間に、試し打ちをやり直す間隔（s）。 */
+const SOLVE_EVERY = 0.09;
 
 function smoothstep(a: number, b: number, x: number): number {
   const t = Math.max(0, Math.min(1, (x - a) / (b - a)));
   return t * t * (3 - 2 * t);
 }
-
-/** カップの半径（m）。本物は 54mm。遊びやすいよう大きめ。 */
-const CUP_RADIUS = 0.22;
-/** 力をためる周期（s）。0 → 1 → 0 と往復する。 */
-const CHARGE_PERIOD = 2.2;
-/** 狙いを回す速さ（rad/s、キー）。 */
-const AIM_KEY_SPEED = 0.9;
 
 export class GolfGame {
   readonly group = new THREE.Group();
@@ -86,36 +117,46 @@ export class GolfGame {
   phase: GolfPhase = 'aim';
   strokes = 0;
   clubIndex = 0;
-  /** 狙いの向き（ラジアン、-z が 0）。 */
+  /** クラブを自分で選んだか（選んだら、輪を動かしてもクラブを替えない）。 */
+  private clubLocked = false;
+  /** 落とし所（パットは止めたい所）。 */
+  readonly aimPoint = { x: 0, z: 0 };
+  /** 狙いの向き（ラジアン、-z が 0）。aimPoint から決まる。 */
   aimYaw = 0;
-  power = 0;
-  /** 左右キーを押している向き（-1..1）。 */
+  /** 輪に落とすための力 0..1（試し打ちで求める）。 */
+  power = 1;
+  /** 左右・前後のキーを押している向き（-1..1）。 */
   aimInput = 0;
+  distInput = 0;
+  needle = -1;
   /** 回っているホール。 */
   target: Hole;
   /** 回り終えたホールの打数（番号 - 1 の位置）。1 番のティーに立つと数え直す。 */
   private readonly scores: number[] = [];
 
   private readonly ballMesh: THREE.Mesh;
-  private readonly aimLine: THREE.Line;
+  private readonly arc: THREE.Line;
+  private readonly roll: THREE.Line;
   private readonly landing: THREE.Mesh;
   private readonly trail: THREE.Line;
   /** パットのときの傾斜の矢印（下る向き・長さと色が急さ）。 */
   private readonly slopes: THREE.LineSegments;
   private slopesFor = '';
   private readonly trailPoints: THREE.Vector3[] = [];
-  private chargeTime = 0;
+  private needleTime = 0;
   /** 打つ前の球の位置（池に入ったらここへ戻す）。 */
   private readonly lastSpot = { x: 0, z: 0 };
   private restTimer = 0;
   private readonly camPos = new THREE.Vector3();
   private readonly camLook = new THREE.Vector3();
   private cameraReady = false;
-  private previewDirty = true;
-  private landingSize = 1;
+  private solveDirty = true;
+  private solveWait = 0;
   /** ホールに立った直後、上空からホール全体を見せる残り時間（s）。 */
   private intro = 0;
   private readonly golfGround: GolfGround;
+  /** クラブごとの、平らな地面での力とキャリーの表（試し打ちの最初の見当に使う）。 */
+  private readonly carryTables = new Map<number, { p: number; carry: number }[]>();
 
   constructor(
     terrain: Terrain,
@@ -140,18 +181,23 @@ export class GolfGame {
       new THREE.MeshLambertMaterial({ color: 0xffffff, emissive: 0x333333 }),
     );
     this.group.add(this.ballMesh);
-    for (const h of course) this.group.add(buildPin(h, this.golfGround), buildTee(h, this.golfGround));
+    for (const h of course) this.group.add(buildPin(h, this.golfGround));
 
-    this.aimLine = new THREE.Line(
+    // 狙いの線は地面に沿わせる（弧のままだと、後ろから見て空へ伸びる 1 本の縦線に見えた）。
+    this.arc = new THREE.Line(
       new THREE.BufferGeometry(),
-      new THREE.LineDashedMaterial({ color: 0xffffff, dashSize: 3, gapSize: 2, transparent: true, opacity: 0.9 }),
+      new THREE.LineDashedMaterial({ color: 0xffffff, dashSize: 2.2, gapSize: 1.4, transparent: true, opacity: 0.9 }),
+    );
+    this.roll = new THREE.Line(
+      new THREE.BufferGeometry(),
+      new THREE.LineDashedMaterial({ color: 0xfff3b0, dashSize: 0.8, gapSize: 0.6, transparent: true, opacity: 0.9 }),
     );
     this.landing = new THREE.Mesh(
-      new THREE.RingGeometry(1.6, 2.2, 32).rotateX(-Math.PI / 2),
+      new THREE.RingGeometry(1.5, 2.1, 40).rotateX(-Math.PI / 2),
       new THREE.MeshBasicMaterial({
         color: 0xffffff,
         transparent: true,
-        opacity: 0.85,
+        opacity: 0.9,
         depthWrite: false,
         polygonOffset: true,
         polygonOffsetFactor: -4,
@@ -166,17 +212,26 @@ export class GolfGame {
       new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.9 }),
     );
     this.slopes.visible = false;
-    this.group.add(this.aimLine, this.landing, this.trail, this.slopes);
+    this.group.add(this.arc, this.roll, this.landing, this.trail, this.slopes);
     this.teeOff(course[0]);
   }
 
-  get club() {
+  get club(): Club {
     return CLUBS[this.clubIndex];
+  }
+
+  get putting(): boolean {
+    return this.clubIndex === PUTTER;
   }
 
   /** 旗の上の位置（画面に目印を出すため）。 */
   pinTop(h: Hole, out: THREE.Vector3): THREE.Vector3 {
     return out.set(h.pin.x, this.golfGround.height(h.pin.x, h.pin.z) + 3.2, h.pin.z);
+  }
+
+  /** 落とし所の輪の上（距離の目印を出すため）。 */
+  aimTop(out: THREE.Vector3): THREE.Vector3 {
+    return out.set(this.aimPoint.x, this.golfGround.height(this.aimPoint.x, this.aimPoint.z) + 1.2, this.aimPoint.z);
   }
 
   /** ホールのティーから打ち始める。1 番からなら通算を数え直す。 */
@@ -202,79 +257,176 @@ export class GolfGame {
     return this.course[(k + 1) % this.course.length];
   }
 
+  // ── 狙う ─────────────────────────────────────────────
+
+  /** 今のライで、クラブ c が届く一番遠いキャリー（m）。パターは転がる距離。 */
+  private reachOf(c: number): number {
+    if (c === PUTTER) return 40;
+    return CLUBS[c].carry * LIE_POWER[this.ball.lie];
+  }
+
+  /** ドライバーはティーからだけ。パターはグリーンとその周り（フェアウェイ）だけ。 */
+  private allowed(c: number): boolean {
+    if (c === DRIVER) return this.strokes === 0;
+    if (c === PUTTER) return this.ball.lie === 'green' || this.ball.lie === 'fairway';
+    return true;
+  }
+
+  /** 距離 d に合うクラブ: 届くクラブのうち一番短いもの（力いっぱいに近い、きれいな弧で打てる）。 */
+  private clubFor(d: number): number {
+    let pick = -1;
+    for (let c = 0; c < PUTTER; c++) {
+      if (!this.allowed(c)) continue;
+      if (this.reachOf(c) >= d) pick = c;
+    }
+    if (pick >= 0) return pick;
+    // どれも届かなければ、使える一番長いクラブ。
+    for (let c = 0; c < PUTTER; c++) if (this.allowed(c)) return c;
+    return PUTTER - 1;
+  }
+
+  /** 狙い（輪）までの距離（m）。 */
+  get aimDistance(): number {
+    return Math.hypot(this.aimPoint.x - this.ball.pos.x, this.aimPoint.z - this.ball.pos.z);
+  }
+
+  /** 狙いを、向き yaw・距離 d に置く（クラブの届く所まで）。 */
+  private setAim(yaw: number, d: number): void {
+    const min = this.putting ? 0.5 : 5;
+    const dist = Math.max(min, Math.min(d, this.reachOf(this.clubIndex)));
+    this.aimYaw = yaw;
+    this.aimPoint.x = this.ball.pos.x - Math.sin(yaw) * dist;
+    this.aimPoint.z = this.ball.pos.z - Math.cos(yaw) * dist;
+    this.solveDirty = true;
+  }
+
   /**
-   * 次の一打の準備。ティーからは設計した落とし所（曲がったホールでは角の手前）へ、
-   * それ以外はピンへ向く。距離でクラブを選ぶ。
+   * 次の一打の準備。グリーンの上はパターでカップへ。ティーからは設計した落とし所へ、
+   * それ以外はピンへ（届かなければピンの方へ届く所まで）。クラブは距離で選ぶ。
    */
   private readyToAim(): void {
     this.phase = 'aim';
-    this.power = 0;
-    const onTee = this.strokes === 0;
-    const aim = onTee ? this.target.aim : this.target.pin;
-    const dx = aim.x - this.ball.pos.x;
-    const dz = aim.z - this.ball.pos.z;
-    this.aimYaw = Math.atan2(-dx, -dz);
-    const toPin = Math.hypot(this.target.pin.x - this.ball.pos.x, this.target.pin.z - this.ball.pos.z);
-    this.clubIndex = pickClub(onTee ? Math.max(Math.hypot(dx, dz), Math.min(toPin, 250)) : toPin, this.ball.lie);
+    this.needle = -1;
+    this.clubLocked = false;
+    const b = this.ball.pos;
+    const pin = this.target.pin;
+    const toPin = Math.hypot(pin.x - b.x, pin.z - b.z);
+    const yawTo = (p: { x: number; z: number }) => Math.atan2(-(p.x - b.x), -(p.z - b.z));
+    if (this.ball.lie === 'green' || (this.ball.lie === 'fairway' && toPin < 6)) {
+      this.clubIndex = PUTTER;
+      this.setAim(yawTo(pin), toPin);
+    } else {
+      const aim = this.strokes === 0 ? this.target.aim : pin;
+      const d = Math.hypot(aim.x - b.x, aim.z - b.z);
+      this.clubIndex = this.clubFor(d);
+      this.setAim(yawTo(aim), d);
+    }
     this.trailPoints.length = 0;
     setLine(this.trail, []);
-    this.previewDirty = true;
+    this.arc.visible = true;
+    this.roll.visible = true;
+    this.landing.visible = true;
     this.emit();
   }
 
+  /** 狙いを回す（球を中心に）。 */
   rotateAim(delta: number): void {
-    if (this.phase !== 'aim' && this.phase !== 'charge') return;
+    if (this.phase !== 'aim') return;
     this.intro = Math.min(this.intro, INTRO_OUT);
-    this.aimYaw += delta;
-    this.previewDirty = true;
+    this.setAim(this.aimYaw + delta, this.aimDistance);
   }
 
+  /** 輪を前後に動かす（m）。クラブを自分で選んでいなければ、距離に合うクラブへ替える。 */
+  pushAim(delta: number): void {
+    if (this.phase !== 'aim') return;
+    this.intro = Math.min(this.intro, INTRO_OUT);
+    const d = Math.max(0, this.aimDistance + delta);
+    if (!this.clubLocked && !this.putting) this.clubIndex = this.clubFor(d);
+    this.setAim(this.aimYaw, d);
+    this.emit();
+  }
+
+  /** クラブを替える（自分で選んだら、輪を動かしても替えない）。 */
   changeClub(step: number): void {
     if (this.phase !== 'aim') return;
-    this.clubIndex = (this.clubIndex + step + CLUBS.length) % CLUBS.length;
-    this.previewDirty = true;
+    let c = this.clubIndex;
+    for (let k = 0; k < CLUBS.length; k++) {
+      c = (c + step + CLUBS.length) % CLUBS.length;
+      if (this.allowed(c)) break;
+    }
+    this.clubIndex = c;
+    this.clubLocked = true;
+    // 替えたクラブの届く所へ（パターはカップへ）。
+    const pin = this.target.pin;
+    if (c === PUTTER) {
+      this.setAim(this.aimYaw, Math.hypot(pin.x - this.ball.pos.x, pin.z - this.ball.pos.z));
+    } else {
+      this.setAim(this.aimYaw, Math.min(this.aimDistance, this.reachOf(c)));
+    }
     this.emit();
   }
 
-  startCharge(): void {
-    if (this.phase !== 'aim') return;
-    this.intro = 0;
-    this.phase = 'charge';
-    this.chargeTime = 0;
-    this.power = 0;
+  // ── 打つ ─────────────────────────────────────────────
+
+  /** 打つ操作を押した: 狙っていれば針を振り始め、振れていれば止めて打つ。 */
+  press(): void {
+    if (this.phase === 'aim') {
+      if (this.solveDirty) this.solve();
+      this.intro = 0;
+      this.phase = 'swing';
+      this.needleTime = 0;
+      this.needle = -1;
+      this.emit();
+    } else if (this.phase === 'swing') {
+      this.hit();
+    }
   }
 
-  release(): void {
-    if (this.phase !== 'charge') return;
+  /** 針を止めた所で打つ。真ん中ならナイスショット。ずれるほど曲がり、少し短くなる。 */
+  private hit(): void {
     const club = this.club;
-    const power = Math.max(0.03, this.power);
+    let e = this.needle;
+    const perfect = Math.abs(e) < PERFECT;
+    if (perfect) e = 0;
+    const putt = this.putting;
     this.lastSpot.x = this.ball.pos.x;
     this.lastSpot.z = this.ball.pos.z;
-    // ライ（ラフ・バンカー・雪）では球が飛ばない。パターはどこでもそのまま。
-    const lieLoss = club.loft === 0 ? 1 : LIE_POWER[this.ball.lie];
-    this.ball.hit(this.aimYaw, club.loft, club.speed * power * lieLoss, club.spin);
+    const yaw = this.aimYaw + ((e * (putt ? 0.8 : 2) * Math.PI) / 180) * -1;
+    const power = this.power * (1 - Math.abs(e) * (putt ? 0.05 : 0.07));
+    const lieLoss = putt ? 1 : LIE_POWER[this.ball.lie];
+    this.ball.hit(yaw, club.loft, club.speed * power * lieLoss, club.spin, club.bite, putt ? 0 : e * 0.55);
     this.strokes++;
     this.phase = 'moving';
     this.restTimer = 0;
     this.trailPoints.length = 0;
-    this.aimLine.visible = false;
+    this.arc.visible = false;
+    this.roll.visible = false;
     this.landing.visible = false;
     this.slopes.visible = false;
+    if (perfect && !putt) this.onMessage('ナイスショット！');
     this.emit();
   }
 
   update(dt: number): void {
     this.intro = Math.max(0, this.intro - dt);
-    if (this.aimInput !== 0) this.rotateAim(this.aimInput * AIM_KEY_SPEED * dt);
-    if (this.phase === 'charge') {
-      this.chargeTime += dt;
-      const t = (this.chargeTime / CHARGE_PERIOD) % 1;
-      // 0 → 1 → 0。上の方ほどゆっくり動く（最大の近くで止めやすい）。
-      this.power = Math.sin(t * Math.PI);
+    if (this.phase === 'aim') {
+      if (this.aimInput !== 0) this.rotateAim(this.aimInput * AIM_KEY_SPEED * dt);
+      if (this.distInput !== 0) this.pushAim(this.distInput * Math.max(3, this.aimDistance * DIST_KEY_SPEED) * dt);
+      this.solveWait -= dt;
+      if (this.solveDirty && this.solveWait <= 0) {
+        this.solve();
+        this.solveWait = SOLVE_EVERY;
+      }
+    }
+    if (this.phase === 'swing') {
+      this.needleTime += dt;
+      const f = this.putting ? PUTT_NEEDLE_SPEED : NEEDLE_SPEED[this.ball.lie];
+      // 左端から右へ、右端から左へ、を繰り返す（三角波）。
+      const t = (this.needleTime * f) % 2;
+      this.needle = -1 + 2 * (t < 1 ? t : 2 - t);
       this.emit();
     }
     if (this.phase === 'moving') this.updateMoving(dt);
-    if ((this.phase === 'aim' || this.phase === 'charge') && this.previewDirty) this.updatePreview();
     // カップに入った球は穴の中へ沈める。
     const sink = this.phase === 'holed' ? BALL_RADIUS * 1.6 : 0;
     this.ballMesh.position.set(this.ball.pos.x, this.ball.pos.y - sink, this.ball.pos.z);
@@ -328,42 +480,106 @@ export class GolfGame {
     return { total, totalPar };
   }
 
-  /**
-   * 狙いの線と、落ちる所の輪。今のクラブを最大の力で飛ばして確かめる。
-   * 線は弧ではなく地面に沿わせる（後ろから見ると弧は縦の 1 本になり、向きが読めない）。
-   */
-  private updatePreview(): void {
-    this.previewDirty = false;
+  // ── 試し打ち（輪に落ちる力と、狙いの線） ───────────────────
+
+  /** 平らな地面での力とキャリーの表（クラブごとに 1 度だけ作る）。 */
+  private carryTable(c: number): { p: number; carry: number }[] {
+    let table = this.carryTables.get(c);
+    if (table) return table;
+    table = [];
+    const flat: GolfGround = { height: () => 0, water: () => -Infinity, surface: () => 'fairway' };
+    const club = CLUBS[c];
+    for (let p = 0.15; p <= 1.001; p += 0.05) {
+      const sim = new Ball(flat, PREVIEW_STEP);
+      sim.place(0, 0);
+      sim.hit(0, club.loft, club.speed * p, club.spin, club.bite);
+      for (let t = 0; t < 12 && sim.state === 'flight'; t += PREVIEW_STEP) sim.update(PREVIEW_STEP);
+      table.push({ p, carry: -sim.pos.z });
+    }
+    this.carryTables.set(c, table);
+    return table;
+  }
+
+  /** 表から、平らな地面でキャリー d になる力。 */
+  private powerFor(c: number, d: number): number {
+    const table = this.carryTable(c);
+    if (d <= table[0].carry) return table[0].p * Math.max(0.3, d / Math.max(1, table[0].carry));
+    for (let k = 0; k < table.length - 1; k++) {
+      const a = table[k];
+      const b = table[k + 1];
+      if (d <= b.carry) return a.p + ((b.p - a.p) * (d - a.carry)) / (b.carry - a.carry || 1);
+    }
+    return 1;
+  }
+
+  /** 今の力で試し打ちする。落ちる所（最初に地面に触れた所）と、線の点。 */
+  private simulate(power: number): { land: THREE.Vector3 | null; arc: THREE.Vector3[]; roll: THREE.Vector3[] } {
     const club = this.club;
-    const sim = new Ball(this.golfGround);
+    const sim = new Ball(this.golfGround, PREVIEW_STEP);
     sim.place(this.ball.pos.x, this.ball.pos.z);
     sim.lie = this.ball.lie;
-    const lieLoss = club.loft === 0 ? 1 : LIE_POWER[this.ball.lie];
-    sim.hit(this.aimYaw, club.loft, club.speed * lieLoss, club.spin);
-    // 飛ぶクラブは最初に地面へ落ちる所まで、パターは止まる所まで。
-    for (let t = 0; t < 12; t += 1 / 30) {
-      const before = sim.state;
-      sim.update(1 / 30);
+    const lieLoss = this.putting ? 1 : LIE_POWER[this.ball.lie];
+    sim.hit(this.aimYaw, club.loft, club.speed * power * lieLoss, club.spin, club.bite);
+    const arc: THREE.Vector3[] = [new THREE.Vector3(sim.pos.x, sim.pos.y + 0.05, sim.pos.z)];
+    const roll: THREE.Vector3[] = [];
+    let land: THREE.Vector3 | null = null;
+    for (let t = 0; t < 14; t += PREVIEW_STEP) {
+      sim.update(PREVIEW_STEP);
+      const p = new THREE.Vector3(sim.pos.x, sim.pos.y + 0.05, sim.pos.z);
+      const ground = this.golfGround.height(sim.pos.x, sim.pos.z);
+      if (!land && club.loft > 0 && sim.pos.y - ground < BALL_RADIUS + 0.05) {
+        land = p.clone();
+        roll.push(p);
+      } else if (land || club.loft === 0) {
+        roll.push(p);
+      } else {
+        // 飛んでいる間は、真下の地面の上に点を置く。
+        arc.push(new THREE.Vector3(p.x, ground + 0.15, p.z));
+      }
       if (sim.state === 'rest' || sim.state === 'water') break;
-      if (club.loft > 0 && before === 'flight' && sim.state !== 'flight') break;
     }
-    const start = this.ball.pos;
-    const end = sim.pos;
-    const length = Math.hypot(end.x - start.x, end.z - start.z);
-    const steps = Math.max(2, Math.ceil(length / 2));
-    const pts: THREE.Vector3[] = [];
-    for (let i = 0; i <= steps; i++) {
-      const x = start.x + ((end.x - start.x) * i) / steps;
-      const z = start.z + ((end.z - start.z) * i) / steps;
-      pts.push(new THREE.Vector3(x, this.golfGround.height(x, z) + 0.12, z));
+    if (!land) land = club.loft === 0 ? null : arc[arc.length - 1];
+    return { land, arc, roll };
+  }
+
+  /**
+   * 輪に落ちる力を求め、狙いの線（弧と、落ちた後の転がり）を引き直す。
+   * 平らな地面の表で見当をつけ、試し打ちで打ち上げ・打ち下ろしの分を 2 回まで直す。
+   * パットは「輪で止まる」強さ（平らなら）。傾きは矢印を読んで、輪をずらして合わせる。
+   */
+  private solve(): void {
+    this.solveDirty = false;
+    const d = this.aimDistance;
+    const club = this.club;
+    let power: number;
+    let result: ReturnType<GolfGame['simulate']>;
+    if (this.putting) {
+      const a = SURFACE_FEEL[this.ball.lie].roll * 9.81;
+      power = Math.min(1, Math.sqrt(2 * a * d) / club.speed);
+      result = this.simulate(power);
+      // パットは転がる線の最初だけ見せる（全部見せると読む楽しさが無くなる）。
+      result.roll = result.roll.slice(0, Math.max(2, Math.floor(result.roll.length * 0.35)));
+    } else {
+      const lieLoss = LIE_POWER[this.ball.lie];
+      power = Math.min(1, this.powerFor(this.clubIndex, d / lieLoss));
+      result = this.simulate(power);
+      for (let k = 0; k < 2 && result.land; k++) {
+        const got = Math.hypot(result.land.x - this.ball.pos.x, result.land.z - this.ball.pos.z);
+        if (Math.abs(got - d) < 1.5 || got < 1) break;
+        const next = Math.max(0.1, Math.min(1, power * Math.pow(d / got, 0.7)));
+        if (Math.abs(next - power) < 1e-3) break;
+        power = next;
+        result = this.simulate(power);
+      }
     }
-    setLine(this.aimLine, pts);
-    this.aimLine.computeLineDistances();
-    this.aimLine.visible = true;
+    this.power = power;
+    setLine(this.arc, result.arc);
+    this.arc.computeLineDistances();
+    setLine(this.roll, result.roll);
+    this.roll.computeLineDistances();
+    // 輪は狙った所に置く（本当に落ちる所は弧の先で見える）。パットは止めたい所。
+    this.landing.position.set(this.aimPoint.x, this.golfGround.height(this.aimPoint.x, this.aimPoint.z) + 0.1, this.aimPoint.z);
     this.updateSlopes();
-    this.landing.position.set(end.x, this.golfGround.height(end.x, end.z) + 0.1, end.z);
-    this.landingSize = club.loft === 0 ? 0.25 : 1;
-    this.landing.visible = true;
   }
 
   /**
@@ -372,7 +588,7 @@ export class GolfGame {
    * 球とピンの位置が変わったときだけ作り直す。
    */
   private updateSlopes(): void {
-    const putting = this.club.loft === 0;
+    const putting = this.putting;
     this.slopes.visible = putting;
     if (!putting) return;
     const b = this.ball.pos;
@@ -412,7 +628,6 @@ export class GolfGame {
           col.push(color.r, color.g, color.b, color.r, color.g, color.b);
         };
         push(x, y0, z, tx, y1, tz);
-        // 矢じり。
         const hx = -dz * 0.12;
         const hz = dx * 0.12;
         push(tx, y1, tz, tx - dx * 0.2 + hx, y1, tz - dz * 0.2 + hz);
@@ -426,7 +641,12 @@ export class GolfGame {
     this.slopes.geometry = geo;
   }
 
-  /** カメラ。狙う間は球の後ろから打つ向きへ、動いている間は球を追う。 */
+  // ── カメラ ───────────────────────────────────────────
+
+  /**
+   * カメラ。狙う間は、球の後ろの高い所から輪の方を見る（遠くを狙うほど高く引く。落とし所とグリーンが
+   * 見えるように）。パットは低く。動いている間は球を追う。
+   */
   updateCamera(camera: THREE.PerspectiveCamera, dt: number): void {
     const p = this.ball.pos;
     const pos = new THREE.Vector3();
@@ -436,17 +656,26 @@ export class GolfGame {
       const hs = Math.hypot(v.x, v.z);
       const dx = hs > 0.5 ? v.x / hs : -Math.sin(this.aimYaw);
       const dz = hs > 0.5 ? v.z / hs : -Math.cos(this.aimYaw);
-      const back = this.club.loft === 0 ? 4 : 16;
-      pos.set(p.x - dx * back, p.y + (this.club.loft === 0 ? 2 : 7), p.z - dz * back);
+      const putt = this.putting;
+      const back = putt ? 4 : 18;
+      pos.set(p.x - dx * back, p.y + (putt ? 2 : 8), p.z - dz * back);
       look.set(p.x, p.y, p.z);
     } else {
       const dx = -Math.sin(this.aimYaw);
       const dz = -Math.cos(this.aimYaw);
-      // パットは少し高く後ろから、傾斜の矢印とカップまでの面が見えるように。
-      const putt = this.club.loft === 0;
-      const back = putt ? 4.2 : 6.5;
-      pos.set(p.x - dx * back, p.y + (putt ? 2.3 : 2.4), p.z - dz * back);
-      look.set(p.x + dx * (putt ? 7 : 30), p.y + (putt ? -0.3 : 2), p.z + dz * (putt ? 7 : 30));
+      const d = this.aimDistance;
+      if (this.putting) {
+        pos.set(p.x - dx * 4.2, p.y + 2.3, p.z - dz * 4.2);
+        const ahead = Math.min(d, 8);
+        look.set(p.x + dx * ahead, p.y - 0.3, p.z + dz * ahead);
+      } else {
+        const back = 7 + d * 0.1;
+        const up = 3 + d * 0.13;
+        pos.set(p.x - dx * back, p.y + up, p.z - dz * back);
+        const lx = p.x + dx * d * 0.72;
+        const lz = p.z + dz * d * 0.72;
+        look.set(lx, this.golfGround.height(lx, lz), lz);
+      }
     }
     // カメラが地面に埋まらないように。
     pos.y = Math.max(pos.y, this.golfGround.height(pos.x, pos.z) + 1.2);
@@ -457,9 +686,9 @@ export class GolfGame {
       const lz = (aim.z + pin.z) / 2;
       const dx = lx - tee.x;
       const dz = lz - tee.z;
-      const d = Math.hypot(dx, dz) || 1;
+      const dd = Math.hypot(dx, dz) || 1;
       const high = this.target.par === 3 ? 38 : 60;
-      const air = new THREE.Vector3(tee.x - (dx / d) * high, tee.h + high, tee.z - (dz / d) * high);
+      const air = new THREE.Vector3(tee.x - (dx / dd) * high, tee.h + high, tee.z - (dz / dd) * high);
       const airLook = new THREE.Vector3(lx, this.golfGround.height(lx, lz), lz);
       const a = smoothstep(0, INTRO_OUT, this.intro);
       pos.lerp(air, a);
@@ -473,15 +702,15 @@ export class GolfGame {
       this.camLook.copy(look);
       this.cameraReady = true;
     }
-    const k = 1 - Math.exp(-(this.phase === 'moving' ? 3.5 : 6) * dt);
+    const k = 1 - Math.exp(-(this.phase === 'moving' ? 3.5 : 5) * dt);
     this.camPos.lerp(pos, k);
     this.camLook.lerp(look, k);
     camera.position.copy(this.camPos);
     camera.lookAt(this.camLook);
-    // 落ちる所の輪は、遠くても見える大きさに（カメラからの距離に比例させる）。
+    // 落とし所の輪は、遠くても見える大きさに（カメラからの距離に比例させる）。
     if (this.landing.visible) {
       const d = camera.position.distanceTo(this.landing.position);
-      this.landing.scale.setScalar(this.landingSize * Math.max(0.5, d / 60));
+      this.landing.scale.setScalar((this.putting ? 0.2 : 1) * Math.max(0.4, d / 60));
     }
   }
 
@@ -490,7 +719,7 @@ export class GolfGame {
     this.cameraReady = false;
   }
 
-  /** 画面の表示（打数・距離・力）を送り直す。 */
+  /** 画面の表示を送り直す。 */
   emit(): void {
     const { total, totalPar } = this.totals();
     this.onStatus({
@@ -499,11 +728,13 @@ export class GolfGame {
       strokes: this.strokes,
       total,
       totalPar,
-      club: this.club.name,
+      club: this.club,
+      aimDistance: this.aimDistance,
+      reach: this.reachOf(this.clubIndex),
       toPin: Math.hypot(this.target.pin.x - this.ball.pos.x, this.target.pin.z - this.ball.pos.z),
       lie: this.ball.lie,
       phase: this.phase,
-      power: this.power,
+      needle: this.needle,
       next: this.nextHole(),
     });
   }
@@ -516,25 +747,6 @@ export class GolfGame {
 function setLine(line: THREE.Line, points: THREE.Vector3[]): void {
   line.geometry.dispose();
   line.geometry = new THREE.BufferGeometry().setFromPoints(points);
-}
-
-/** ライごとの飛びやすさ（初速に掛ける）。 */
-const LIE_POWER: Record<Surface, number> = {
-  green: 1,
-  fairway: 1,
-  rough: 0.82,
-  sand: 0.6,
-  rock: 0.9,
-  snow: 0.7,
-};
-
-/** 距離とライからクラブを選ぶ（平らな地面での合計の飛距離で）。 */
-function pickClub(distance: number, lie: Surface): number {
-  if (lie === 'green' || distance < 25) return CLUBS.length - 1;
-  if (distance < 95) return 3;
-  if (distance < 150) return 2;
-  if (distance < 200 || lie !== 'fairway') return 1;
-  return 0;
 }
 
 /** ピン: 白い旗竿と赤い旗、カップの黒い穴。 */
@@ -556,27 +768,5 @@ function buildPin(hole: Hole, ground: GolfGround): THREE.Group {
   cup.position.y = 0.02;
   g.add(pole, flag, cup);
   g.position.set(hole.pin.x, y, hole.pin.z);
-  return g;
-}
-
-/** ティーの目印: 打つ向きの左右に青い玉。 */
-function buildTee(hole: Hole, ground: GolfGround): THREE.Group {
-  const g = new THREE.Group();
-  const { tee, aim } = hole;
-  const dx = aim.x - tee.x;
-  const dz = aim.z - tee.z;
-  const d = Math.hypot(dx, dz) || 1;
-  const sx = -dz / d;
-  const sz = dx / d;
-  for (const side of [-1, 1]) {
-    const x = tee.x + sx * 2.5 * side;
-    const z = tee.z + sz * 2.5 * side;
-    const m = new THREE.Mesh(
-      new THREE.SphereGeometry(0.18, 12, 8),
-      new THREE.MeshLambertMaterial({ color: 0x2f6fd8 }),
-    );
-    m.position.set(x, ground.height(x, z) + 0.18, z);
-    g.add(m);
-  }
   return g;
 }

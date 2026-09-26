@@ -15,29 +15,39 @@ try {
     water: () => -Infinity,
     surface: () => surface,
   });
-  const shoot = (ground, club, power = 1) => {
+  // 刻みごとに見て、最初に地面に触れた所をキャリーにする。
+  const shoot = (ground, club, power = 1, curve = 0) => {
     const ball = new Ball(ground);
     ball.place(0, 0);
-    ball.hit(0, club.loft, club.speed * power, club.spin);
+    ball.hit(0, club.loft, club.speed * power, club.spin, club.bite, curve);
     let carry = null;
     let maxY = 0;
-    for (let t = 0; t < 30 && ball.state !== 'rest'; t += 1 / 60) {
-      const was = ball.state;
-      ball.update(1 / 60);
-      maxY = Math.max(maxY, ball.pos.y - 10);
-      if (carry === null && was === 'flight' && ball.state !== 'flight') carry = -ball.pos.z;
-      if (carry === null && ball.pos.y <= 10 + 0.11 && t > 0.2) carry = -ball.pos.z;
+    const base = ground.height(0, 0) + 0.1;
+    for (let t = 0; t < 30 && ball.state !== 'rest'; t += 1 / 240) {
+      ball.update(1 / 240);
+      maxY = Math.max(maxY, ball.pos.y - base);
+      if (carry === null && t > 0.2 && club.loft > 0 && ball.pos.y - ground.height(ball.pos.x, ball.pos.z) <= 0.1 + 1e-6) carry = -ball.pos.z;
     }
     return { total: -ball.pos.z, side: ball.pos.x, carry: carry ?? 0, apex: maxY, state: ball.state };
   };
   const rows = [];
   for (const club of CLUBS) {
     const r = shoot(flat(club.loft === 0 ? 'green' : 'fairway'), club);
-    rows.push(`${club.name} キャリー ${r.carry.toFixed(0)}m 合計 ${r.total.toFixed(0)}m 最高 ${r.apex.toFixed(0)}m`);
+    rows.push(`${club.short} キャリー ${r.carry.toFixed(0)}m 合計 ${r.total.toFixed(0)}m 最高 ${r.apex.toFixed(0)}m`);
     assert.equal(r.state, 'rest', `${club.name} の球が止まりません`);
+    if (club.loft === 0) continue;
+    // ゲームらしい高い弧（最高点 24m 以上）で、表のキャリーどおりに飛ぶ。
+    assert(r.apex >= 24, `${club.name} の弧が低すぎます（最高 ${r.apex.toFixed(0)}m）`);
+    assert(Math.abs(r.carry - club.carry) < 6, `${club.name} のキャリーが表と違います（${r.carry.toFixed(0)}m、表は ${club.carry}m）`);
   }
   const driver = shoot(flat('fairway'), CLUBS[0]);
-  assert(driver.total > 200 && driver.total < 270, `ドライバーの飛距離がゴルフらしくありません: ${driver.total.toFixed(0)}m`);
+  assert(driver.total > 220 && driver.total < 275, `ドライバーの飛距離がゴルフらしくありません: ${driver.total.toFixed(0)}m`);
+  // 短いクラブほど落ちてから止まる（サンドは 5m 以内）。
+  const sand = shoot(flat('fairway'), CLUBS[6]);
+  assert(sand.total - sand.carry < 5, `サンドの球が転がりすぎます（${(sand.total - sand.carry).toFixed(1)}m）`);
+  // 芯を外した横回転で右へ曲がる。
+  const sliced = shoot(flat('fairway'), CLUBS[3], 1, 0.5);
+  assert(sliced.side > 8, `横回転で曲がりません（横 ${sliced.side.toFixed(1)}m）`);
   const putt = shoot(flat('green'), CLUBS[CLUBS.length - 1], 0.5);
   assert(putt.total > 2 && putt.total < 15, `パターの半分の力が ${putt.total.toFixed(1)}m 転がりました`);
   const putter = CLUBS[CLUBS.length - 1];
@@ -65,7 +75,7 @@ try {
   assert(putAt(0.25, 2.4), '縁にかかった遅い球が入りません');
   assert(!putAt(0.4, 2.4), '穴に触れていない球が入りました');
   assert(!putAt(0, 7), '強すぎる球が入りました');
-  console.log('PASS  球の物理', rows.join(' / '), `パター半分 ${putt.total.toFixed(1)}m（上り ${up.total.toFixed(1)} 下り ${down.total.toFixed(1)}、20% の上り ${back.total.toFixed(1)}、横の傾きで ${side.side.toFixed(1)}m 曲がる）`);
+  console.log('PASS  球の物理', rows.join(' / '), `スライス ${sliced.side.toFixed(0)}m 右へ`, `パター半分 ${putt.total.toFixed(1)}m（上り ${up.total.toFixed(1)} 下り ${down.total.toFixed(1)}、20% の上り ${back.total.toFixed(1)}、横の傾きで ${side.side.toFixed(1)}m 曲がる）`);
 } finally {
   await server.close();
 }

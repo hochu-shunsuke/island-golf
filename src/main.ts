@@ -5,14 +5,7 @@ import './touch.css';
 import type { Island } from './island/generate';
 import { EROSION_PREVIEW_RES, EROSION_RES, FULL_RES, ISLAND_SIZE, PREVIEW_RES } from './island/grid';
 import { IslandGround } from './island/ground';
-import {
-  type IslandParams,
-  PARAM_SPECS,
-  cleanSeed,
-  decodeParams,
-  encodeParams,
-  randomSeed,
-} from './island/params';
+import { type IslandParams, cleanSeed, courseParams, randomSeed } from './island/params';
 import type { GenerateRequest, GenerateResult, WorkerResult } from './island/worker';
 import { Player } from './player/controller';
 import { ChunkManager } from './render/chunkManager';
@@ -70,7 +63,7 @@ let inputMode: 'touch' | 'keys' = preferredTouch ? 'touch' : 'keys';
 // 判定はここ 1 か所だけ。CSS もこの結果を見る。
 document.documentElement.dataset.input = inputMode;
 
-let params: IslandParams = decodeParams(location.hash);
+let params: IslandParams = courseParams(location.hash);
 
 // ── 描画 ───────────────────────────────────────────────
 const renderer = new THREE.WebGLRenderer({
@@ -127,24 +120,13 @@ const overlay = new Overlay(document.getElementById('ui')!, params, inputMode ==
     overlay.setParams(params);
     commit();
   },
-  onParam: (key, value, final) => {
-    params[key] = value;
-    if (final) commit();
-    else request(PREVIEW_RES);
-  },
-  // サイコロ: 種もつまみも全部振り直して、まったく別の島を引く。
+  // サイコロ: 合言葉を振り直して、別のコースを引く。
   onRandom: () => {
     params = { ...params, seed: randomSeed() };
-    for (const spec of PARAM_SPECS) params[spec.key] = randomParam();
     overlay.setParams(params);
     commit();
   },
 });
-
-/** サイコロのつまみ。端（0 や 100）は極端な島になりやすいので、少し内側から引く。 */
-function randomParam(): number {
-  return Math.round(10 + Math.random() * 80);
-}
 
 // ── 島の計算 ───────────────────────────────────────────
 // Worker は 1 つ。計算中に新しい依頼が来たら最新の 1 件だけを取っておき、終わったら流す。
@@ -261,7 +243,7 @@ worker.onmessage = (ev: MessageEvent<WorkerResult>) => {
 };
 
 function commit(): void {
-  history.replaceState(null, '', `#${encodeParams(params)}`);
+  history.replaceState(null, '', `#${params.seed}`);
   request(FULL_RES);
 }
 
@@ -337,6 +319,7 @@ function toggleScout(): void {
     if (!preparePlayer()) return;
     scout = true;
     overlay.setGolf(null);
+    overlay.setAimLabel(null);
     overlay.flash(
       inputMode === 'touch' ? '空から見ています。「球へ戻る」で打つ所へ。' : '空から見ています。F で球へ戻ります。',
     );
@@ -410,9 +393,13 @@ function stopPlaying(): void {
   playing = false;
   // 押しっぱなし・倒しっぱなしの判定が残らないように全部戻す。
   player?.clearKeys();
-  if (golf) golf.aimInput = 0;
+  if (golf) {
+    golf.aimInput = 0;
+    golf.distInput = 0;
+  }
   applyTouchUi();
   overlay.setGolf(null);
+  overlay.setAimLabel(null);
   overlay.setFlagMarkers([]);
   overlay.setFlightInfo(false, 0, 0, false);
   void releaseWakeLock();
@@ -509,23 +496,27 @@ document.addEventListener('visibilitychange', () => {
 addEventListener('blur', () => {
   if (!playing) return;
   player?.clearKeys();
-  if (golf) golf.aimInput = 0;
+  if (golf) {
+    golf.aimInput = 0;
+    golf.distInput = 0;
+  }
 });
 
 // ── ゴルフの入力（キー・マウス・タッチを同じ関数に集める） ─────
-/** 打つ操作を押した。カップに入った後なら、もう一度ティーから。 */
-function shotDown(): void {
+// 狙いは落とし所の輪を動かす（左右 = 向き、前後 = 距離）。打つのは「構える → 針を止める」の 2 回押し。
+/** 打つ操作を押した。狙っていれば構え、針が振れていれば打つ。カップに入った後なら次のホールへ。 */
+function shotPress(): void {
   if (!golf || scout) return;
   if (golf.phase === 'holed') {
     golf.next();
     return;
   }
-  golf.startCharge();
+  golf.press();
 }
 
-function shotUp(): void {
-  if (!golf || scout) return;
-  golf.release();
+/** 輪を前後に動かす量（画素あたり m）。遠くを狙うほど大きく、パットは細かく。 */
+function pushPerPixel(game: GolfGame): number {
+  return game.putting ? 0.03 : Math.max(0.15, game.aimDistance * 0.0035);
 }
 
 addEventListener('keydown', (e: KeyboardEvent) => {
@@ -542,9 +533,11 @@ addEventListener('keydown', (e: KeyboardEvent) => {
   if (!golf) return;
   if (e.code === 'KeyA' || e.code === 'ArrowLeft') golf.aimInput = 1;
   else if (e.code === 'KeyD' || e.code === 'ArrowRight') golf.aimInput = -1;
-  else if ((e.code === 'KeyW' || e.code === 'ArrowUp') && !e.repeat) golf.changeClub(-1);
-  else if ((e.code === 'KeyS' || e.code === 'ArrowDown') && !e.repeat) golf.changeClub(1);
-  else if (e.code === 'Space' && !e.repeat) shotDown();
+  else if (e.code === 'KeyW' || e.code === 'ArrowUp') golf.distInput = 1;
+  else if (e.code === 'KeyS' || e.code === 'ArrowDown') golf.distInput = -1;
+  else if (e.code === 'KeyQ' && !e.repeat) golf.changeClub(-1);
+  else if (e.code === 'KeyE' && !e.repeat) golf.changeClub(1);
+  else if (e.code === 'Space' && !e.repeat) shotPress();
 });
 addEventListener('keyup', (e: KeyboardEvent) => {
   if (!playing) return;
@@ -555,18 +548,22 @@ addEventListener('keyup', (e: KeyboardEvent) => {
   if (!golf) return;
   if ((e.code === 'KeyA' || e.code === 'ArrowLeft') && golf.aimInput > 0) golf.aimInput = 0;
   if ((e.code === 'KeyD' || e.code === 'ArrowRight') && golf.aimInput < 0) golf.aimInput = 0;
-  if (e.code === 'Space') shotUp();
+  if ((e.code === 'KeyW' || e.code === 'ArrowUp') && golf.distInput > 0) golf.distInput = 0;
+  if ((e.code === 'KeyS' || e.code === 'ArrowDown') && golf.distInput < 0) golf.distInput = 0;
 });
 addEventListener('mousemove', (e: MouseEvent) => {
   if (document.pointerLockElement !== canvas) return;
-  if (scout) player?.onLook(e.movementX, e.movementY, LOOK_SENSITIVITY);
-  else golf?.rotateAim(-e.movementX * AIM_MOUSE);
+  if (scout) {
+    player?.onLook(e.movementX, e.movementY, LOOK_SENSITIVITY);
+    return;
+  }
+  if (!golf) return;
+  // 左右で向き、前後（上下）で距離。
+  golf.rotateAim((-e.movementX * AIM_MOUSE) / (golf.putting ? 2.5 : 1));
+  if (e.movementY !== 0) golf.pushAim(-e.movementY * pushPerPixel(golf));
 });
 addEventListener('mousedown', (e: MouseEvent) => {
-  if (document.pointerLockElement === canvas && e.button === 0) shotDown();
-});
-addEventListener('mouseup', (e: MouseEvent) => {
-  if (document.pointerLockElement === canvas && e.button === 0) shotUp();
+  if (document.pointerLockElement === canvas && e.button === 0) shotPress();
 });
 addEventListener(
   'wheel',
@@ -576,18 +573,22 @@ addEventListener(
   { passive: true },
 );
 
-// タッチ: 画面をなぞって狙いを回す。打つ・クラブ・空から・休憩はボタン。
+// タッチ: 画面をなぞって輪を動かす（左右 = 向き、上下 = 距離）。打つ・クラブ・空から・休憩はボタン。
 let aimPointer: number | null = null;
 let aimLastX = 0;
+let aimLastY = 0;
 canvas.addEventListener('pointerdown', (e) => {
   if (!playing || scout || e.pointerType === 'mouse') return;
   aimPointer = e.pointerId;
   aimLastX = e.clientX;
+  aimLastY = e.clientY;
 });
 canvas.addEventListener('pointermove', (e) => {
   if (e.pointerId !== aimPointer || !golf) return;
-  golf.rotateAim(-(e.clientX - aimLastX) * AIM_TOUCH);
+  golf.rotateAim((-(e.clientX - aimLastX) * AIM_TOUCH) / (golf.putting ? 2.5 : 1));
+  golf.pushAim(-(e.clientY - aimLastY) * pushPerPixel(golf) * 1.4);
   aimLastX = e.clientX;
+  aimLastY = e.clientY;
 });
 const endAim = (e: PointerEvent) => {
   if (e.pointerId === aimPointer) aimPointer = null;
@@ -595,8 +596,8 @@ const endAim = (e: PointerEvent) => {
 canvas.addEventListener('pointerup', endAim);
 canvas.addEventListener('pointercancel', endAim);
 overlay.bindGolfTouch({
-  onShotDown: shotDown,
-  onShotUp: shotUp,
+  onShotDown: shotPress,
+  onShotUp: () => {},
   onClub: (step) => golf?.changeClub(step),
   onScout: toggleScout,
   onPause: stopPlaying,
@@ -718,6 +719,26 @@ function placeFlagMarkers(game: GolfGame, from: { x: number; z: number }): void 
   overlay.setFlagMarkers(flagMarkers);
 }
 
+const aimScreen = new THREE.Vector3();
+/** 落とし所の輪の上に距離を出す（狙っている間と構えている間）。 */
+function placeAimLabel(game: GolfGame): void {
+  if (game.phase !== 'aim' && game.phase !== 'swing') {
+    overlay.setAimLabel(null);
+    return;
+  }
+  game.aimTop(aimScreen).project(camera);
+  if (aimScreen.z >= 1 || Math.abs(aimScreen.x) > 1 || Math.abs(aimScreen.y) > 1) {
+    overlay.setAimLabel(null);
+    return;
+  }
+  const d = game.aimDistance;
+  overlay.setAimLabel({
+    x: ((aimScreen.x + 1) / 2) * innerWidth,
+    y: ((1 - aimScreen.y) / 2) * innerHeight,
+    text: game.putting ? `${d.toFixed(1)} m` : `${Math.round(d)} m`,
+  });
+}
+
 const timer = new THREE.Timer();
 let elapsed = 0;
 renderer.setAnimationLoop(() => {
@@ -746,6 +767,7 @@ renderer.setAnimationLoop(() => {
     golf.updateCamera(camera, dt);
     chunks?.update(camera.position.x, camera.position.z);
     placeFlagMarkers(golf, golf.ball.pos);
+    placeAimLabel(golf);
   } else {
     controls.update();
   }

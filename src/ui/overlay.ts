@@ -1,6 +1,6 @@
 import { LIE_NAMES, scoreName, toPar, type GolfStatus } from '../golf/game';
 import { KIND_NAMES } from '../golf/course';
-import { COURSE_PARAM_SPECS, type IslandParams, type ParamKey, encodeParams } from '../island/params';
+import type { IslandParams } from '../island/params';
 
 /**
  * island golf の画面（island-maker と同じ作り）。見た目と入口の作りは stroll の開始画面と同じ（ガラスのカード、丸いボタン、
@@ -15,8 +15,6 @@ export interface OverlayHandlers {
   onStart: (pointerType: string) => void;
   /** 合言葉を打ち直したとき。 */
   onSeed: (seed: string) => void;
-  /** つまみ。final は指を離したとき（本番の格子で作り直す）。 */
-  onParam: (key: ParamKey, value: number, final: boolean) => void;
   /** サイコロ。合言葉もつまみも全部振り直す。 */
   onRandom: () => void;
 }
@@ -31,7 +29,6 @@ export class Overlay {
   private readonly panel: HTMLElement;
   private readonly lead: HTMLElement;
   private readonly seedInput: HTMLInputElement;
-  private readonly sliders = new Map<ParamKey, { input: HTMLInputElement; value: HTMLElement }>();
   private readonly startBtn: HTMLButtonElement;
   private readonly status: HTMLElement;
   private readonly hud: HTMLElement;
@@ -77,9 +74,8 @@ export class Overlay {
                   autocomplete="off" spellcheck="false" />
                 <button type="button" class="seed-dice" title="別の島を引く" aria-label="別の島を引く">⚄</button>
               </div>
-              <p class="hint">同じ合言葉なら、同じコース。サイコロで別のコースへ。つまみは周りの山と気候。</p>
+              <p class="hint">同じ合言葉なら、同じコース。サイコロで別のコースへ。</p>
             </div>
-            <div class="sliders"></div>
           </div>
 
           <canvas class="minimap"></canvas>
@@ -87,13 +83,13 @@ export class Overlay {
           <details class="controls">
             <summary>操作</summary>
             <ul class="keys">
-              <li><kbd>マウス</kbd><kbd>A</kbd><kbd>D</kbd> 狙う</li>
-              <li><kbd>W</kbd><kbd>S</kbd> クラブ</li>
-              <li><kbd>クリック</kbd><kbd>Space</kbd> ためて打つ</li>
+              <li><kbd>マウス</kbd><kbd>WASD</kbd> 落とし所の輪を動かす</li>
+              <li><kbd>Q</kbd><kbd>E</kbd><kbd>ホイール</kbd> クラブ</li>
+              <li><kbd>クリック</kbd><kbd>Space</kbd> 構える → 針が真ん中で打つ</li>
               <li><kbd>F</kbd> 空から見る／球へ戻る</li>
               <li><kbd>Esc</kbd> 一時停止</li>
             </ul>
-            <p class="controls-note">山に囲まれた谷に、名ホールの型で設計した 9 ホールの林間コースがあります。押している間に力がたまり、離すと打ちます。点線と輪が、今のクラブで落ちる所。空から見ている間は stroll と同じく飛べます（WASD・Space 上昇・C 下降）。</p>
+            <p class="controls-note">落とし所の輪を動かして狙います（パットは止めたい所）。クラブは距離で選ばれ、自分で替えることもできます。構えると針が左右に振れ、真ん中で止めるとナイスショット、ずれるほど曲がります。ラフやバンカーでは針が速くなります。</p>
           </details>
         </div>
 
@@ -107,9 +103,13 @@ export class Overlay {
       <div class="flight-hud"></div>
       <div class="golf-hud"><div class="golf-hole"></div><div class="golf-line"></div></div>
       <div class="flag-markers" aria-hidden="true"></div>
+      <div class="aim-label" aria-hidden="true"></div>
       <div class="golf-power">
-        <span class="golf-club"></span>
-        <div class="golf-meter"><div class="golf-fill"></div></div>
+        <div class="shot-top">
+          <span class="shot-club"><b class="shot-short"></b><span class="shot-name"></span></span>
+          <span class="shot-dist"></span>
+        </div>
+        <div class="golf-meter"><div class="shot-sweet"></div><div class="shot-needle"></div></div>
         <span class="golf-hint"></span>
       </div>
       <div class="golf-touch">
@@ -120,9 +120,9 @@ export class Overlay {
         <button class="g-btn g-shot">打つ</button>
       </div>
       <div class="keyboard-guide" aria-label="操作方法" aria-hidden="true">
-        <span><kbd>マウス</kbd><kbd>A</kbd><kbd>D</kbd> 狙う</span>
-        <span><kbd>W</kbd><kbd>S</kbd> クラブ</span>
-        <span><kbd>クリック</kbd><kbd>Space</kbd> 押してためて、離して打つ</span>
+        <span><kbd>マウス</kbd><kbd>WASD</kbd> 落とし所の輪を動かす</span>
+        <span><kbd>Q</kbd><kbd>E</kbd><kbd>ホイール</kbd> クラブ</span>
+        <span><kbd>クリック</kbd><kbd>Space</kbd> 構える → 針が真ん中で打つ</span>
         <span><kbd>F</kbd> 空から見る／戻る</span>
         <span><kbd>Esc</kbd> 休憩</span>
       </div>
@@ -141,34 +141,6 @@ export class Overlay {
     this.keyboardGuide = this.root.querySelector('.keyboard-guide')!;
     this.toast = this.root.querySelector('.toast')!;
 
-    const sliders = this.root.querySelector('.sliders')!;
-    for (const spec of COURSE_PARAM_SPECS) {
-      const wrap = document.createElement('label');
-      wrap.className = 'slider';
-      wrap.innerHTML = `
-        <span class="slider-head"><span class="field-label"></span><span class="slider-value"></span></span>
-        <input type="range" min="0" max="100" step="1" />
-        <span class="slider-ends"><span></span><span></span></span>`;
-      wrap.querySelector('.field-label')!.textContent = spec.label;
-      const ends = wrap.querySelectorAll('.slider-ends span');
-      ends[0].textContent = spec.low;
-      ends[1].textContent = spec.high;
-      const input = wrap.querySelector('input')!;
-      const value = wrap.querySelector('.slider-value') as HTMLElement;
-      // 動かしている間は粗い格子で下見し、離したら細かい格子で作り直す。
-      input.addEventListener('input', () => {
-        value.textContent = input.value;
-        this.params[spec.key] = Number(input.value);
-        this.handlers.onParam(spec.key, Number(input.value), false);
-      });
-      input.addEventListener('change', () => {
-        this.params[spec.key] = Number(input.value);
-        this.handlers.onParam(spec.key, Number(input.value), true);
-      });
-      this.sliders.set(spec.key, { input, value });
-      sliders.appendChild(wrap);
-    }
-
     this.seedInput.addEventListener('change', () => this.handlers.onSeed(this.seedInput.value));
     this.seedInput.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') this.seedInput.blur();
@@ -182,8 +154,11 @@ export class Overlay {
     this.golfHole = this.root.querySelector('.golf-hole')!;
     this.golfLine = this.root.querySelector('.golf-line')!;
     this.golfPower = this.root.querySelector('.golf-power')!;
-    this.golfClub = this.root.querySelector('.golf-club')!;
-    this.golfFill = this.root.querySelector('.golf-fill')!;
+    this.shotShort = this.root.querySelector('.shot-short')!;
+    this.shotName = this.root.querySelector('.shot-name')!;
+    this.shotDist = this.root.querySelector('.shot-dist')!;
+    this.shotNeedle = this.root.querySelector('.shot-needle')!;
+    this.aimLabel = this.root.querySelector('.aim-label')!;
     this.golfHint = this.root.querySelector('.golf-hint')!;
     this.golfTouch = this.root.querySelector('.golf-touch')!;
     this.flagLayer = this.root.querySelector('.flag-markers')!;
@@ -194,8 +169,12 @@ export class Overlay {
   private readonly golfHole: HTMLElement;
   private readonly golfLine: HTMLElement;
   private readonly golfPower: HTMLElement;
-  private readonly golfClub: HTMLElement;
-  private readonly golfFill: HTMLElement;
+  private readonly shotShort: HTMLElement;
+  private readonly shotName: HTMLElement;
+  private readonly shotDist: HTMLElement;
+  private readonly shotNeedle: HTMLElement;
+  private readonly aimLabel: HTMLElement;
+  private aimLabelText = '';
   private readonly golfHint: HTMLElement;
   private readonly golfTouch: HTMLElement;
   private readonly flagLayer: HTMLElement;
@@ -210,31 +189,56 @@ export class Overlay {
     this.root.classList.toggle('golfing', on);
     this.golfPower.classList.toggle('on', on && status.phase !== 'moving');
     this.golfPower.classList.toggle('done', on && status.phase === 'holed');
+    this.golfPower.classList.toggle('swing', on && status.phase === 'swing');
     if (!status) return;
     const { target } = status;
     const total = status.total > 0 ? ` · 通算 ${toPar(status.total, status.totalPar)}` : '';
     const holeText = `${target.number}/${status.holeCount} 番 ${KIND_NAMES[target.kind]} · パー ${target.par} · ${Math.round(target.length)} m${total}`;
     const shot = status.phase === 'holed' ? `${status.strokes} 打でカップイン` : `${status.strokes + 1} 打目`;
     const line = `${shot} · ピンまで ${Math.round(status.toPin)} m · ${LIE_NAMES[status.lie]}`;
-    const text = holeText + line + status.club + status.phase;
+    const putt = status.club.loft === 0;
+    // 狙いの距離: パットは小数 1 桁まで。
+    const dist = putt ? status.aimDistance.toFixed(1) : String(Math.round(status.aimDistance));
+    const reach = putt ? '' : ` / ${Math.round(status.reach)}`;
+    const text = holeText + line + status.club.name + status.phase + dist + reach;
     if (text !== this.golfText) {
       this.golfText = text;
       this.golfHole.textContent = holeText;
       this.golfLine.textContent = line;
-      this.golfClub.textContent = status.phase === 'holed' ? scoreName(status.strokes, target.par) : status.club;
+      if (status.phase === 'holed') {
+        this.shotShort.textContent = '';
+        this.shotName.textContent = scoreName(status.strokes, target.par);
+        this.shotDist.textContent = '';
+      } else {
+        this.shotShort.textContent = status.club.short;
+        this.shotName.textContent = status.club.name;
+        // 狙いまでの距離と、このクラブ・ライで届く一番遠い距離。
+        this.shotDist.innerHTML = `<b>${dist}</b> m<small>${reach}</small>`;
+      }
       const press = this.touch ? '打つを押すと' : 'クリックか Space で';
       this.golfHint.textContent =
         status.phase === 'holed'
           ? status.next.number === 1
             ? `${press}、もう一度 1 番から`
             : `${press}、${status.next.number} 番のティーへ`
-          : status.phase === 'charge'
-            ? '離して打つ'
+          : status.phase === 'swing'
+            ? '針が真ん中に来たら、もう一度押す'
             : this.touch
-              ? '打つを押してためる'
-              : 'クリックか Space を押してためる';
+              ? '画面をなぞって輪を動かす · 打つで構える'
+              : 'マウスで輪を動かす · クリックか Space で構える';
     }
-    this.golfFill.style.transform = `scaleX(${status.power.toFixed(3)})`;
+    this.shotNeedle.style.transform = `translateX(${(((status.needle + 1) / 2) * 100).toFixed(2)}%)`;
+  }
+
+  /** 落とし所の輪の上に、距離の目印。画面の位置（px）か、null で隠す。 */
+  setAimLabel(at: { x: number; y: number; text: string } | null): void {
+    this.aimLabel.classList.toggle('on', at !== null);
+    if (!at) return;
+    if (at.text !== this.aimLabelText) {
+      this.aimLabelText = at.text;
+      this.aimLabel.textContent = at.text;
+    }
+    this.aimLabel.style.transform = `translate(${at.x.toFixed(1)}px, ${at.y.toFixed(1)}px)`;
   }
 
   /**
@@ -298,16 +302,11 @@ export class Overlay {
 
   }
 
-  /** つまみと合言葉の表示を島に合わせる（サイコロや URL から変わったとき）。 */
+  /** 合言葉の表示をコースに合わせる（サイコロや URL から変わったとき）。 */
   setParams(params: IslandParams): void {
     this.params = { ...params };
     this.seedInput.value = params.seed;
     this.hudSeed.textContent = params.seed;
-    for (const spec of COURSE_PARAM_SPECS) {
-      const s = this.sliders.get(spec.key)!;
-      s.input.value = String(params[spec.key]);
-      s.value.textContent = String(params[spec.key]);
-    }
   }
 
   /**
@@ -437,7 +436,7 @@ export class Overlay {
   }
 
   private async copyUrl(): Promise<void> {
-    const url = `${location.origin}${location.pathname}#${encodeParams(this.params)}`;
+    const url = `${location.origin}${location.pathname}#${this.params.seed}`;
     try {
       await navigator.clipboard.writeText(url);
       this.flash('リンクをコピーしました。友達に同じ島を渡せます。');
