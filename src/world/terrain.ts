@@ -1,4 +1,5 @@
 import { hashSeed } from '../core/rng';
+import { ISLAND_SIZE } from '../island/grid';
 import type { IslandParams } from '../island/params';
 import { Climate } from './climate';
 import type { IslandWater } from './islandWater';
@@ -17,6 +18,8 @@ const C_FAIRWAY = srgb(0x74a64c);
 const C_TEE = srgb(0x86b85a);
 const C_GREEN = srgb(0x72c95a);
 const C_SAND = srgb(0xe4d3a2);
+/** 谷底の森の地面（木の下の暗い緑）。 */
+const C_FOREST_FLOOR = srgb(0x2f5a26);
 /** 林間コースのラフ（フェアウェイより深い緑）。自然の草の色に 7 割だけ寄せて、むらを残す。 */
 const C_ROUGH = srgb(0x5d8a3c);
 
@@ -53,6 +56,9 @@ export class Terrain {
   private readonly fields: SurfaceFields = { slope: 0, curvature: 0, drainage: 0 };
   private readonly layers = new Float32Array(SURFACE_STRIDE);
   private readonly moistureBias: number;
+  /** ゴルフの世界の谷底 0..1（landscape の格子。無ければ null）。 */
+  private readonly valley: Float32Array | null;
+  private readonly valleyN: number;
   private readonly warmthBias: number;
 
   constructor(
@@ -63,6 +69,8 @@ export class Terrain {
     private readonly course: CourseField | null = null,
   ) {
     this.params = params;
+    this.valley = landscape.valley ?? null;
+    this.valleyN = landscape.n;
     const [a, b, c, d] = hashSeed(params.seed);
     this.shape = new IslandShape(landscape, d);
     this.climate = new Climate(a, b, c, d, this.shape.massAt);
@@ -91,29 +99,55 @@ export class Terrain {
     return specialAt(x, z, this.nSpecialEdge, this.specialSalt);
   }
 
-  /** 森のかたまり 0..1.4。植生の密度に掛ける。コースのホールの間は森で埋める。 */
+  /** 谷底の強さ 0..1（ゴルフの世界で、山の輪の内側）。 */
+  private valleyAt(x: number, z: number): number {
+    const v = this.valley;
+    if (!v) return 0;
+    const n = this.valleyN;
+    const fx = Math.max(0, Math.min(n - 1.001, (x / ISLAND_SIZE + 0.5) * (n - 1)));
+    const fz = Math.max(0, Math.min(n - 1.001, (z / ISLAND_SIZE + 0.5) * (n - 1)));
+    const i = Math.floor(fx);
+    const j = Math.floor(fz);
+    const u = fx - i;
+    const w = fz - j;
+    const k = j * n + i;
+    return (v[k] * (1 - u) + v[k + 1] * u) * (1 - w) + (v[k + n] * (1 - u) + v[k + n + 1] * u) * w;
+  }
+
+  /** コースとその林、谷底の強さ 0..1（青々とした温帯の林にする所）。 */
+  private keptAt(x: number, z: number): number {
+    const valley = this.valleyAt(x, z);
+    if (!this.course?.sample(x, z)) return valley;
+    return Math.max(valley, this.course.clear, this.course.forest);
+  }
+
+  /**
+   * 森のかたまり 0..1.4。植生の密度に掛ける。コースのホールの間と、山の輪の内側の谷底は森で埋める
+   * （打つ回廊には、mownAt が木を生やさない）。
+   */
   groveAt(x: number, z: number): number {
     const g = this.climate.groveAt(x, z);
-    if (!this.course?.sample(x, z)) return g;
-    return g + (1.4 - g) * this.course.forest;
+    // ホールの間の林は濃く（打つ回廊を縁取る）、谷底の森は程々に（地面の色で森に見せる。木を増やすと重い）。
+    const course = this.course?.sample(x, z) ? this.course.forest : 0;
+    const valley = this.valleyAt(x, z);
+    const target = Math.max(g * (1 - valley * 0.5), 1.4 * course, 0.55 * valley);
+    return target;
   }
 
   /** 湿り気 0..1。独立ノイズへ山塊による雨陰を重ね、湿り気のつまみでずらす。 */
   moistureAt(x: number, z: number): number {
     const m = clamp(this.climate.moistureAt(x, z) + this.moistureBias, 0, 1);
-    // コースとその林は手入れされていて青々としている（山に囲まれた谷は雨陰で乾きやすいため）。
-    if (!this.course?.sample(x, z)) return m;
-    const kept = Math.max(this.course.clear, this.course.forest);
+    // コースと谷底の森は青々としている（山に囲まれた谷は雨陰で乾きやすいため）。
+    const kept = this.keptAt(x, z);
     return m + (Math.max(m, 0.78) - m) * kept;
   }
 
   /** 気温 0..1（0 が寒い、1 が暑い）。標高が上がるほど冷え、暖かさのつまみでずらす。 */
   temperatureAt(x: number, z: number, h: number): number {
     const t = clamp(this.climate.temperatureAt(x, z, h) + this.warmthBias, 0, 1);
-    // コースとその林は温帯の林間（寒い所に当たっても、ツンドラの色と針葉樹だけにしない）。
+    // コースと谷底の森は温帯の林間（寒い所に当たっても、ツンドラの色と針葉樹だけにしない）。
     // 周りの山はそのまま（高い所は雪）。
-    if (!this.course?.sample(x, z)) return t;
-    const kept = Math.max(this.course.clear, this.course.forest);
+    const kept = this.keptAt(x, z);
     return t + (Math.max(t, 0.52) - t) * kept;
   }
 
@@ -212,7 +246,22 @@ export class Terrain {
     // 岩の種類は地方ごと（波長 約 1.5km）。
     const rockTone = this.nRock.noise(x * 0.0007, z * 0.0007);
     surfaceIsland(h, slopeLocal, this.fields, temp, moisture, special, patch, rockTone, out, o);
+    this.paintForestFloor(x, z, out, o);
     if (this.course) this.paintMown(x, z, out, o);
+  }
+
+  /**
+   * 谷底の森の地面は濃い緑（木の下の暗い地面）。木を詰め込んで森に見せると木が 2.5 倍・三角形が 1.6 倍に
+   * なって重くなったので、地面の色で森の濃さを出し、木は程々にする。
+   */
+  private paintForestFloor(x: number, z: number, out: Float32Array, o: number): void {
+    let f = this.valleyAt(x, z);
+    if (this.course?.sample(x, z)) f = Math.max(f, this.course.forest) * (1 - this.course.clear);
+    if (f <= 0) return;
+    const k = f * 0.8;
+    for (let c = 0; c < 3; c++) out[o + c] += (C_FOREST_FLOOR[c] - out[o + c]) * k;
+    out[o + 6] *= 1 - f;
+    out[o + 7] *= 1 - f;
   }
 
   /** コースの芝と砂の色。岩と雪は消す（造成した所に岩肌や雪は出さない）。 */

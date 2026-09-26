@@ -375,6 +375,12 @@ export class Overlay {
     this.updateStartLabel();
   }
 
+  /** 別のコースになった（「続きから」ではなく、最初から）。 */
+  resetEntered(): void {
+    this.entered = false;
+    this.updateStartLabel();
+  }
+
   private updateStartLabel(): void {
     this.startBtn.disabled = !this.ready;
     if (!this.ready) {

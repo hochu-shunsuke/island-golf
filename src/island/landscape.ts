@@ -49,6 +49,8 @@ export interface Landscape {
   curvature: Float32Array;
   /** 水の集まり 0..1。侵食で求めた集水面積の平方根を、島の中で正規化したもの。谷筋ほど大きい。 */
   drainage: Float32Array;
+  /** ゴルフの世界だけ: 山の輪の内側の谷底 0..1（ここを森で埋める）。 */
+  valley?: Float32Array;
 }
 
 export function buildLandscape(p: IslandParams, n: number): Landscape {
@@ -164,6 +166,7 @@ export function buildCourseLandscape(p: IslandParams, n: number, design: CourseD
   const h = new Float64Array(N);
   const uplift = new Float64Array(N);
   const base = new Uint8Array(N);
+  const valley = new Float32Array(N);
   for (let j = 0; j < n; j++) {
     for (let i = 0; i < n; i++) {
       const k = j * n + i;
@@ -195,13 +198,15 @@ export function buildCourseLandscape(p: IslandParams, n: number, design: CourseD
       floor = mix(2, floor, smoothstep(0, 0.15, land));
       let dc = Infinity;
       for (const hole of design.holes) dc = Math.min(dc, lineDistance(hole.line, x, z).d);
+      // 山の輪は、コースからの距離を揺らして、ゆっくり立ち上げる（そろった放射状の谷筋にしない）。
+      const dw = dc + fbm(nRidge, u * 3.1 + 11.7, v * 3.1 - 5.3, 3, 1.0) * 180;
+      // 谷底（山の麓より内側）は森で埋める。海岸の近くは浜へ抜ける。
+      valley[k] = (1 - smoothstep(170, 480, dw)) * smoothstep(0.02, 0.12, land);
       if (dc < 90) {
         base[k] = 1;
         h[k] = floor;
         continue;
       }
-      // 山の輪は、コースからの距離を揺らして、ゆっくり立ち上げる（そろった放射状の谷筋にしない）。
-      const dw = dc + fbm(nRidge, u * 3.1 + 11.7, v * 3.1 - 5.3, 3, 1.0) * 180;
       const ring = smoothstep(150, 950, dw);
       const ridge = ridged(nRidge, u, v, 4, 1.7);
       const peaks = smoothstep(0.35, 0.9, fbm(nPeaks, u, v, 3, 1.6) * 0.5 + 0.5);
@@ -215,7 +220,7 @@ export function buildCourseLandscape(p: IslandParams, n: number, design: CourseD
   const area = erode(h, uplift, base, n, cell, K, U);
   const height = new Float32Array(N);
   for (let k = 0; k < N; k++) height[k] = h[k];
-  return { n, height, ...surfaceFields(height, area, base, n, cell) };
+  return { n, height, ...surfaceFields(height, area, base, n, cell), valley };
 }
 
 /**

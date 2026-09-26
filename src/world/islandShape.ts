@@ -21,6 +21,8 @@ export interface LandscapeArrays {
   slope: Float32Array;
   curvature: Float32Array;
   drainage: Float32Array;
+  /** ゴルフの世界だけ: 山の輪の内側の谷底 0..1（ここを森で埋める）。 */
+  valley?: Float32Array;
 }
 
 /** 色を塗るための地形の性質（fieldsAt が書き込む）。 */

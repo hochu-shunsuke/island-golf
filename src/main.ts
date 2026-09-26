@@ -144,6 +144,8 @@ let island: Island | null = null;
 let terrain: Terrain | null = null;
 let chunks: ChunkManager | null = null;
 let madeParams: IslandParams | null = null;
+/** 今見せているコースの合言葉（変わったら、遊んでいた続きを捨てる）。 */
+let shownSeed = '';
 /** この島のコース（遊ぶために設計したホール）と、地形の造成の格子（golf/field.ts）。 */
 let course: Hole[] = [];
 let courseField: FieldArrays | null = null;
@@ -180,6 +182,14 @@ function show(msg: GenerateResult): void {
   if (golf) {
     scene.remove(golf.group);
     golf = null;
+  }
+  // 別のコースになったら、空から見ていた状態と「続きから」も捨て、1 番のティーから始める。
+  // 残すと、休憩中に合言葉を変えても前の島の空の位置から続いた（利用者が踏んだ）。
+  if (shownSeed !== made.seed) {
+    shownSeed = made.seed;
+    scout = false;
+    entered = false;
+    overlay.resetEntered();
   }
   const field = courseField ? new CourseField(courseField) : null;
   terrain = new Terrain(made, next.landscape, new IslandWater(next.water), field);
@@ -800,6 +810,8 @@ if (import.meta.env.DEV) {
       if (ensureGolf()) startPlaying();
     },
     scout: () => toggleScout(),
+    stop: () => stopPlaying(),
+    isScout: () => scout,
   };
 }
 // 開いたら、まず粗い下見（約 0.3 秒）で島を見せ、続けて本番の細かさで作り直す。
