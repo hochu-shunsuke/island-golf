@@ -26,7 +26,7 @@ import { type TouchControls, createTouchControls, hasTouchInput, isTouchDevice }
 import { drawIslandMap } from './view/mapView';
 import { IslandWater } from './world/islandWater';
 import { Terrain } from './world/terrain';
-import type { Hole } from './golf/course';
+import { type Hole, holeIntro } from './golf/course';
 import { CourseField, type FieldArrays } from './golf/field';
 import { GolfGame } from './golf/game';
 
@@ -169,7 +169,15 @@ let courseField: FieldArrays | null = null;
 function request(n: number): void {
   const erosionN = n === FULL_RES ? EROSION_RES : EROSION_PREVIEW_RES;
   const sun = sky.sunDirection;
-  const req: GenerateRequest = { id: nextId++, params: { ...params }, n, erosionN, sun: [sun.x, sun.y, sun.z] };
+  const req: GenerateRequest = {
+    id: nextId++,
+    params: { ...params },
+    n,
+    erosionN,
+    sun: [sun.x, sun.y, sun.z],
+    // ピン位置は日ごとに替わる（同じ URL なら、同じ日は誰でも同じピン）。
+    day: Math.floor(Date.now() / 86_400_000),
+  };
   lastRequested = req.id;
   overlay.setReady(false);
   if (busy) {
@@ -388,6 +396,7 @@ function startPlaying(): void {
     camera.fov = GOLF_FOV;
     camera.updateProjectionMatrix();
     golf?.emit();
+    if (golf && golf.strokes === 0 && golf.phase === 'aim') overlay.flash(holeIntro(golf.target));
   }
   fog.density = FOG_FLY;
   overlay.hide();

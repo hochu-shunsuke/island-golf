@@ -109,7 +109,12 @@ export class Terrain {
 
   /** 気温 0..1（0 が寒い、1 が暑い）。標高が上がるほど冷え、暖かさのつまみでずらす。 */
   temperatureAt(x: number, z: number, h: number): number {
-    return clamp(this.climate.temperatureAt(x, z, h) + this.warmthBias, 0, 1);
+    const t = clamp(this.climate.temperatureAt(x, z, h) + this.warmthBias, 0, 1);
+    // コースとその林は温帯の林間（寒い所に当たっても、ツンドラの色と針葉樹だけにしない）。
+    // 周りの山はそのまま（高い所は雪）。
+    if (!this.course?.sample(x, z)) return t;
+    const kept = Math.max(this.course.clear, this.course.forest);
+    return t + (Math.max(t, 0.52) - t) * kept;
   }
 
   /** 内陸の水面（湖・川・コースの池）。無ければ -Infinity。海は render/water.ts の板が担当する。 */

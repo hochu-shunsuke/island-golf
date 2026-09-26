@@ -32,6 +32,8 @@ export interface GenerateRequest {
   erosionN: number;
   /** 太陽へ向かう単位ベクトル（光を焼き込むのに使う）。 */
   sun: [number, number, number];
+  /** 今日（1970 年からの日数）。ピン位置を日ごとに替える。 */
+  day: number;
 }
 
 export interface GenerateResult {
@@ -74,7 +76,7 @@ const post = (msg: WorkerResult, transfer: Transferable[]) =>
   (self as unknown as Worker).postMessage(msg, transfer);
 
 self.onmessage = (ev: MessageEvent<GenerateRequest>) => {
-  const { id, params, n, erosionN, sun } = ev.data;
+  const { id, params, n, erosionN, sun, day } = ev.data;
   const started = performance.now();
   // コースを先に並べ（route）、その周りに世界を作り（谷底と山）、地面に合わせて高さを入れ（settle）、
   // 造成する（field）。
@@ -89,7 +91,7 @@ self.onmessage = (ev: MessageEvent<GenerateRequest>) => {
     field ? new CourseField(field) : null,
   );
   if (field) shapeGrid(island, terrain, field);
-  const course = { holes: holesOf(design), field };
+  const course = { holes: holesOf(design, day), field };
   const overview = buildOverviewArrays(island, terrain);
   const overviewWater = buildOverviewWaterArray(island);
   const map = renderIslandMap(island, terrain);

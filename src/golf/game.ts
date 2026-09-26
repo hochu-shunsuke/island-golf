@@ -3,7 +3,7 @@ import { SEA_LEVEL } from '../world/terrain';
 import type { Terrain } from '../world/terrain';
 import { BALL_RADIUS, Ball, type GolfGround, type Surface } from './ball';
 import { CLUBS } from './clubs';
-import type { Hole } from './course';
+import { type Hole, holeIntro } from './course';
 
 /**
  * コースを回る。狙う → 力をためる → 飛ぶ・転がる → 止まる、を繰り返し、カップに入れば次のホールのティーへ。
@@ -100,6 +100,9 @@ export class GolfGame {
   private readonly aimLine: THREE.Line;
   private readonly landing: THREE.Mesh;
   private readonly trail: THREE.Line;
+  /** パットのときの傾斜の矢印（下る向き・長さと色が急さ）。 */
+  private readonly slopes: THREE.LineSegments;
+  private slopesFor = '';
   private readonly trailPoints: THREE.Vector3[] = [];
   private chargeTime = 0;
   /** 打つ前の球の位置（池に入ったらここへ戻す）。 */
@@ -158,7 +161,12 @@ export class GolfGame {
       new THREE.BufferGeometry(),
       new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.55 }),
     );
-    this.group.add(this.aimLine, this.landing, this.trail);
+    this.slopes = new THREE.LineSegments(
+      new THREE.BufferGeometry(),
+      new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.9 }),
+    );
+    this.slopes.visible = false;
+    this.group.add(this.aimLine, this.landing, this.trail, this.slopes);
     this.teeOff(course[0]);
   }
 
@@ -186,6 +194,7 @@ export class GolfGame {
   /** カップに入った後に、次のホールのティーへ。 */
   next(): void {
     this.teeOff(this.nextHole());
+    this.onMessage(holeIntro(this.target));
   }
 
   private nextHole(): Hole {
@@ -250,6 +259,7 @@ export class GolfGame {
     this.trailPoints.length = 0;
     this.aimLine.visible = false;
     this.landing.visible = false;
+    this.slopes.visible = false;
     this.emit();
   }
 
@@ -350,9 +360,70 @@ export class GolfGame {
     setLine(this.aimLine, pts);
     this.aimLine.computeLineDistances();
     this.aimLine.visible = true;
+    this.updateSlopes();
     this.landing.position.set(end.x, this.golfGround.height(end.x, end.z) + 0.1, end.z);
     this.landingSize = club.loft === 0 ? 0.25 : 1;
     this.landing.visible = true;
+  }
+
+  /**
+   * パットのときだけ、球とピンの周りの傾斜を矢印で見せる（下る向き、長さと色が急さ）。
+   * 起伏のあるグリーンは、傾きが読めて初めて面白くなる（マリオゴルフの曲がりの表示、みんゴルの傾斜の格子）。
+   * 球とピンの位置が変わったときだけ作り直す。
+   */
+  private updateSlopes(): void {
+    const putting = this.club.loft === 0;
+    this.slopes.visible = putting;
+    if (!putting) return;
+    const b = this.ball.pos;
+    const pin = this.target.pin;
+    const key = `${b.x.toFixed(2)},${b.z.toFixed(2)},${pin.x},${pin.z}`;
+    if (key === this.slopesFor) return;
+    this.slopesFor = key;
+    const cx = (b.x + pin.x) / 2;
+    const cz = (b.z + pin.z) / 2;
+    const reach = Math.min(22, Math.hypot(pin.x - b.x, pin.z - b.z) / 2 + 5);
+    const step = 1.25;
+    const e = 0.4;
+    const pos: number[] = [];
+    const col: number[] = [];
+    const color = new THREE.Color();
+    const h = (x: number, z: number) => this.golfGround.height(x, z);
+    for (let z = cz - reach; z <= cz + reach; z += step) {
+      for (let x = cx - reach; x <= cx + reach; x += step) {
+        if (Math.hypot(x - cx, z - cz) > reach) continue;
+        const gx = (h(x + e, z) - h(x - e, z)) / (2 * e);
+        const gz = (h(x, z + e) - h(x, z - e)) / (2 * e);
+        const slope = Math.hypot(gx, gz);
+        if (slope < 0.004) continue;
+        // 下る向き。長さは急さ（1% で 0.25m、5% 以上で 0.8m）。
+        const dx = -gx / slope;
+        const dz = -gz / slope;
+        const len = Math.min(0.8, 0.12 + slope * 14);
+        const y0 = h(x, z) + 0.05;
+        const tx = x + dx * len;
+        const tz = z + dz * len;
+        const y1 = h(tx, tz) + 0.05;
+        // 白（ほぼ平ら）→ 水色 → 黄 → 赤（5% 以上）。
+        const t = Math.min(1, slope / 0.05);
+        color.setHSL(0.55 - t * 0.55, t < 0.15 ? 0.1 : 0.85, t < 0.15 ? 0.95 : 0.6);
+        const push = (ax: number, ay: number, az: number, bx: number, by: number, bz: number) => {
+          pos.push(ax, ay, az, bx, by, bz);
+          col.push(color.r, color.g, color.b, color.r, color.g, color.b);
+        };
+        push(x, y0, z, tx, y1, tz);
+        // 矢じり。
+        const hx = -dz * 0.12;
+        const hz = dx * 0.12;
+        push(tx, y1, tz, tx - dx * 0.2 + hx, y1, tz - dz * 0.2 + hz);
+        push(tx, y1, tz, tx - dx * 0.2 - hx, y1, tz - dz * 0.2 - hz);
+      }
+    }
+    this.slopes.geometry.dispose();
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    geo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+    this.slopes.geometry = geo;
   }
 
   /** カメラ。狙う間は球の後ろから打つ向きへ、動いている間は球を追う。 */
@@ -371,10 +442,11 @@ export class GolfGame {
     } else {
       const dx = -Math.sin(this.aimYaw);
       const dz = -Math.cos(this.aimYaw);
+      // パットは少し高く後ろから、傾斜の矢印とカップまでの面が見えるように。
       const putt = this.club.loft === 0;
-      const back = putt ? 3.2 : 6.5;
-      pos.set(p.x - dx * back, p.y + (putt ? 1.3 : 2.4), p.z - dz * back);
-      look.set(p.x + dx * (putt ? 6 : 30), p.y + (putt ? 0 : 2), p.z + dz * (putt ? 6 : 30));
+      const back = putt ? 4.2 : 6.5;
+      pos.set(p.x - dx * back, p.y + (putt ? 2.3 : 2.4), p.z - dz * back);
+      look.set(p.x + dx * (putt ? 7 : 30), p.y + (putt ? -0.3 : 2), p.z + dz * (putt ? 7 : 30));
     }
     // カメラが地面に埋まらないように。
     pos.y = Math.max(pos.y, this.golfGround.height(pos.x, pos.z) + 1.2);

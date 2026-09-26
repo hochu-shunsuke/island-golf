@@ -184,7 +184,14 @@ export function buildCourseLandscape(p: IslandParams, n: number, design: CourseD
         continue;
       }
       // 谷底: 数百 m の波長で ±9m、百数十 m で ±2.5m うねる。海岸へ向かって浜の高さへ下りる。
+      // その上に、ホールの高低の型（打ち下ろしの丘・打ち上げの台地・谷越えのくぼみ）を足す。
       let floor = 16 + fbm(nFloor, u, v, 3, 1.4) * 9 + fbm(nFloor, u * 4 + 5.3, v * 4 - 2.9, 2, 1.0) * 2.5;
+      for (const hole of design.holes) {
+        for (const r of hole.relief) {
+          const d = Math.hypot(x - r.x, z - r.z) / r.r;
+          if (d < 1) floor += r.h * (1 - smoothstep(0.25, 1, d));
+        }
+      }
       floor = mix(2, floor, smoothstep(0, 0.15, land));
       let dc = Infinity;
       for (const hole of design.holes) dc = Math.min(dc, lineDistance(hole.line, x, z).d);

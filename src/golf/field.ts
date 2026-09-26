@@ -2,7 +2,8 @@ import { hashSeed } from '../core/rng';
 import type { Island } from '../island/generate';
 import { ISLAND_SIZE } from '../island/grid';
 import { Noise2D } from '../world/noise';
-import { type CourseDesign, type Ellipse, type HoleDesign, lineDistance } from './design';
+import { type CourseDesign, type Ellipse, type HoleDesign, lineDistance, stationHalf } from './design';
+import { greenEllipseAt, greenSurface } from './greens';
 
 /**
  * コースの造成。設計図（golf/design.ts）に合わせて、地面の高さと芝の種類を 2m の格子に焼く。
@@ -68,17 +69,10 @@ function ellipseAt(el: Ellipse, x: number, z: number): { e: number; out: number 
   return { e, out: (e - 1) * Math.min(el.rx, el.rz) };
 }
 
-/** フェアウェイの半分の幅（打つ線に沿った位置 s で）。区間の外は 0。 */
-function fairwayHalf(h: HoleDesign, s: number): number {
-  const f = h.fairway;
-  if (f.length === 0 || s < f[0].s || s > f[f.length - 1].s) return 0;
-  for (let k = 0; k < f.length - 1; k++) {
-    if (s <= f[k + 1].s) {
-      const t = (s - f[k].s) / (f[k + 1].s - f[k].s || 1);
-      return f[k].half + (f[k + 1].half - f[k].half) * t;
-    }
-  }
-  return f[f.length - 1].half;
+/** 打つ回廊の半分の幅（打つ線に沿った位置 s で）。 */
+function corridorHalf(h: HoleDesign, s: number): number {
+  const c = h.corridor;
+  return stationHalf(c, Math.max(c[0].s, Math.min(s, c[c.length - 1].s)));
 }
 
 /** 島の格子の高さを、半径 r セルの箱で 2 回ならす（ほぼガウスぼかし）。範囲 [i0, i1) × [j0, j1) だけ。 */
@@ -188,17 +182,15 @@ export function buildCourseField(island: Island, design: CourseDesign, seed: str
       // 一番近いホールの回廊（ホールどうしは離して置いてあるので、1 つのホールだけを見る）。
       let hole: HoleDesign | null = null;
       let corridor = 0;
-      let at = { d: 0, s: 0 };
       let nearest = Infinity;
       for (const h of design.holes) {
         const l = lineDistance(h.line, x, z);
         nearest = Math.min(nearest, l.d);
-        const half = Math.max(fairwayHalf(h, l.s), 14) + ROUGH;
+        const half = corridorHalf(h, l.s) + ROUGH;
         const c = 1 - smooth(half, half + BLEND, l.d);
         if (c > corridor) {
           corridor = c;
           hole = h;
-          at = l;
         }
       }
       const base = smoothAt(x, z) + rolls(x, z);
@@ -213,9 +205,13 @@ export function buildCourseField(island: Island, design: CourseDesign, seed: str
 
       let h = base;
       let weight = corridor;
-      // フェアウェイ。
-      const half = fairwayHalf(hole, at.s);
-      let fair = half > 0 ? 1 - smooth(half - 1.5 + wobble, half + 1.5 + wobble, at.d) : 0;
+      // フェアウェイ（帯ごとに、帯の線からの距離で）。
+      let fair = 0;
+      for (const strip of hole.fairways) {
+        const l = lineDistance(strip.line, x, z);
+        const half = stationHalf(strip.stations, l.s);
+        if (half > 0) fair = Math.max(fair, 1 - smooth(half - 1.5 + wobble, half + 1.5 + wobble, l.d));
+      }
 
       // ティーの台（打つ向きに長い四角、周りへ 4m でつなぐ）。
       const t = hole.tee;
@@ -227,11 +223,11 @@ export function buildCourseField(island: Island, design: CourseDesign, seed: str
       const tee = 1 - smooth(0, 0.6, tOut);
       weight = Math.max(weight, teeBlend);
 
-      // グリーン: 傾いた面、台地、すり鉢。周りへ 8m でつなぐ。
+      // グリーン: 型の面（golf/greens.ts）。周りへ 8m でつなぐ。
       const g = hole.green;
-      const ge = ellipseAt(g, x, z);
-      const e2 = Math.min(1, ge.e * ge.e);
-      const surf = g.h + g.sx * (x - g.x) + g.sz * (z - g.z) - g.bowl * (1 - e2);
+      const ge = { e: greenEllipseAt(g, x, z), out: 0 };
+      ge.out = (ge.e - 1) * Math.min(g.rx, g.rz);
+      const surf = greenSurface(g, x, z);
       const gBlend = 1 - smooth(0, 8, ge.out);
       h += (surf - h) * gBlend;
       if (g.kind === 'punchbowl') {
@@ -248,6 +244,12 @@ export function buildCourseField(island: Island, design: CourseDesign, seed: str
       // グリーンの周りの刈り込み（カラー）はフェアウェイの色。
       fair = Math.max(fair, (1 - smooth(1.5, 3, ge.out)) * (1 - green));
       weight = Math.max(weight, 1 - smooth(8, 12, ge.out));
+
+      // 小山（ホールの縁取りと、グリーンの周りのこぶ）。
+      for (const m of hole.mounds) {
+        const me = ellipseAt(m, x, z);
+        if (me.e < 1) h += m.height * (1 - smooth(0.15, 1, me.e));
+      }
 
       // バンカー: 平らな底と斜めの壁。縁は少し盛る。
       let sand = 0;
