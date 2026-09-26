@@ -1,6 +1,12 @@
-# 作業メモ（island maker）
+# 作業メモ（island game）
 
-リポジトリ・手元のフォルダ・公開先（Cloudflare）の名前はすべて `island-maker`（旧名 hakoniwa）。
+**island-maker から分かれたゲーム**（2026-09-26）。リポジトリ・手元のフォルダ・公開先の名前は `island-game`。
+島を作る仕組み（生成・描画・飛ぶ操作）は island-maker と共通で、ここから上にゲームを載せる。
+何のゲームにするかは検討中（候補: 島で自由に回るゴルフ。友達と一緒に遊べるように、stroll と同じ中継も検討）。
+
+- `origin` = このリポジトリ、`upstream` = island-maker（送信は止めてある）。
+  島の仕組みの改良を取り込むときは `git fetch upstream && git merge upstream/main`
+- 以下は island-maker から引き継いだ作業メモ。島の仕組みの決まりはそのまま有効
 
 **つまみで島をつくり、鳥になって自分の島を飛び、URL を送って友達と一緒に飛ぶ。**
 目的も期限もない。作った島を見せたくなることが芯。
@@ -124,5 +130,5 @@ src/render/   見渡す島と遠景（overviewMesh.ts）、遠目の木（farFor
 ```bash
 npm run dev   # http://localhost:5173（LAN 公開）
 npm run ci    # 型・ビルド（テストはまだ無い）
-npm run deploy  # ビルドして Cloudflare へ（https://island-maker.hochu.workers.dev）。静的ファイルだけ
+npm run deploy  # ビルドして Cloudflare へ（island-game。まだ出していない）。静的ファイルだけ
 ```

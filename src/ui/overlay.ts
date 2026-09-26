@@ -1,7 +1,7 @@
 import { type IslandParams, PARAM_SPECS, type ParamKey, encodeParams } from '../island/params';
 
 /**
- * island maker の画面。見た目と入口の作りは stroll の開始画面と同じ（ガラスのカード、丸いボタン、
+ * island game の画面（island-maker と同じ作り）。見た目と入口の作りは stroll の開始画面と同じ（ガラスのカード、丸いボタン、
  * 折りたたみの操作説明、飛んでいる間の最小限の表示）。
  *
  * stroll と違うのは、カードが島を隠さないこと。つまみを動かしながら島の変わり方を見るので、
@@ -63,7 +63,7 @@ export class Overlay {
       <aside class="panel">
         <div class="panel-body">
           <header class="brand">
-            <h1>island maker</h1>
+            <h1>island game</h1>
             <p class="lead">${DEFAULT_LEAD}</p>
           </header>
 
