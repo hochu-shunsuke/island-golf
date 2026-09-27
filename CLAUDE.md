@@ -217,7 +217,9 @@ npm run ci    # 型・ビルド・テスト（球の物理とコースの生成�
 npm run deploy  # ビルドして Cloudflare へ。静的ファイルだけ
 ```
 
-本番は https://island-golf.hochu.workers.dev （2026-09-27 に初めて出した）。
+本番は https://hole-in-isle.hochu.workers.dev （無料の公開先。名前は `wrangler.jsonc` の `name`）。
+2026-09-27 に island-golf.hochu.workers.dev で初めて出し、同じ日に名前に合わせて移した。古い island-golf の Worker は
+新しい方へ 301 で転送するだけの物に置き換えてある（転送しても `#` の合言葉はブラウザが引き継ぐ）。
 
 デプロイは **GitHub Actions が唯一の経路**（stroll と同じ）。手元の `npm run deploy` は非常用。
 

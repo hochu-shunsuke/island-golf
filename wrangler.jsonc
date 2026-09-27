@@ -1,8 +1,10 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  // island golf（island-maker の島で回るゴルフ）。サーバの処理は無く、ビルドした静的ファイルを配るだけ。
-  // 島は URL の # に載るので、サーバは島を知らない。
-  "name": "island-golf",
+  // Hole in Isle（コード名 island-golf）。サーバの処理は無く、ビルドした静的ファイルを配るだけ。
+  // コースは URL の # に載るので、サーバはコースを知らない。
+  // 名前がそのまま無料の公開先になる: https://hole-in-isle.hochu.workers.dev
+  // （2026-09-27 まで island-golf。古い island-golf の Worker は、こちらへ転送するだけの物に置き換えてある）
+  "name": "hole-in-isle",
   "compatibility_date": "2026-09-01",
   "assets": { "directory": "./dist" }
 }
