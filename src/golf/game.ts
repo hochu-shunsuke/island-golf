@@ -758,8 +758,9 @@ export class GolfGame {
     this.solveDirty = false;
     const { power, trial } = solvePower(this.golfGround, this.ball.pos, this.ball.lie, this.clubIndex, this.aimYaw, this.aimDistance);
     const result: Trial = trial;
-    // パットは転がる線の最初だけ見せる（全部見せると読む楽しさが無くなる）。
-    const roll = this.putting ? result.roll.slice(0, Math.max(2, Math.floor(result.roll.length * 0.35))) : result.roll;
+    // 狙う間に見せるのは、落ちる所までの弧だけ。落ちた後の跳ねと転がりは見せない（利用者の判断。狙いを決めるのに
+    // 要らず、線が増えて見づらかった）。パットは転がる線が狙いそのものなので、最初だけ見せる（全部見せると読む楽しさが無くなる）。
+    const roll = this.putting ? result.roll.slice(0, Math.max(2, Math.floor(result.roll.length * 0.35))) : [];
     this.power = power;
     setLine(this.arc, result.arc);
     this.arc.computeLineDistances();

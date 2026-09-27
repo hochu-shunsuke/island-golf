@@ -176,7 +176,12 @@ function scoreTable(
       const cells = pars
         .map((p, k) => {
           const s = row.scores[k];
-          const cls = [scoreMark(s, p), fresh && k + 1 === current ? 'fresh' : '', stagger ? 'stagger' : ''].join(' ');
+          const cls = [
+            scoreMark(s, p),
+            s != null && s >= 10 ? 'wide' : '',
+            fresh && k + 1 === current ? 'fresh' : '',
+            stagger ? 'stagger' : '',
+          ].join(' ');
           const delay = stagger ? ` style="animation-delay:${(300 + (k + n * 3) * 70).toString()}ms"` : '';
           return `<td><span class="${cls}"${delay}>${s ?? ''}</span></td>`;
         })
@@ -781,7 +786,6 @@ export class Overlay {
     this.standings.innerHTML = rows
       .map(
         (r) => `<div class="st-row${r.you ? ' you' : ''}">
-          <span class="st-rank">${r.rank}</span>
           <i class="st-dot" style="background:${r.color === null ? '#ffffff' : hex(r.color)}"></i>
           <span class="st-name">${escapeHtml(r.name)}</span>
           <span class="st-now">${r.now}</span>
@@ -792,8 +796,8 @@ export class Overlay {
   }
 
   /**
-   * COM と友達の球の上の目印。画面の位置（px）で。色の点だけにする（名前は順位表にある。名前の札を出していた頃は、
-   * 旗や狙いの距離の札に重なって画面が散らかった）。
+   * COM と友達の球の上の名前。画面の位置（px）で。球そのものに色があるので、名前だけを影付きの字で出す
+   * （色の点と札の背景は付けない。点だけにしたら、球の上に同じ色が 2 つ並ぶだけで意味が無かった）。
    */
   setRivalMarkers(items: readonly { x: number; y: number; text: string; color: number }[]): void {
     while (this.rivalEls.length < items.length) {
@@ -808,8 +812,7 @@ export class Overlay {
       if (!item) return;
       if (item.text !== m.text) {
         m.text = item.text;
-        m.el.innerHTML = `<i style="background:${hex(item.color)}"></i>`;
-        m.el.setAttribute('aria-label', item.text);
+        m.el.textContent = item.text;
       }
       m.el.style.transform = `translate(${item.x.toFixed(1)}px, ${item.y.toFixed(1)}px)`;
     });

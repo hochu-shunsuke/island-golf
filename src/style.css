@@ -857,10 +857,11 @@ kbd {
   border-radius: 50%;
 }
 
-/* 二重の印は枠線の二重線で描く（外へ広げると、隣のマスの印と重なった）。 */
+/* 二重の印は枠線の二重線で描く（外へ広げると、隣のマスの印と重なった）。線は細く（3px = 1px の線 2 本と 1px のすき間）。
+   4px にしていた頃は中が狭く、2 桁の打数が内側の線にぶつかった。 */
 .scorecard .eagle,
 .rr-table .eagle {
-  border: 4px double #8fd3ff;
+  border: 3px double #8fd3ff;
 }
 
 .scorecard .bogey,
@@ -873,7 +874,14 @@ kbd {
 
 .scorecard .double,
 .rr-table .double {
-  border: 4px double #ffb38a;
+  border: 3px double #ffb38a;
+}
+
+/* 2 桁の打数（ダブルパーの打ち切りなど）は字を小さく、印の中に収める。 */
+.scorecard td span.wide,
+.rr-table td span.wide {
+  font-size: 0.76em;
+  letter-spacing: -0.04em;
 }
 
 /* 入れたばかりの打数は弾ませる。 */
@@ -2255,23 +2263,24 @@ kbd {
 }
 
 .standings.on {
-  display: flex;
+  display: grid;
+}
+
+/* 行は並べるだけ（列は .standings の格子でそろえる）。順位は並び順で分かるので数字の列は置かない。 */
+.standings {
+  grid-template-columns: auto auto auto auto;
+  align-items: center;
+  column-gap: 8px;
+  row-gap: 3px;
 }
 
 .st-row {
-  display: grid;
-  grid-template-columns: 12px 9px 48px 58px 30px;
-  align-items: center;
-  gap: 6px;
+  display: contents;
 }
 
 .st-row.you {
   color: #fff;
   font-weight: 600;
-}
-
-.st-rank {
-  color: var(--faint);
 }
 
 .st-dot {
@@ -2299,9 +2308,8 @@ kbd {
   font-size: 11px;
 }
 
-:root[data-input='touch'] .st-row {
-  grid-template-columns: 10px 8px 40px 46px 26px;
-  gap: 4px;
+:root[data-input='touch'] .standings {
+  column-gap: 7px;
 }
 
 /* 横向きの電話では上端へ寄せる。 */
@@ -2616,7 +2624,7 @@ kbd {
 }
 
 :root[data-input='touch'] .standings.on.open {
-  display: flex;
+  display: grid;
 }
 
 /* 地図は右の列、空から見るボタンの下（列の真ん中にそろえる）。 */
@@ -2646,18 +2654,15 @@ kbd {
   opacity: 0;
 }
 
-/* COM と友達の球の上は、色の点だけ（名前の札は順位表に任せる）。 */
+/* COM と友達の球の上は、名前だけ（球そのものに色がある）。札の背景は付けず、影で読ませる。 */
 .rival-marker {
   padding: 0;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
   background: none;
   border: none;
-}
-
-.rival-marker i {
-  width: 9px;
-  height: 9px;
-  border: none;
-  box-shadow: 0 0 0 1.5px rgba(8, 14, 18, 0.55), 0 1px 4px rgba(0, 0, 0, 0.4);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.85), 0 0 8px rgba(0, 0, 0, 0.55);
 }
 
 /* 旗の札の小さな旗（打つ間、番号の代わり）。 */
