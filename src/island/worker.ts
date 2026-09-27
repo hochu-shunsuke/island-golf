@@ -70,7 +70,14 @@ export interface LightResult {
   ms: number;
 }
 
-export type WorkerResult = GenerateResult | ForestResult | LightResult;
+/** 今どの段階を作っているか（island/loadSteps.ts の番号）。段階に入るたびに送る。 */
+export interface ProgressResult {
+  type: 'progress';
+  id: number;
+  step: number;
+}
+
+export type WorkerResult = GenerateResult | ForestResult | LightResult | ProgressResult;
 
 const post = (msg: WorkerResult, transfer: Transferable[]) =>
   (self as unknown as Worker).postMessage(msg, transfer);
@@ -78,10 +85,14 @@ const post = (msg: WorkerResult, transfer: Transferable[]) =>
 self.onmessage = (ev: MessageEvent<GenerateRequest>) => {
   const { id, params, n, erosionN, sun, day } = ev.data;
   const started = performance.now();
+  const progress = (step: number) => post({ type: 'progress', id, step }, []);
   // コースを先に並べ（route）、その周りに世界を作り（谷底と山）、地面に合わせて高さを入れ（settle）、
   // 造成する（field）。
+  progress(0);
   const route = routeCourse(params.seed);
+  progress(1);
   const island = generateIsland(params, n, erosionN, route);
+  progress(2);
   const design = settleCourse(route, (x, z) => sampleGrid(island, x, z));
   const field = buildCourseField(island, design, params.seed);
   const terrain = new Terrain(
@@ -92,6 +103,7 @@ self.onmessage = (ev: MessageEvent<GenerateRequest>) => {
   );
   if (field) shapeGrid(island, terrain, field);
   const course = { holes: holesOf(design, day, params.seed), field };
+  progress(3);
   const overview = buildOverviewArrays(island, terrain);
   const overviewWater = buildOverviewWaterArray(island);
   const map = renderIslandMap(island, terrain);
@@ -118,10 +130,12 @@ self.onmessage = (ev: MessageEvent<GenerateRequest>) => {
 
   // 木は指を離して本番の格子で作ったときだけ。下見の間は地形の形だけを見せる。
   if (n === FULL_RES) {
+    progress(4);
     const forest = plantForest(terrain, { ...island, height, moisture });
     post({ type: 'forest', id, forest }, forest.flatMap((b) => [b.matrices.buffer, b.colors.buffer]));
   }
 
+  progress(5);
   const lit = performance.now();
   const lighting = bakeLighting(height, n, island.cell, sun);
   post({ type: 'light', id, lighting, ms: performance.now() - lit }, [lighting.data.buffer]);

@@ -3,7 +3,8 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import './style.css';
 import './touch.css';
 import type { Island } from './island/generate';
-import { EROSION_PREVIEW_RES, EROSION_RES, FULL_RES, ISLAND_SIZE, PREVIEW_RES } from './island/grid';
+import { EROSION_RES, FULL_RES, ISLAND_SIZE } from './island/grid';
+import { LOAD_STEPS } from './island/loadSteps';
 import { IslandGround } from './island/ground';
 import { type IslandParams, cleanSeed, courseParams, randomSeed } from './island/params';
 import type { GenerateRequest, GenerateResult, WorkerResult } from './island/worker';
@@ -158,8 +159,15 @@ function newCourse(): void {
 // Worker は 1 つ。計算中に新しい依頼が来たら最新の 1 件だけを取っておき、終わったら流す。
 const worker = new Worker(new URL('./island/worker.ts', import.meta.url), { type: 'module' });
 let nextId = 1;
-/** 最後に頼んだ島。これが描かれるまで「入る」を押せない（下見の島で飛ばない）。 */
+/** 最後に頼んだ島。これが描かれるまで「プレイ」を押せない。 */
 let lastRequested = 0;
+/**
+ * 最後に頼んだ島が、木と光まで全部揃ったか。揃うまでは画面を暗くしたまま、「プレイ」のボタンに作っている段階を出す
+ * （途中の島を見せると、空撮の途中で木が生え、光が変わるのが見えてしまう）。
+ */
+let sceneReady = false;
+/** 読み込み中の暗転の濃さ（別のコースへ替えるときは、今の絵からゆっくり暗くする）。 */
+let loadingCurtain = 1;
 let busy = false;
 let pending: GenerateRequest | null = null;
 let drawnId = 0;
@@ -178,20 +186,21 @@ let shownSeed = '';
 let course: Hole[] = [];
 let courseField: FieldArrays | null = null;
 
-function request(n: number): void {
-  const erosionN = n === FULL_RES ? EROSION_RES : EROSION_PREVIEW_RES;
+function request(): void {
   const sun = sky.sunDirection;
   const req: GenerateRequest = {
     id: nextId++,
     params: { ...params },
-    n,
-    erosionN,
+    n: FULL_RES,
+    erosionN: EROSION_RES,
     sun: [sun.x, sun.y, sun.z],
     // ピン位置は日ごとに替わる（同じ URL なら、同じ日は誰でも同じピン）。
     day: Math.floor(Date.now() / 86_400_000),
   };
   lastRequested = req.id;
+  sceneReady = false;
   overlay.setReady(false);
+  overlay.setLoading(LOAD_STEPS[0], 0, LOAD_STEPS.length);
   if (busy) {
     pending = req;
     return;
@@ -248,6 +257,10 @@ function show(msg: GenerateResult): void {
 
 worker.onmessage = (ev: MessageEvent<WorkerResult>) => {
   const msg = ev.data;
+  if (msg.type === 'progress') {
+    if (msg.id === lastRequested) overlay.setLoading(LOAD_STEPS[msg.step], msg.step, LOAD_STEPS.length);
+    return;
+  }
   if (msg.type === 'forest') {
     if (msg.id === drawnId) farForest.set(msg.forest);
     return;
@@ -255,6 +268,11 @@ worker.onmessage = (ev: MessageEvent<WorkerResult>) => {
   if (msg.type === 'light') {
     // 光は島の後から届く。今見せている島の光だけを使う。
     if (msg.id === drawnId) setIslandLight(msg.lighting);
+    // 島・木・光が揃った。空撮を始めて「プレイ」を押せるようにする。
+    if (msg.id === drawnId && msg.id === lastRequested) {
+      sceneReady = true;
+      overlay.setReady(true);
+    }
     // Worker は光まで計算し終えたので、次の島を頼める。
     busy = false;
     if (pending) {
@@ -268,22 +286,18 @@ worker.onmessage = (ev: MessageEvent<WorkerResult>) => {
   if (msg.id > drawnId) {
     drawnId = msg.id;
     show(msg);
-    const full = msg.island.n === FULL_RES;
-    if (full) prepareCourseView();
+    prepareCourseView();
     const par = course.reduce((a, h) => a + h.par, 0);
     const len = Math.round(course.reduce((a, h) => a + h.length, 0));
     const best = readBest(msg.params.seed);
     const bestText = best ? ` · 自己ベスト ${best.total}（${toPar(best.total, best.par)}）` : '';
-    overlay.setStatus(
-      full ? `${course.length} ホール · パー ${par} · ${len.toLocaleString('ja-JP')} m${bestText}` : '下見しています…',
-    );
-    overlay.setReady(full && msg.id === lastRequested);
+    overlay.setStatus(`${course.length} ホール · パー ${par} · ${len.toLocaleString('ja-JP')} m${bestText}`);
   }
 };
 
 function commit(): void {
   history.replaceState(null, '', `#${params.seed}`);
-  request(FULL_RES);
+  request();
 }
 
 // ── 回る（入口と操作は stroll と同じ） ─────────────────
@@ -1118,7 +1132,7 @@ renderer.setAnimationLoop(() => {
       placeFlagMarkers(golf, golf.ball.pos);
       placeAimLabel(golf);
     }
-  } else if (flyover) {
+  } else if (flyover && sceneReady) {
     // 開始画面・休憩中: コース紹介の空撮。カットの範囲を読み込み、揃うまでは暗いまま待つ（flyover.ts）。
     chunks?.setFocus(flyover.area);
     chunks?.update(camera.position.x, camera.position.z);
@@ -1127,8 +1141,17 @@ renderer.setAnimationLoop(() => {
     fog.density = FOG_ATTRACT;
     overlay.setAttractCaption(flyover.caption);
     overlay.setFade(flyover.fade);
+    loadingCurtain = flyover.fade;
+  } else if (!sceneReady) {
+    // 島を作っている間: 暗くしたまま待つ（別のコースへ替えるときは、今の絵から 0.35 秒で暗くする）。
+    // カメラは動かさない（暗くなる途中で絵が飛ばないように）。
+    loadingCurtain = Math.min(1, loadingCurtain + dt / 0.35);
+    overlay.setFade(loadingCurtain);
+    overlay.setAttractCaption(null);
   } else {
+    // コースを置けなかった島: 見渡すだけ。
     controls.update();
+    overlay.setFade(0);
   }
   if (camera.view) camera.clearViewOffset();
   fitNearPlane();
@@ -1163,6 +1186,6 @@ if (import.meta.env.DEV) {
     isScout: () => scout,
   };
 }
-// 開いたら、まず粗い下見（約 0.3 秒）で島を見せ、続けて本番の細かさで作り直す。
-request(PREVIEW_RES);
+// 開いたら、暗い画面に作っている段階を出し、島・木・光が揃ってから空撮を始める。
+overlay.setFade(1);
 commit();

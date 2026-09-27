@@ -1651,6 +1651,35 @@ kbd {
   transform: translateY(1px) scale(0.99);
 }
 
+/* 作っている間: ボタンの下の細い線が、終えた段階の割合（--progress は overlay.ts が決める）。 */
+.play-panel .start {
+  position: relative;
+  overflow: hidden;
+}
+
+.play-panel .start::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  height: 3px;
+  width: calc(var(--progress, 0) * 100%);
+  background: rgba(238, 242, 243, 0.75);
+  opacity: 0;
+  transition: width 400ms ease, opacity 300ms ease;
+}
+
+.play-panel .start:disabled::after {
+  opacity: 1;
+}
+
+.play-panel .start small {
+  margin-left: 6px;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  color: var(--faint);
+}
+
 .play-panel .start:disabled {
   cursor: default;
   font-size: 14px;

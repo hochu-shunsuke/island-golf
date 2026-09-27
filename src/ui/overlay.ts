@@ -139,6 +139,8 @@ export class Overlay {
   private touch: boolean;
   private readonly touchCapable: boolean;
   private ready = false;
+  /** 押せない間のボタンの字（作っている段階）。 */
+  private loadingText = 'コースを作っています…';
   private entered = false;
   private flightText = '';
   private toastTimer = 0;
@@ -686,6 +688,16 @@ export class Overlay {
     this.updateStartLabel();
   }
 
+  /**
+   * 作っている途中の段階（押せない「プレイ」のボタンに出す）。step は 0 から、total は段階の数。
+   * ボタンの下の細い線は、終えた段階の割合。
+   */
+  setLoading(label: string, step: number, total: number): void {
+    this.loadingText = `${label}… <small>${step + 1}/${total}</small>`;
+    this.startBtn.style.setProperty('--progress', String(step / total));
+    this.updateStartLabel();
+  }
+
   /** 島を作るのにかかった時間など、小さな知らせ。 */
   setStatus(text: string): void {
     this.status.textContent = text;
@@ -715,7 +727,7 @@ export class Overlay {
   private updateStartLabel(): void {
     this.startBtn.disabled = !this.ready;
     if (!this.ready) {
-      this.startBtn.textContent = 'コースを作っています…';
+      this.startBtn.innerHTML = this.loadingText;
     } else if (this.entered) {
       this.startBtn.textContent = '続きから';
     } else {
