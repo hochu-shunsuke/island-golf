@@ -54,10 +54,13 @@ const FOG_ATTRACT = FOG_FLY * 0.5;
 /** 画素数の上限。端末名で分けず、画面の大きさと入力方式で決める（stroll と同じ）。 */
 const MOBILE_PIXEL_BUDGET = 1_400_000;
 const DESKTOP_PIXEL_BUDGET = 8_000_000;
-/** スマホはまず高精細で描き、フレームが続けて遅い端末だけ 0.1 ずつ下げる。CSS 1px 未満にはしない。 */
-const MOBILE_DPR_MAX = 1.5;
-const MOBILE_DPR_MIN = 1;
-let mobileDprCap = MOBILE_DPR_MAX;
+/**
+ * まず高精細で描き、フレームが続けて遅い端末だけ 0.1 ずつ下げる。CSS 1px 未満にはしない。
+ * スマホは 1.5 まで、PC は 2 まで。PC も下げる: PC の多くは内蔵 GPU のノートで、高解像度では画素を塗る重さが
+ * 効いていた（800 万画素で GPU の時間がほぼ倍。スマホは形の処理が重く、解像度を下げてもあまり軽くならない）。
+ */
+const DPR_RANGE = { touch: { min: 1, max: 1.5 }, keys: { min: 1, max: 2 } } as const;
+const dprCap = { touch: DPR_RANGE.touch.max as number, keys: DPR_RANGE.keys.max as number };
 /** 見渡すときの視野（度）。飛ぶときは stroll と同じく 68°〜82°＋速さ。 */
 const MAKE_FOV = 55;
 /** 球を打つときの視野（度）。 */
@@ -142,7 +145,7 @@ function resizeRenderer(): void {
   const height = Math.max(1, innerHeight);
   const budget = inputMode === 'touch' ? MOBILE_PIXEL_BUDGET : DESKTOP_PIXEL_BUDGET;
   const budgetRatio = Math.sqrt(budget / (width * height));
-  const deviceCap = inputMode === 'touch' ? mobileDprCap : 2;
+  const deviceCap = inputMode === 'touch' ? dprCap.touch : dprCap.keys;
   renderer.setPixelRatio(Math.max(0.75, Math.min(devicePixelRatio, deviceCap, budgetRatio)));
   renderer.setSize(width, height);
   camera.aspect = width / height;
@@ -1697,55 +1700,57 @@ function placeAimLabel(game: GolfGame): void {
 
 const timer = new THREE.Timer();
 let elapsed = 0;
-let mobileFrameSum = 0;
-let mobileFrameCount = 0;
-let mobileFrameWindow = 0;
-let mobileFastWindows = 0;
+let frameSum = 0;
+let frameCount = 0;
+let frameWindow = 0;
+let fastWindows = 0;
 
 /**
- * スマホの実測フレーム時間にだけ反応する動的解像度。
+ * 実測フレーム時間にだけ反応する動的解像度（スマホも PC も。範囲は DPR_RANGE）。
  * 一時的なチャンク生成や暗転は数えず、2.5 秒続けて遅いときだけ少し下げる。
  * 余裕が戻った場合は 2 区間確認してから上げ、頻繁な往復とリサイズの引っ掛かりを防ぐ。
  */
-function updateMobileRenderScale(dt: number): void {
+function updateRenderScale(dt: number): void {
   const stable =
-    inputMode === 'touch' &&
     !document.hidden &&
     sceneReady &&
     !holeFade &&
     (chunks?.settled ?? true);
   if (!stable) {
-    mobileFrameSum = 0;
-    mobileFrameCount = 0;
-    mobileFrameWindow = 0;
-    mobileFastWindows = 0;
+    frameSum = 0;
+    frameCount = 0;
+    frameWindow = 0;
+    fastWindows = 0;
     return;
   }
-  mobileFrameSum += dt;
-  mobileFrameCount++;
-  mobileFrameWindow += dt;
-  if (mobileFrameWindow < 2.5 || mobileFrameCount === 0) return;
+  frameSum += dt;
+  frameCount++;
+  frameWindow += dt;
+  if (frameWindow < 2.5 || frameCount === 0) return;
 
-  const average = mobileFrameSum / mobileFrameCount;
+  const average = frameSum / frameCount;
   const before = renderer.getPixelRatio();
-  if (average > 0.022 && mobileDprCap > MOBILE_DPR_MIN) {
-    mobileDprCap = Math.max(MOBILE_DPR_MIN, mobileDprCap - 0.1);
-    mobileFastWindows = 0;
-  } else if (average < 0.018 && mobileDprCap < MOBILE_DPR_MAX) {
-    mobileFastWindows++;
-    if (mobileFastWindows >= 2) {
-      mobileDprCap = Math.min(MOBILE_DPR_MAX, mobileDprCap + 0.1);
-      mobileFastWindows = 0;
+  const mode = inputMode === 'touch' ? 'touch' : 'keys';
+  const range = DPR_RANGE[mode];
+  if (average > 0.022 && dprCap[mode] > range.min) {
+    dprCap[mode] = Math.max(range.min, dprCap[mode] - 0.1);
+    fastWindows = 0;
+  } else if (average < 0.018 && dprCap[mode] < range.max) {
+    fastWindows++;
+    if (fastWindows >= 2) {
+      dprCap[mode] = Math.min(range.max, dprCap[mode] + 0.1);
+      fastWindows = 0;
     }
   } else {
-    mobileFastWindows = 0;
+    fastWindows = 0;
   }
-  mobileFrameSum = 0;
-  mobileFrameCount = 0;
-  mobileFrameWindow = 0;
+  frameSum = 0;
+  frameCount = 0;
+  frameWindow = 0;
   // 画面や画素数の上限で実際の倍率が変わらない場合は、描画面を作り直さない。
-  const budgetRatio = Math.sqrt(MOBILE_PIXEL_BUDGET / (Math.max(1, innerWidth) * Math.max(1, innerHeight)));
-  const after = Math.max(0.75, Math.min(devicePixelRatio, mobileDprCap, budgetRatio));
+  const budget = mode === 'touch' ? MOBILE_PIXEL_BUDGET : DESKTOP_PIXEL_BUDGET;
+  const budgetRatio = Math.sqrt(budget / (Math.max(1, innerWidth) * Math.max(1, innerHeight)));
+  const after = Math.max(0.75, Math.min(devicePixelRatio, dprCap[mode], budgetRatio));
   if (Math.abs(after - before) > 0.01) resizeRenderer();
 }
 
@@ -1755,7 +1760,7 @@ renderer.setAnimationLoop(() => {
   // 別のアプリを見ている間は、空撮も WebGL も止める。戻ったときの差分は dt の上限で吸収する。
   if (document.hidden) return;
   elapsed += dt;
-  updateMobileRenderScale(dt);
+  updateRenderScale(dt);
   if (playing && scout && player) {
     player.update(dt, camera, reducedMotion);
     touchControls?.update();
