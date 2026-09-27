@@ -1875,6 +1875,8 @@ renderer.setAnimationLoop(() => {
     sky.update(camera, elapsed);
     updateIslandLight(dt);
     water.update(camera, elapsed);
+    // 遠景の島は、チャンクに覆われた升目と画面の外の升目を描かない（overviewMesh.ts）。
+    overview.update(camera);
     renderer.render(scene, camera);
     renderWarmupNeeded = false;
   }
