@@ -415,6 +415,18 @@ export class GolfGame {
     this.emit();
   }
 
+  /**
+   * 狙いの向きと距離をじかに決める（スマホの引っ張る操作。構えている間も動かせる）。
+   * クラブを自分で選んでいなければ、距離に合うクラブへ替える。
+   */
+  aimAt(yaw: number, d: number): void {
+    if (this.phase !== 'aim' && this.phase !== 'swing') return;
+    this.intro = Math.min(this.intro, INTRO_OUT);
+    if (!this.clubLocked && !this.putting) this.clubIndex = this.clubFor(d);
+    this.setAim(yaw, d);
+    this.emit();
+  }
+
   /** クラブを替える（自分で選んだら、輪を動かしても替えない）。 */
   changeClub(step: number): void {
     if (this.phase !== 'aim') return;
@@ -462,6 +474,8 @@ export class GolfGame {
 
   /** 針を止めた所で打つ。真ん中ならナイスショット。ずれるほど曲がり、少し短くなる。 */
   private hit(): void {
+    // 構えている間に狙いを動かしていたら、打つ前に力を求め直す。
+    if (this.solveDirty) this.solve();
     const club = this.club;
     let e = this.needle;
     const perfect = Math.abs(e) < PERFECT;
@@ -504,7 +518,7 @@ export class GolfGame {
   update(dt: number): void {
     this.intro = Math.max(0, this.intro - dt);
     this.updateConfetti(dt);
-    if (this.phase === 'aim') {
+    if (this.phase === 'aim' || this.phase === 'swing') {
       if (this.aimInput !== 0) this.rotateAim(this.aimInput * AIM_KEY_SPEED * dt);
       if (this.distInput !== 0) this.pushAim(this.distInput * Math.max(3, this.aimDistance * DIST_KEY_SPEED) * dt);
       this.solveWait -= dt;

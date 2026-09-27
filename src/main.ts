@@ -53,6 +53,11 @@ const GOLF_FOV = 58;
 /** 狙いを回す速さ（マウスは画素あたり、タッチは画素あたりのラジアン）。 */
 const AIM_MOUSE = 0.0022;
 const AIM_TOUCH = 0.004;
+/** 引っ張る操作: これより指を置いた所に近ければ、構えない（離すとやめる）（px）。 */
+const PULL_CANCEL = 22;
+/** おすすめの距離に吸い付く幅（割合）と、まっすぐに吸い付く左右の幅（px）。 */
+const PULL_SNAP = 0.04;
+const PULL_SIDE_SNAP = 10;
 
 interface WakeLockSentinelLike {
   release(): Promise<void>;
@@ -934,40 +939,75 @@ addEventListener(
   { passive: true },
 );
 
-// タッチ: 画面をなぞって輪を動かす（左右 = 向き、上下 = 距離）。打つ・クラブ・空から・休憩はボタン。
-let aimPointer: number | null = null;
-let aimLastX = 0;
-let aimLastY = 0;
+// タッチ: 引っ張って離す（パチンコ）。どこでも指を置いて下へ引くと、引いた長さで輪が前へ伸び、
+// 左右で向きが変わる。引き始めると構えて針が振れ、離すと打つ。指を置いた所まで戻して離すとやめる。
+// 輪は、指を置いたときの狙い（おすすめの落とし所）を基準に動く。基準の長さ引くと、ちょうどそこ。
+let pullPointer: number | null = null;
+let pullX = 0;
+let pullY = 0;
+let pullYaw = 0;
+let pullDist = 0;
+let pullSnapped = false;
 canvas.addEventListener('pointerdown', (e) => {
-  if (!playing || scout || e.pointerType === 'mouse') return;
+  if (!playing || scout || e.pointerType === 'mouse' || pullPointer !== null) return;
   // カップに入った後は、画面のどこをタップしても次のティーへ。
   if (golf?.phase === 'holed') {
     holedPress();
     return;
   }
-  aimPointer = e.pointerId;
-  aimLastX = e.clientX;
-  aimLastY = e.clientY;
+  if (!golf || golf.phase !== 'aim') return;
+  pullPointer = e.pointerId;
+  pullX = e.clientX;
+  pullY = e.clientY;
+  pullYaw = golf.aimYaw;
+  pullDist = golf.aimDistance;
+  pullSnapped = true;
 });
 canvas.addEventListener('pointermove', (e) => {
-  if (e.pointerId !== aimPointer || !golf) return;
-  golf.rotateAim((-(e.clientX - aimLastX) * AIM_TOUCH) / (golf.putting ? 2.5 : 1));
-  golf.pushAim(-(e.clientY - aimLastY) * pushPerPixel(golf) * 1.4);
-  aimLastX = e.clientX;
-  aimLastY = e.clientY;
+  if (e.pointerId !== pullPointer || !golf) return;
+  const dx = e.clientX - pullX;
+  const dy = e.clientY - pullY;
+  const pulled = Math.hypot(dx, dy) > PULL_CANCEL;
+  overlay.setPull(pullX, pullY, e.clientX, e.clientY, pulled);
+  if (!pulled) return;
+  if (golf.phase === 'aim') golf.press();
+  if (golf.phase !== 'swing') return;
+  // 距離: 基準の長さでおすすめの距離。近くでは吸い付かせる（いちばん良い所で離しやすく）。
+  let d = (pullDist * Math.max(0, dy)) / pullRef();
+  const snap = Math.abs(d - pullDist) < pullDist * PULL_SNAP;
+  if (snap) d = pullDist;
+  // 向き: 指を右へずらすと右へ。パットは細かく。まっすぐの近くは吸い付かせる。
+  const side = Math.abs(dx) < PULL_SIDE_SNAP ? 0 : dx - Math.sign(dx) * PULL_SIDE_SNAP;
+  const yaw = pullYaw - (side * AIM_TOUCH) / (golf.putting ? 2.5 : 1);
+  if (snap && side === 0 && !pullSnapped) navigator.vibrate?.(8);
+  pullSnapped = snap && side === 0;
+  golf.aimAt(yaw, d);
 });
-const endAim = (e: PointerEvent) => {
-  if (e.pointerId === aimPointer) aimPointer = null;
+const endPull = (e: PointerEvent) => {
+  if (e.pointerId !== pullPointer) return;
+  pullPointer = null;
+  overlay.setPull(0, 0, 0, 0, false, true);
+  if (!golf || golf.phase !== 'swing') return;
+  const pulled = Math.hypot(e.clientX - pullX, e.clientY - pullY) > PULL_CANCEL;
+  if (pulled && e.type === 'pointerup') {
+    golf.press();
+  } else {
+    // 戻して離した（または指が取られた）: 打たずに、指を置く前の狙いへ戻す。
+    golf.cancelSwing();
+    golf.aimAt(pullYaw, pullDist);
+  }
 };
-canvas.addEventListener('pointerup', endAim);
-canvas.addEventListener('pointercancel', endAim);
+canvas.addEventListener('pointerup', endPull);
+canvas.addEventListener('pointercancel', endPull);
+
+/** おすすめの距離になる引く長さ（px）。画面の高さに合わせる。 */
+function pullRef(): number {
+  return Math.max(110, Math.min(190, innerHeight * 0.22));
+}
 overlay.bindGolfTouch({
-  onShotDown: shotPress,
-  onShotUp: () => {},
   onClub: (step) => golf?.changeClub(step),
   onScout: toggleScout,
   onPause: stopPlaying,
-  onCancel: () => golf?.cancelSwing(),
 });
 
 let resizeQueued = false;

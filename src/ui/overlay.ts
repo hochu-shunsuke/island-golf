@@ -56,16 +56,11 @@ const ICON = {
   close: svg('M6 6l12 12M18 6L6 18'),
   /** 空から見る（目）。 */
   eye: svg('M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12zM12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z'),
+  /** 替えられる（上下の山形）。 */
+  swap: svg('M8 9l4-4 4 4M8 15l4 4 4-4'),
   /** 球へ戻る（旗）。 */
   flag: svg('M6 21V4M6 4h11l-2.5 4L17 12H6'),
 };
-
-/** 打つボタンの絵: ティーに載った球と、飛んでいく弧。 */
-const SHOT_ICON = `<svg class="g-shot-icon" viewBox="0 0 48 48" aria-hidden="true">
-  <path class="g-shot-arc" d="M17 30C19 14 33 8 42 10" />
-  <circle class="g-shot-ball" cx="13" cy="33" r="6.5" />
-  <path class="g-shot-tee" d="M9 41h8M13 39.5V42" />
-</svg>`;
 
 /** 打数とパーの差から、スコアカードの印（丸・四角）の種類。 */
 function scoreMark(s: number | undefined, p: number): string {
@@ -248,7 +243,7 @@ export class Overlay {
       </div>
       <div class="golf-power">
         <div class="shot-top">
-          <button type="button" class="shot-club" aria-label="クラブを替える"><b class="shot-short"></b><span class="shot-name"></span><i class="shot-swap" aria-hidden="true"></i></button>
+          <button type="button" class="shot-club" aria-label="クラブを替える"><b class="shot-short"></b><span class="shot-name"></span><span class="shot-swap">${ICON.swap}</span></button>
           <span class="shot-lie"></span>
           <span class="shot-dist"></span>
         </div>
@@ -258,8 +253,7 @@ export class Overlay {
       <div class="golf-touch">
         <button class="g-btn g-pause" aria-label="休憩"></button>
         <button class="g-btn g-scout" aria-label="空から見る">${ICON.eye}<span class="g-label"></span></button>
-        <button class="g-btn g-cancel" aria-label="構えをやめる">${ICON.close}</button>
-        <button class="g-btn g-shot" aria-label="打つ">${SHOT_ICON}</button>
+        <div class="pull" aria-hidden="true"><i class="pull-band"></i><i class="pull-origin"></i><i class="pull-knob"></i></div>
       </div>
       <div class="keyboard-guide" aria-label="操作方法" aria-hidden="true">
         <span><kbd>マウス</kbd><kbd>WASD</kbd> 落とし所の輪を動かす</span>
@@ -326,7 +320,10 @@ export class Overlay {
     this.golfTouch = this.root.querySelector('.golf-touch')!;
     this.flagLayer = this.root.querySelector('.flag-markers')!;
     this.golfScoutBtn = this.root.querySelector('.g-scout')!;
+    this.pullEl = this.root.querySelector('.pull')!;
   }
+
+  private readonly pullEl: HTMLElement;
 
   private readonly golfHud: HTMLElement;
   private readonly golfHole: HTMLElement;
@@ -404,12 +401,12 @@ export class Overlay {
       this.golfHint.textContent =
         status.phase === 'swing'
           ? this.touch
-            ? '針が緑に来たら、もう一度タップ'
+            ? '針が緑で離す · 戻して離すとやめる'
             : '針が真ん中に来たら、もう一度押す（Esc か右クリックで戻る）'
           : this.touch
             ? // タッチの狭い画面ではライを下の行に出す。最初の 1 打だけは操作の案内。
               status.target.number === 1 && status.strokes === 0
-              ? 'なぞって輪を動かす · 右下で構える'
+              ? '下へ引っ張って狙う · 離して打つ'
               : lie
             : 'マウスで輪を動かす · クリックか Space で構える';
     }
@@ -628,28 +625,31 @@ export class Overlay {
   }
 
   /** タッチのゴルフ用ボタンに役割をつなぐ。 */
-  bindGolfTouch(handlers: {
-    onShotDown: () => void;
-    onShotUp: () => void;
-    onClub: (step: number) => void;
-    onScout: () => void;
-    onPause: () => void;
-    onCancel: () => void;
-  }): void {
-    const shot = this.golfTouch.querySelector('.g-shot') as HTMLButtonElement;
-    shot.addEventListener('pointerdown', (e) => {
-      e.preventDefault();
-      shot.setPointerCapture(e.pointerId);
-      handlers.onShotDown();
-    });
-    shot.addEventListener('pointerup', () => handlers.onShotUp());
-    shot.addEventListener('pointercancel', () => handlers.onShotUp());
+  bindGolfTouch(handlers: { onClub: (step: number) => void; onScout: () => void; onPause: () => void }): void {
     // クラブは距離で自動で替わる。替えたいとき（低く出す・長めで転がす）だけ、クラブの名前を押して次へ。
     this.root.querySelector('.shot-club')!.addEventListener('click', () => handlers.onClub(1));
     this.golfTouch.querySelector('.g-scout')!.addEventListener('click', () => handlers.onScout());
     this.golfTouch.querySelector('.g-pause')!.addEventListener('click', () => handlers.onPause());
-    this.golfTouch.querySelector('.g-cancel')!.addEventListener('click', () => handlers.onCancel());
+  }
 
+  /**
+   * 引っ張る操作の目印: 指を置いた所の輪から、今の指までのゴム。pulled でないとき（置いた所の近く）は
+   * 輪だけを薄く出し、離すとやめることを示す。off で隠す。
+   */
+  setPull(x0: number, y0: number, x: number, y: number, pulled: boolean, off = false): void {
+    const el = this.pullEl;
+    if (off) {
+      el.classList.remove('on', 'pulled');
+      return;
+    }
+    el.classList.add('on');
+    el.classList.toggle('pulled', pulled);
+    el.style.setProperty('--x0', `${x0}px`);
+    el.style.setProperty('--y0', `${y0}px`);
+    el.style.setProperty('--x', `${x}px`);
+    el.style.setProperty('--y', `${y}px`);
+    el.style.setProperty('--len', `${Math.hypot(x - x0, y - y0).toFixed(1)}px`);
+    el.style.setProperty('--ang', `${Math.atan2(y - y0, x - x0).toFixed(4)}rad`);
   }
 
   /** 合言葉の表示をコースに合わせる（サイコロや URL から変わったとき）。 */
