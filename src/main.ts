@@ -667,7 +667,7 @@ function startPlaying(): void {
   }
   // 近くのチャンク（足元 2m 格子・木）は、本番の島が届いたときに作ってある（prepareCourseView）。
   controls.enabled = false;
-  overlay.setAttractCaption(null);
+  overlay.setAttractCaption(null, true);
   overlay.setFade(0);
   if (golf) golf.aids.visible = true;
   golf?.resetCamera();

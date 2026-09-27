@@ -203,5 +203,16 @@ npm run ci    # 型・ビルド・テスト（球の物理とコースの生成�
 npm run deploy  # ビルドして Cloudflare へ。静的ファイルだけ
 ```
 
-本番は https://island-golf.hochu.workers.dev （2026-09-27 に初めて出した）。GitHub Actions はまだ無く、
-手元から `npm run deploy` で出す。出すのは利用者に聞いてから。
+本番は https://island-golf.hochu.workers.dev （2026-09-27 に初めて出した）。
+
+デプロイは **GitHub Actions が唯一の経路**（stroll と同じ）。手元の `npm run deploy` は非常用。
+
+```
+PR           → ci.yml     : npm run ci（型・ビルド・テスト）だけ。出さない
+main へ push → deploy.yml : verify → 通ったときだけ deploy（落ちたら本番に出ない）
+手動          → Actions 画面から deploy.yml を workflow_dispatch で実行
+```
+
+Secrets（GitHub のリポジトリ設定）: `CLOUDFLARE_API_TOKEN`（Edit Cloudflare Workers テンプレートで発行）、
+`CLOUDFLARE_ACCOUNT_ID`。無いと deploy ジョブが理由を出して止まる。
+**Cloudflare 側の Git 連携はつながないこと**（検証のゲートが無く、Actions と二重に出て古いビルドが上書きしうる）。

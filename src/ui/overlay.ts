@@ -430,7 +430,18 @@ export class Overlay {
     this.screenFade.style.opacity = String(v);
   }
 
-  setAttractCaption(text: string | null): void {
+  /**
+   * 空撮の字幕。カットの切り替えではゆっくり出し入れする。instant なら動きなしですぐ消す
+   * （遊び始めたとき。暗転した画面に字幕だけが一瞬残って見えていた）。
+   */
+  setAttractCaption(text: string | null, instant = false): void {
+    if (instant) {
+      this.attractCaption.style.transition = 'none';
+      this.attractCaption.classList.remove('on');
+      void this.attractCaption.offsetWidth;
+      this.attractCaption.style.transition = '';
+      return;
+    }
     this.attractCaption.classList.toggle('on', text !== null);
     if (text !== null && text !== this.attractText) {
       this.attractText = text;

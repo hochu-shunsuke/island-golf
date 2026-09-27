@@ -1,0 +1,19 @@
+name: CI
+
+# PR で、型・ビルド・テストを回す。
+# main への push では deploy.yml の verify ジョブが同じ検証をするので、
+# ここでは走らせない（二重に回さない）。
+on:
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm run ci
