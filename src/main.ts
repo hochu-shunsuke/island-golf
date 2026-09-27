@@ -33,6 +33,7 @@ import { CourseField, type FieldArrays } from './golf/field';
 import { GolfGame, type GolfStatus, scoreName, toPar } from './golf/game';
 import { AudioEngine } from './audio/engine';
 import { HoleMap } from './ui/holeMap';
+import { PerfHud } from './ui/perfHud';
 import { GolfSounds } from './audio/golfSounds';
 import { Music } from './audio/music';
 
@@ -237,6 +238,8 @@ const overlay = new Overlay(document.getElementById('ui')!, params, inputMode ==
     newCourse();
   },
 });
+/** アドレスに ?perf を付けて開いたときだけ、fps と描く量を画面に出す（実機で重さを測るため。ui/perfHud.ts）。 */
+const perfHud = new URLSearchParams(location.search).has('perf') ? new PerfHud(document.getElementById('ui')!) : null;
 
 // ── 遊び方（ひとりで・COM と対戦・友達と） ────────────────────────
 /** 遊び方はこの端末に覚えておく。初めてはひとりで（利用者が決めた）。 */
@@ -515,7 +518,8 @@ function catchUpToRoom(): void {
 /** 今のアドレスの #（部屋に入っていれば「合言葉@部屋の番号」、今日のコースなら無し）。 */
 function addressHash(): string {
   if (party) return `#${params.seed}@${party.id}`;
-  return isDaily() ? location.pathname : `#${params.seed}`;
+  // 今日のコースは # を付けない。?perf などの問い合わせは残す（読み直しても計測表示が消えないように）。
+  return isDaily() ? location.pathname + location.search : `#${params.seed}`;
 }
 
 /** 遊び方に合わせて相手を置き直し、1 番のティーから回り直す（回っている途中なら、続きは捨てる）。 */
@@ -1885,6 +1889,7 @@ renderer.setAnimationLoop(() => {
     farForest.update(camera, elapsed);
     chunks?.updateInstances(camera, elapsed);
     renderer.render(scene, camera);
+    perfHud?.frame(dt, renderer);
     renderWarmupNeeded = false;
   }
 });

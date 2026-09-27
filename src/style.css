@@ -2672,3 +2672,18 @@ kbd {
   margin-right: 4px;
   vertical-align: -1px;
 }
+
+/* ?perf の計測表示。左上、上の帯と通算の札の下に小さく（右の列のボタンと地図は避け、狭ければ折り返す）。 */
+.perf-hud {
+  position: absolute;
+  left: max(16px, env(safe-area-inset-left));
+  top: calc(max(16px, env(safe-area-inset-top)) + 104px);
+  max-width: min(520px, calc(100vw - 104px));
+  z-index: 20;
+  padding: 3px 8px;
+  border-radius: 6px;
+  font: 10.5px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: #d8f7c8;
+  background: rgba(0, 0, 0, 0.62);
+  pointer-events: none;
+}
