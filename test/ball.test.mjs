@@ -9,6 +9,7 @@ const server = await createServer({ configFile: false, appType: 'custom', logLev
 try {
   const { Ball } = await server.ssrLoadModule('/src/golf/ball.ts');
   const { CLUBS } = await server.ssrLoadModule('/src/golf/clubs.ts');
+  const { trial } = await server.ssrLoadModule('/src/golf/aim.ts');
   // 球は -z へ打つ。tilt > 0 なら -z へ下る（打つ向きが下り）、tiltX > 0 なら -x が低い。
   const flat = (surface, tilt = 0, tiltX = 0) => ({
     height: (x, z) => 10 + tilt * z + tiltX * x,
@@ -42,6 +43,12 @@ try {
   }
   const driver = shoot(flat('fairway'), CLUBS[0]);
   assert(driver.total > 220 && driver.total < 275, `ドライバーの飛距離がゴルフらしくありません: ${driver.total.toFixed(0)}m`);
+  // 狙い線の空中部分は地面へ投影せず、実際の放物線を保つ。
+  const previewGround = flat('fairway');
+  const preview = trial(previewGround, { x: 0, z: 0 }, 'fairway', 0, 0, 1);
+  const previewApex = Math.max(...preview.arc.map((p) => p.y - previewGround.height(p.x, p.z)));
+  assert(previewApex > 20, `狙い線が放物線になっていません（地面から最高 ${previewApex.toFixed(1)}m）`);
+  assert(preview.land && preview.arc.at(-1).z === preview.land.z, '狙い線が着地点まで繋がっていません');
   // 短いクラブほど落ちてから止まる（サンドは 5m 以内）。
   const sand = shoot(flat('fairway'), CLUBS[6]);
   assert(sand.total - sand.carry < 5, `サンドの球が転がりすぎます（${(sand.total - sand.carry).toFixed(1)}m）`);

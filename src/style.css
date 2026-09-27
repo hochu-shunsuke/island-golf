@@ -600,8 +600,9 @@ kbd {
   height: 44px;
 }
 
-/* 空から見ている間は、休憩と戻るだけを出す（飛ぶ操作のボタンと重ねない）。 */
-.golf-touch.scouting .g-btn:not(.g-scout):not(.g-pause) {
+/* 空から見ている間は、球へ戻るだけをゴルフ側から出す。
+   休憩は同時に有効になる飛行用タッチUIが受け持つため、ここでも出すと同じ場所に二重になる。 */
+.golf-touch.scouting .g-btn:not(.g-scout) {
   display: none;
 }
 

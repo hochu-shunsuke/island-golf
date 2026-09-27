@@ -903,8 +903,8 @@ export class Overlay {
   }
 
   /**
-   * タッチのゴルフ用ボタン。scouting（空から見ている間）は、休憩と「球へ戻る」（目のボタンと同じ場所）だけを出す
-   * （飛ぶ操作は stroll と同じタッチ操作が受け持つ）。
+   * タッチのゴルフ用ボタン。scouting（空から見ている間）は「球へ戻る」（目のボタンと同じ場所）だけを出す。
+   * 飛ぶ操作と休憩は stroll と同じタッチ操作が受け持つ。
    */
   setGolfTouch(active: boolean, scouting = false): void {
     this.golfTouch.classList.toggle('on', active);

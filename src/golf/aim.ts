@@ -92,7 +92,7 @@ function powerFor(c: number, d: number): number {
 /** 試し打ちの結果: 落ちる所（最初に地面に触れた所）、飛ぶ間と落ちた後の点、止まった所。 */
 export interface Trial {
   land: Point3 | null;
-  /** 飛んでいる間の点（真下の地面の上）。 */
+  /** 飛んでいる間の球の軌道（球の実際の高さ）。 */
   arc: Point3[];
   /** 落ちてから転がる点。 */
   roll: Point3[];
@@ -129,12 +129,14 @@ export function trial(
     const h = ground.height(sim.pos.x, sim.pos.z);
     if (!land && club.loft > 0 && sim.pos.y - h < BALL_RADIUS + 0.05) {
       land = { ...p };
+      // 空中の線を着地点まで繋ぐ。ここから先の跳ねと転がりは別の色で見せる。
+      arc.push(p);
       roll.push(p);
     } else if (land || club.loft === 0) {
       roll.push(p);
     } else {
-      // 飛んでいる間は、真下の地面の上に点を置く。
-      arc.push({ x: p.x, y: h + 0.15, z: p.z });
+      // 物理計算どおりの高さを使う。地面へ投影すると、クラブごとの弾道差が消えて直線に見える。
+      arc.push(p);
     }
     if (sim.state === 'rest' || sim.state === 'water') break;
   }

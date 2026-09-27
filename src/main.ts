@@ -57,6 +57,15 @@ const DESKTOP_PIXEL_BUDGET = 8_000_000;
 const MAKE_FOV = 55;
 /** 球を打つときの視野（度）。 */
 const GOLF_FOV = 58;
+/**
+ * 回っている間の画角（縦, 度）。縦長の画面では横がとても狭くなる（390×844 で横 29°）ので、横が 40° ほど
+ * 映るまで縦の画角を広げる（76° まで）。球の後ろから狙うカメラで、左右の林と先のグリーンが一緒に見えるように。
+ */
+function golfFov(): number {
+  const aspect = Math.max(0.3, innerWidth / Math.max(1, innerHeight));
+  const wide = THREE.MathUtils.radToDeg(2 * Math.atan(Math.tan(THREE.MathUtils.degToRad(20)) / aspect));
+  return Math.min(76, Math.max(GOLF_FOV, wide));
+}
 /** 狙いを回す速さ（マウスは画素あたり、タッチは画素あたりのラジアン）。 */
 const AIM_MOUSE = 0.0022;
 const AIM_TOUCH = 0.004;
@@ -1053,7 +1062,7 @@ function toggleScout(): void {
     loadHole();
     player?.clearKeys();
     golf?.resetCamera();
-    camera.fov = GOLF_FOV;
+    camera.fov = golfFov();
     camera.updateProjectionMatrix();
     overlay.setFlightInfo(false, 0, 0, false);
     golf?.emit();
@@ -1181,7 +1190,7 @@ function startPlaying(): void {
       enterFinaleView(false);
       roundResultAt = performance.now() + 600;
     }
-    camera.fov = GOLF_FOV;
+    camera.fov = golfFov();
     camera.updateProjectionMatrix();
     golf?.emit();
   }
@@ -1636,7 +1645,15 @@ renderer.setAnimationLoop(() => {
   } else if (playing && golf) {
     if (!updateHoleFade(dt)) golf.update(dt);
     if (finaleCam) finaleCam.update(dt, camera);
-    else golf.updateCamera(camera, dt);
+    else {
+      // 画面を回した・大きさを変えたら、画角も合わせる。
+      const fov = golfFov();
+      if (Math.abs(camera.fov - fov) > 0.01) {
+        camera.fov = fov;
+        camera.updateProjectionMatrix();
+      }
+      golf.updateCamera(camera, dt);
+    }
     if (roundResult && roundResultAt > 0 && performance.now() >= roundResultAt && !holeFade) {
       roundResultAt = 0;
       overlay.showRoundResult(roundResult);

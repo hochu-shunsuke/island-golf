@@ -104,6 +104,15 @@ export function toPar(strokes: number, par: number): string {
 }
 
 /** ホールの紹介（上空からの眺め）の長さと、そこから打つ構えへ降りてくる時間（s）。 */
+/** 狙う間のカメラの、球からの後ろと上（m）。遠くを狙うほど少し引く（228m で 15m 後ろ・10m 上）。 */
+const AIM_BACK = 10;
+const AIM_UP = 6.5;
+/** 狙う間に自分の球を大きく描く上限（倍）。 */
+const AIM_BALL_SCALE = 2;
+/** 狙う間のカメラで、落とし所を置く高さと、球の一番下の位置（画面の真ん中が 0、上端 1、下端 -1）。 */
+const AIM_LANDING_AT = 0.12;
+/** 下の打つ情報の札に隠れない高さまで。 */
+const AIM_BALL_LOWEST = -0.66;
 const INTRO_TIME = 3.4;
 const INTRO_OUT = 1.4;
 /** カップの半径（m）。本物は 54mm。遊びやすいよう大きめ。 */
@@ -589,9 +598,10 @@ export class GolfGame {
     }
     if (this.phase === 'moving') this.updateMoving(dt);
     this.rivals?.update(dt, this.target);
-    // カップに入った球は穴の中へ沈める。
+    // カップに入った球は穴の中へ沈める。狙う間に大きく描いた球（updateCamera）は、地面に埋まらないよう持ち上げる。
     const sink = this.phase === 'holed' ? BALL_RADIUS * 1.6 : 0;
-    this.ballMesh.position.set(this.ball.pos.x, this.ball.pos.y - sink, this.ball.pos.z);
+    const lift = (this.ballMesh.scale.x - 1) * BALL_RADIUS;
+    this.ballMesh.position.set(this.ball.pos.x, this.ball.pos.y - sink + lift, this.ball.pos.z);
   }
 
   private updateMoving(dt: number): void {
@@ -801,8 +811,11 @@ export class GolfGame {
   // ── カメラ ───────────────────────────────────────────
 
   /**
-   * カメラ。狙う間は、球の後ろの高い所から輪の方を見る（遠くを狙うほど高く引く。落とし所とグリーンが
-   * 見えるように）。パットは低く。動いている間は球を追う。
+   * カメラ。狙う間は、球の後ろ・人が立って見下ろすくらいの高さから打つ方を見る（自分の球と、その先の
+   * フェアウェイとグリーンが一緒に映る）。傾きは、落とし所を画面の真ん中の少し上に置き、球が画面の下の方に
+   * 収まるように決める。以前は球の後ろの高い所（200m 狙いで 30m 後ろ・33m 上）から見下ろしていて、球が画面の
+   * 外だった。目の高さ（2m）まで下げると、今度は先が潰れてグリーンが読めなかった（利用者の判断）。
+   * パットは低く。動いている間は球を追う。
    */
   updateCamera(camera: THREE.PerspectiveCamera, dt: number): void {
     const p = this.ball.pos;
@@ -826,12 +839,7 @@ export class GolfGame {
         const ahead = Math.min(d, 8);
         look.set(p.x + dx * ahead, p.y - 0.3, p.z + dz * ahead);
       } else {
-        const back = 7 + d * 0.1;
-        const up = 3 + d * 0.13;
-        pos.set(p.x - dx * back, p.y + up, p.z - dz * back);
-        const lx = p.x + dx * d * 0.72;
-        const lz = p.z + dz * d * 0.72;
-        look.set(lx, this.golfGround.height(lx, lz), lz);
+        this.aimView(camera, dx, dz, d, pos, look);
       }
     }
     // カメラが地面に埋まらないように。
@@ -869,6 +877,60 @@ export class GolfGame {
       const d = camera.position.distanceTo(this.landing.position);
       this.landing.scale.setScalar((this.putting ? 0.2 : 1) * Math.max(0.4, d / 60));
     }
+    // 狙う間は、自分の球を少し大きく描く（カメラが 15m ほど後ろにあると、本当の大きさでは点になる）。
+    const aiming = (this.phase === 'aim' || this.phase === 'swing') && !this.putting;
+    const far = Math.hypot(camera.position.x - p.x, camera.position.y - p.y, camera.position.z - p.z);
+    this.ballMesh.scale.setScalar(aiming ? THREE.MathUtils.clamp(far / 9, 1, AIM_BALL_SCALE) : 1);
+  }
+
+  /**
+   * 狙う間のカメラ（パット以外）。球の後ろ AIM_BACK・上 AIM_UP に置き、木の中に入るなら球へ寄せる。
+   * 落とし所が画面の真ん中の少し上（AIM_LANDING_AT）に来る傾きにし、球が下にはみ出すなら（上りの打ち上げ）
+   * 球が AIM_BALL_LOWEST に収まるまで下を向く。
+   */
+  private aimView(
+    camera: THREE.PerspectiveCamera,
+    dx: number,
+    dz: number,
+    d: number,
+    pos: THREE.Vector3,
+    look: THREE.Vector3,
+  ): void {
+    const p = this.ball.pos;
+    const g = this.golfGround;
+    let back = AIM_BACK + d * 0.02;
+    const up = AIM_UP + d * 0.016;
+    for (const k of [1, 0.6, 0.35]) {
+      const x = p.x - dx * back * k;
+      const z = p.z - dz * back * k;
+      pos.set(x, Math.max(p.y + up, g.height(x, z) + 1.2), z);
+      if (!this.inTree(pos)) {
+        back *= k;
+        break;
+      }
+    }
+    const half = THREE.MathUtils.degToRad(camera.fov / 2);
+    const lx = p.x + dx * d;
+    const lz = p.z + dz * d;
+    const landing = Math.atan2(g.height(lx, lz) - pos.y, back + d);
+    const ball = Math.atan2(p.y - pos.y, back);
+    let pitch = landing - AIM_LANDING_AT * half;
+    if ((ball - pitch) / half < AIM_BALL_LOWEST) pitch = ball - AIM_BALL_LOWEST * half;
+    look.set(pos.x + dx * Math.cos(pitch) * 10, pos.y + Math.sin(pitch) * 10, pos.z + dz * Math.cos(pitch) * 10);
+  }
+
+  /** その場所が木の幹か葉の中か（カメラを置けないか）。 */
+  private inTree(at: THREE.Vector3): boolean {
+    let hit = false;
+    this.golfGround.trees?.(at.x, at.z, 8, (t) => {
+      const ddx = at.x - t.x;
+      const ddz = at.z - t.z;
+      const dy = (at.y - t.canopyY) / 0.8;
+      const r = t.canopyR + 0.6;
+      if (ddx * ddx + ddz * ddz + dy * dy < r * r) hit = true;
+      if (at.y < t.trunkTop && Math.hypot(ddx, ddz) < t.trunkR + 0.6) hit = true;
+    });
+    return hit;
   }
 
   /** 空から戻ってきたとき、カメラを飛ばさずに置き直す。 */
