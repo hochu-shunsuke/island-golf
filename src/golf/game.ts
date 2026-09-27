@@ -194,6 +194,9 @@ export class GolfGame {
   private readonly camPos = new THREE.Vector3();
   private readonly camLook = new THREE.Vector3();
   private cameraReady = false;
+  /** カップイン後に、球を中心として見回す向きと高さ。 */
+  private holedViewYaw = 0;
+  private holedViewPitch = 0.42;
   private solveDirty = true;
   private solveWait = 0;
   /** ホールに立った直後、上空からホール全体を見せる残り時間（s）。 */
@@ -331,6 +334,8 @@ export class GolfGame {
     this.intro = INTRO_TIME;
     this.rivals?.teeOff(hole);
     this.readyToAim();
+    this.holedViewYaw = this.aimYaw;
+    this.holedViewPitch = 0.42;
   }
 
   /** このラウンドの打数（番号 - 1 の位置、回っていないホールは空き）。 */
@@ -368,6 +373,8 @@ export class GolfGame {
     this.strokes = strokes;
     this.scores[this.target.number - 1] = strokes;
     this.phase = 'holed';
+    this.holedViewYaw = this.aimYaw;
+    this.holedViewPitch = 0.42;
     this.arc.visible = false;
     this.roll.visible = false;
     this.landing.visible = false;
@@ -463,6 +470,13 @@ export class GolfGame {
     if (this.phase !== 'aim') return;
     this.intro = Math.min(this.intro, INTRO_OUT);
     this.setAim(this.aimYaw + delta, this.aimDistance);
+  }
+
+  /** カップイン後の待ち時間に、カップを中心として景色を見回す。 */
+  lookAround(deltaYaw: number, deltaPitch: number): void {
+    if (this.phase !== 'holed') return;
+    this.holedViewYaw += deltaYaw;
+    this.holedViewPitch = THREE.MathUtils.clamp(this.holedViewPitch + deltaPitch, 0.12, 1.05);
   }
 
   /** 輪を前後に動かす（m）。クラブを自分で選んでいなければ、距離に合うクラブへ替える。 */
@@ -618,6 +632,8 @@ export class GolfGame {
     const h = this.target;
     if (this.ball.state === 'holed') {
       this.phase = 'holed';
+      this.holedViewYaw = this.aimYaw;
+      this.holedViewPitch = 0.42;
       this.scores[h.number - 1] = this.strokes;
       this.noteRest(true);
       const under = this.strokes < h.par || this.strokes === 1;
@@ -821,7 +837,7 @@ export class GolfGame {
     const p = this.ball.pos;
     const pos = new THREE.Vector3();
     const look = new THREE.Vector3();
-    if (this.phase === 'moving' || this.phase === 'holed') {
+    if (this.phase === 'moving') {
       const v = this.ball.vel;
       const hs = Math.hypot(v.x, v.z);
       const dx = hs > 0.5 ? v.x / hs : -Math.sin(this.aimYaw);
@@ -830,6 +846,13 @@ export class GolfGame {
       const back = putt ? 4 : 18;
       pos.set(p.x - dx * back, p.y + (putt ? 2 : 8), p.z - dz * back);
       look.set(p.x, p.y, p.z);
+    } else if (this.phase === 'holed') {
+      const radius = 19;
+      const flat = Math.cos(this.holedViewPitch) * radius;
+      const dx = -Math.sin(this.holedViewYaw);
+      const dz = -Math.cos(this.holedViewYaw);
+      pos.set(p.x - dx * flat, p.y + Math.sin(this.holedViewPitch) * radius, p.z - dz * flat);
+      look.set(p.x, p.y + 0.45, p.z);
     } else {
       const dx = -Math.sin(this.aimYaw);
       const dz = -Math.cos(this.aimYaw);

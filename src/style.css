@@ -512,6 +512,10 @@ kbd {
   color: rgba(255, 255, 255, 0.7);
 }
 
+.golf-hint:empty {
+  display: none;
+}
+
 /* タッチのゴルフ用ボタン。文字ではなくアイコン。開始画面と同じガラスの丸で、打つだけを明るい白い丸にする
    （いちばん押すボタンだと一目で分かるように）。 */
 .golf-touch {
@@ -583,6 +587,12 @@ kbd {
 /* 構えている間は、打つボタンの縁が脈打つ（もう一度押す番）。 */
 .golf-touch.swinging .g-shot {
   animation: shot-pulse 1s ease-in-out infinite;
+}
+
+/* カップイン後は画面のタップで進める。役目のない大きな打つボタンは景色を隠さない。 */
+.golf-touch.holed .g-shot,
+.golf-touch.holed .g-cancel {
+  display: none;
 }
 
 @keyframes shot-pulse {
@@ -678,6 +688,31 @@ kbd {
     opacity: 0;
     scale: 1;
   }
+}
+
+/* 友達を待つ間はスコア表を中央に置かず、状況だけを端に小さく出す。 */
+.hole-wait {
+  position: absolute;
+  left: 50%;
+  bottom: max(20px, calc(env(safe-area-inset-bottom) + 14px));
+  translate: -50% 8px;
+  padding: 8px 13px;
+  border: 1px solid var(--edge);
+  border-radius: 999px;
+  color: var(--muted);
+  background: rgba(18, 27, 33, 0.6);
+  backdrop-filter: blur(8px);
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 180ms ease, translate 180ms ease;
+}
+
+.hole-wait.on {
+  translate: -50% 0;
+  opacity: 1;
 }
 
 /* スコアカード（カップインの後と、Tab・打数の表示を押している間）。
@@ -1410,18 +1445,6 @@ kbd {
   background: radial-gradient(circle, rgba(120, 190, 255, 0.18), rgba(12, 20, 26, 0.2));
 }
 
-/* 目盛り（上 = 狙う向き）。 */
-.wind-dial::before {
-  content: '';
-  position: absolute;
-  left: 50%;
-  top: 2px;
-  width: 2px;
-  height: 6px;
-  translate: -50% 0;
-  background: rgba(255, 255, 255, 0.7);
-}
-
 .wind-needle {
   position: absolute;
   inset: 0;
@@ -1627,15 +1650,6 @@ kbd {
   letter-spacing: 0.2em;
   color: #fff;
   text-shadow: 0 1px 12px rgba(4, 10, 14, 0.45);
-  white-space: nowrap;
-}
-
-.tagline {
-  margin: 4px 0 0;
-  font-size: 12.5px;
-  letter-spacing: 0.12em;
-  color: rgba(255, 255, 255, 0.85);
-  text-shadow: 0 1px 8px rgba(4, 10, 14, 0.5);
   white-space: nowrap;
 }
 
@@ -2112,11 +2126,6 @@ kbd {
     text-indent: 0.2em;
   }
 
-  .tagline {
-    font-size: 11.5px;
-    text-indent: 0.12em;
-  }
-
   /* コースの札と、遊び方・プレイを、画面の下から積む（友達とのときは「部屋に入る」の分だけ札が上がる）。 */
   .panel {
     display: flex;
@@ -2245,14 +2254,6 @@ kbd {
 
 .standings.on {
   display: flex;
-}
-
-/* 友達と: 順位の上に部屋の番号（後から友達に聞かれても伝えられるように）。 */
-.st-title {
-  margin-bottom: 3px;
-  font-size: 10.5px;
-  letter-spacing: 0.16em;
-  color: var(--faint);
 }
 
 .st-row {

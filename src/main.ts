@@ -37,7 +37,7 @@ import { GolfSounds } from './audio/golfSounds';
 import { Music } from './audio/music';
 
 /**
- * Hole in Isle（コード名 island-golf）。合言葉ひとつで、山に囲まれた谷に 9 ホールのコースがある島がひとつできる。
+ * Hole in Isle（コード名 island-golf）。コース ID から、山に囲まれた島と 9 ホールのコースを生成する。
  * 合言葉は URL の `#` に載るので、URL を送れば同じ島・同じコースを渡せる。ピンと風は日ごとに替わる。
  *
  * 開くと、暗い読み込み画面から島の空撮（開始画面）へ。「プレイ」で 1 番のティーから回り、F で空から見る。
@@ -1053,6 +1053,9 @@ function toggleScout(): void {
     overlay.setRivalMarkers([]);
     overlay.setStandings(null);
     overlay.setTiming(null, 0);
+    overlay.hideScorecard();
+    overlay.setHoleWait(null);
+    scorecardHeld = false;
     // 空から見る間はコースの外へも飛ぶので、カメラの周りを読み込む。
     chunks?.setFocus(null);
     holeFade = null;
@@ -1216,6 +1219,7 @@ function stopPlaying(): void {
   if (!playing) return;
   playing = false;
   music?.pause();
+  sounds?.stopAmbient();
   // ホールの切り替えの途中なら打ち切る（休憩中の暗転は空撮が受け持つ）。
   holeFade = null;
   if (golf) golf.aids.visible = false;
@@ -1233,6 +1237,7 @@ function stopPlaying(): void {
   overlay.setStandings(null);
   overlay.setTiming(null, 0);
   overlay.hideScorecard();
+  overlay.setHoleWait(null);
   scorecardHeld = false;
   // 締めの絵はしまう（結果は覚えておき、戻ったらまた出す）。
   finaleCam = null;
@@ -1420,6 +1425,10 @@ addEventListener('mousemove', (e: MouseEvent) => {
     return;
   }
   if (!golf) return;
+  if (golf.phase === 'holed') {
+    golf.lookAround(-e.movementX * AIM_MOUSE, e.movementY * AIM_MOUSE);
+    return;
+  }
   // 左右で向き、前後（上下）で距離。
   golf.rotateAim((-e.movementX * AIM_MOUSE) / (golf.putting ? 2.5 : 1));
   if (e.movementY !== 0) golf.pushAim(-e.movementY * pushPerPixel(golf));
@@ -1449,29 +1458,44 @@ addEventListener(
 let aimPointer: number | null = null;
 let aimLastX = 0;
 let aimLastY = 0;
+let aimMoved = false;
+let aimTravel = 0;
 canvas.addEventListener('pointerdown', (e) => {
   if (!playing || scout || e.pointerType === 'mouse') return;
-  // カップに入った後は、画面のどこをタップしても次のティーへ。
-  if (golf?.phase === 'holed') {
-    holedPress();
-    return;
-  }
   aimPointer = e.pointerId;
   aimLastX = e.clientX;
   aimLastY = e.clientY;
+  aimMoved = false;
+  aimTravel = 0;
 });
 canvas.addEventListener('pointermove', (e) => {
   if (e.pointerId !== aimPointer || !golf) return;
-  golf.rotateAim((-(e.clientX - aimLastX) * AIM_TOUCH) / (golf.putting ? 2.5 : 1));
-  golf.pushAim(-(e.clientY - aimLastY) * pushPerPixel(golf) * 1.4);
+  const dx = e.clientX - aimLastX;
+  const dy = e.clientY - aimLastY;
+  aimTravel += Math.hypot(dx, dy);
+  if (aimTravel > 6) aimMoved = true;
+  if (golf.phase === 'holed') {
+    golf.lookAround(-dx * AIM_TOUCH, dy * AIM_TOUCH);
+    aimLastX = e.clientX;
+    aimLastY = e.clientY;
+    return;
+  }
+  golf.rotateAim((-dx * AIM_TOUCH) / (golf.putting ? 2.5 : 1));
+  golf.pushAim(-dy * pushPerPixel(golf) * 1.4);
   aimLastX = e.clientX;
   aimLastY = e.clientY;
 });
 const endAim = (e: PointerEvent) => {
+  if (e.pointerId !== aimPointer) return;
+  const holed = golf?.phase === 'holed';
+  aimPointer = null;
+  if (holed && !aimMoved) holedPress();
+};
+const cancelAim = (e: PointerEvent) => {
   if (e.pointerId === aimPointer) aimPointer = null;
 };
 canvas.addEventListener('pointerup', endAim);
-canvas.addEventListener('pointercancel', endAim);
+canvas.addEventListener('pointercancel', cancelAim);
 overlay.bindGolfTouch({
   onShotDown: shotPress,
   onShotUp: () => {},
@@ -1591,7 +1615,7 @@ function placeRivalMarkers(rivals: readonly OpponentState[]): void {
 const ballScreen = new THREE.Vector3();
 /**
  * 構えている間、球のすぐ下に正確さのバーを出す。球が画面の外（真下など）にあるときは、画面の下寄りの真ん中へ。
- * 画面の下の端のバーは、狙い（輪）から目線が離れて見づらかった。
+ * タッチでは右下の打つボタンより上に収める。球が画面下寄りにあると、バーとボタンが同じ高さへ来て重なっていた。
  */
 function placeTiming(game: GolfGame): void {
   if (game.phase !== 'swing') {
@@ -1602,9 +1626,13 @@ function placeTiming(game: GolfGame): void {
   const inside = ballScreen.z < 1 && Math.abs(ballScreen.x) < 1 && Math.abs(ballScreen.y) < 1;
   const x = inside ? ((ballScreen.x + 1) / 2) * innerWidth : innerWidth / 2;
   const y = (inside ? ((1 - ballScreen.y) / 2) * innerHeight : innerHeight * 0.7) + 34;
-  // バーの幅の半分（約 150px）は画面の中に収める。下は打数の帯の上まで。
+  // バーの幅の半分（約 150px）は画面の中に収める。タッチでは打つボタン（下から約 88〜166px）も避ける。
+  const touchTiming = inputMode === 'touch';
+  const topClearance = touchTiming ? 80 : 140;
+  const bottomClearance = touchTiming ? 230 : 130;
+  const timingY = Math.max(topClearance, Math.min(Math.max(topClearance, innerHeight - bottomClearance), y));
   overlay.setTiming(
-    { x: Math.max(160, Math.min(innerWidth - 160, x)), y: Math.max(140, Math.min(innerHeight - 130, y)) },
+    { x: Math.max(160, Math.min(innerWidth - 160, x)), y: timingY },
     game.needle,
   );
 }
@@ -1688,14 +1716,22 @@ renderer.setAnimationLoop(() => {
     );
     if (lastStatus) {
       const pars = golf.course.map((h) => h.par);
+      const roomView = party?.view;
+      const waitingForFriends = playMode === 'friends' && golf.phase === 'holed' && !golf.rivalsSettled && roomView;
+      const holeIndex = golf.target.number - 1;
+      const doneCount = waitingForFriends
+        ? roomView.players.filter((p) => p.playing && p.scores[holeIndex] != null).length
+        : 0;
+      const playingCount = waitingForFriends ? roomView.players.filter((p) => p.playing).length : 0;
+      overlay.setHoleWait(waitingForFriends ? `みんなを待っています ${doneCount}/${playingCount}` : null);
       // カップインの後のスコアカードは、COM の相手が打ち終えてから（全員の打数を並べて出す）。
-      // 友達とは、みんなを待っている間も出す（足の案内が「待っています」になる）。
+      // 友達を待つ間は景色を見回せるよう、中央のカードを自動では出さない。
       const card =
         holedCardAt > 0 &&
         performance.now() >= holedCardAt &&
         golf.phase === 'holed' &&
         !holeFade &&
-        (golf.rivalsSettled || playMode === 'friends');
+        golf.rivalsSettled;
       overlay.setScorecard(
         pars,
         scoreRows(lastStatus),
@@ -1704,7 +1740,7 @@ renderer.setAnimationLoop(() => {
         card ? holedCard(golf) : null,
       );
       // スコアカードを出している間は順位をしまう（カードに全員の打数が並ぶ。スマホでは重なって見えた）。
-      overlay.setStandings(finaleCam || card ? null : standingsOf(lastStatus, pars), party ? `部屋 ${party.id}` : null);
+      overlay.setStandings(finaleCam || card ? null : standingsOf(lastStatus, pars));
     }
     if (!finaleCam) {
       placeFlagMarkers(golf, golf.ball.pos);

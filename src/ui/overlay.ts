@@ -257,7 +257,6 @@ export class Overlay {
       <aside class="panel">
         <header class="title">
           <h1 class="title-logo">Hole in Isle</h1>
-          <p class="tagline">合言葉ひとつで、ゴルフの島がひとつ。</p>
         </header>
         <section class="course-panel">
           <div class="course-top">
@@ -341,6 +340,7 @@ export class Overlay {
       <div class="standings" aria-label="順位"></div>
       <div class="aim-label" aria-hidden="true"></div>
       <div class="celebrate" aria-live="polite"></div>
+      <div class="hole-wait" aria-live="polite"></div>
       <div class="scorecard"></div>
       <div class="round-result" role="dialog" aria-label="ラウンド終了">
         <div class="rr-card">
@@ -427,6 +427,7 @@ export class Overlay {
     this.feedbackEl = this.root.querySelector('.shot-feedback')!;
     this.holeMapCanvas = this.root.querySelector('.hole-map')!;
     this.celebrateEl = this.root.querySelector('.celebrate')!;
+    this.holeWait = this.root.querySelector('.hole-wait')!;
     this.scorecard = this.root.querySelector('.scorecard')!;
     this.roundResult = this.root.querySelector('.round-result')!;
     this.root.querySelector('.rr-again')!.addEventListener('click', () => this.handlers.onAgain());
@@ -480,6 +481,8 @@ export class Overlay {
   readonly holeMapCanvas: HTMLCanvasElement;
   private feedbackTimer = 0;
   private readonly celebrateEl: HTMLElement;
+  private readonly holeWait: HTMLElement;
+  private holeWaitText: string | null = null;
   private readonly scorecard: HTMLElement;
   private readonly roundResult: HTMLElement;
   private roundShareText = '';
@@ -515,9 +518,10 @@ export class Overlay {
     this.windMeter.classList.toggle('on', on);
     this.holeMapCanvas.classList.toggle('on', on);
     this.root.classList.toggle('golfing', on);
-    // カップインの後は、真ん中のスコアカードが次へ進む案内を出すので、下の打つ表示はしまう。
+    // カップインの後は画面のタップで進めるので、下の打つ表示はしまう。
     this.golfPower.classList.toggle('on', on && status.phase !== 'moving' && status.phase !== 'holed');
     this.golfTouch.classList.toggle('swinging', on && status.phase === 'swing');
+    this.golfTouch.classList.toggle('holed', on && status.phase === 'holed');
     if (!status) return;
     const { target } = status;
     const total = status.total > 0 ? ` · 通算 ${toPar(status.total, status.totalPar)}` : '';
@@ -549,7 +553,7 @@ export class Overlay {
             ? '針が真ん中に来たら、もう一度 ◯'
             : '針が真ん中に来たら、もう一度押す（Esc か右クリックで戻る）'
           : this.touch
-            ? 'なぞって狙う · ◯ で構える'
+            ? ''
             : 'マウスで狙う · クリックか Space で構える';
     }
     // 風のメーター: 針は狙う向きを上にした風の向き。数字は大きく。
@@ -607,6 +611,14 @@ export class Overlay {
   hideScorecard(): void {
     this.scorecardPinned = false;
     this.scorecard.classList.remove('on');
+  }
+
+  /** 友達が同じホールを終えるまでの、小さな待機表示。 */
+  setHoleWait(text: string | null): void {
+    if (text === this.holeWaitText) return;
+    this.holeWaitText = text;
+    this.holeWait.classList.toggle('on', text !== null);
+    if (text !== null) this.holeWait.textContent = text;
   }
 
   /** カップインのお祝い（大きな文字）。 */
@@ -725,14 +737,14 @@ export class Overlay {
     }
   }
 
-  /** 順位の表示（COM や友達と回っている間）。null で隠す。title は上の小さな見出し（友達と: 部屋の番号）。 */
-  setStandings(rows: readonly StandingRow[] | null, title: string | null = null): void {
-    this.standings.classList.toggle('on', rows !== null && (rows.length > 1 || title !== null));
+  /** 順位の表示（COM や友達と回っている間）。null で隠す。 */
+  setStandings(rows: readonly StandingRow[] | null): void {
+    this.standings.classList.toggle('on', rows !== null && rows.length > 0);
     if (!rows) return;
-    const key = `${title}|${rows.map((r) => `${r.rank}${r.name}${r.total}${r.now}`).join('|')}`;
+    const key = rows.map((r) => `${r.rank}${r.name}${r.total}${r.now}`).join('|');
     if (key === this.standingsKey) return;
     this.standingsKey = key;
-    this.standings.innerHTML = (title ? `<div class="st-title">${escapeHtml(title)}</div>` : '') + rows
+    this.standings.innerHTML = rows
       .map(
         (r) => `<div class="st-row${r.you ? ' you' : ''}">
           <span class="st-rank">${r.rank}</span>

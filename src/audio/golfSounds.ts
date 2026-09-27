@@ -15,6 +15,7 @@ export class GolfSounds {
   private readonly windGain: GainNode;
   private readonly windFilter: BiquadFilterNode;
   private readonly birdBus: GainNode;
+  private windSource: AudioBufferSourceNode | null = null;
   private birdTimer = 3;
 
   constructor(private readonly engine: AudioEngine) {
@@ -27,16 +28,15 @@ export class GolfSounds {
     this.bus.connect(send).connect(engine.reverbSend);
 
     // そよ風（ブラウンノイズを低く絞る）。
-    const src = engine.loopNoise('brown');
     this.windFilter = ctx.createBiquadFilter();
     this.windFilter.type = 'lowpass';
     this.windFilter.frequency.value = 260;
     this.windGain = ctx.createGain();
     this.windGain.gain.value = 0;
-    src.connect(this.windFilter).connect(this.windGain).connect(engine.master);
+    this.windFilter.connect(this.windGain).connect(engine.master);
 
     this.birdBus = ctx.createGain();
-    this.birdBus.gain.value = 1;
+    this.birdBus.gain.value = 0;
     this.birdBus.connect(engine.master);
     const birdSend = ctx.createGain();
     birdSend.gain.value = 0.8;
@@ -161,6 +161,10 @@ export class GolfSounds {
    */
   update(dt: number, wind: number, forest: number, altitude: number): void {
     const now = this.ctx.currentTime;
+    if (!this.windSource) {
+      this.windSource = this.engine.loopNoise('brown');
+      this.windSource.connect(this.windFilter);
+    }
     const w = Math.min(1, wind / 8);
     this.windGain.gain.setTargetAtTime(0.012 + w * 0.05, now, 0.6);
     this.windFilter.frequency.setTargetAtTime(220 + w * 260, now, 0.6);
@@ -170,6 +174,20 @@ export class GolfSounds {
     if (this.birdTimer <= 0) {
       this.birdTimer = 4 + Math.random() * 10;
       if (near > 0.1 && Math.random() < 0.3 + forest * 0.6) this.chirp(0.5 + forest * 0.5);
+    }
+  }
+
+  /** 開始画面・休憩中は環境音源そのものを止め、無音でも AudioGraph を動かし続けない。 */
+  stopAmbient(): void {
+    const now = this.ctx.currentTime;
+    this.windGain.gain.cancelScheduledValues(now);
+    this.windGain.gain.setValueAtTime(0, now);
+    this.birdBus.gain.cancelScheduledValues(now);
+    this.birdBus.gain.setValueAtTime(0, now);
+    if (this.windSource) {
+      this.windSource.stop();
+      this.windSource.disconnect();
+      this.windSource = null;
     }
   }
 
