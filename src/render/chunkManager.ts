@@ -34,6 +34,9 @@ export const COVERAGE_OFFSET = COVERAGE_SIZE / 2;
 
 /** 暗転している間に、1 コマでチャンクを組み立ててよい時間（ms）。見えないので長めに取り、ページが固まらない程度で切る。 */
 const DARK_BUDGET_MS = 40;
+/** 見えている間に 1 コマで組み立てる数と時間（ms）の上限。60fps で毎秒 240 個まで（空を飛ぶ速さに追いつく）。 */
+const VISIBLE_MAX = 4;
+const VISIBLE_BUDGET_MS = 3;
 
 /** 本物の木を置くチャンクの粗さの上限（vegetationSpecs.ts の maxLod のうち木のもの）。 */
 const TREE_LOD = 1;
@@ -244,9 +247,11 @@ export class ChunkManager {
     this.lastChunkZ = pcz;
 
     // 複数の Worker が同時に返っても、見えている間は BufferGeometry・木の当たり判定・GPU への登録を
-    // 1 フレームにまとめない（1 コマに 1 つ）。特にスマホでは、この山が操作の引っ掛かりになっていた。
+    // 1 フレームにまとめすぎない（1 コマに VISIBLE_MAX 個・VISIBLE_BUDGET_MS まで）。全部まとめるとスマホで引っ掛かり、
+    // 1 つずつにすると空を飛ぶ間に組み立てが追いつかず、粗い遠景のまま残った（8 秒たっても半分）。
     // 暗転している間は見えないので、まとめて組み立てる（1 つずつにしたら、プレイを押した後の暗い時間が 0.6〜0.75 秒延びた）。
-    this.integrateCompleted(dark ? DARK_BUDGET_MS : 0);
+    if (dark) this.integrateCompleted(DARK_BUDGET_MS, Infinity);
+    else this.integrateCompleted(VISIBLE_BUDGET_MS, VISIBLE_MAX);
 
     // 範囲が替わった時と、カメラの周りを読むときにカメラが別のチャンクへ移った時だけ、差分を洗い直す。
     if (this.dirty || (!this.focus && moved)) {
@@ -292,7 +297,8 @@ export class ChunkManager {
   }
 
   private dispatch(): void {
-    while (this.freeWorkers.length > 0 && this.queue.length > 0) {
+    // 組み立て待ちが積み上がっている間は次を頼まない（作っても古くなるだけ。近い順に作り直せるよう待ち行列に残す）。
+    while (this.freeWorkers.length > 0 && this.queue.length > 0 && this.completed.length < this.workers.length * 2) {
       const job = this.queue.shift()!;
 
       // 既に同じ粗さで作り終えている／作成中なら飛ばす。
@@ -318,12 +324,14 @@ export class ChunkManager {
     this.completed.push(data);
   }
 
-  /** 届いたチャンクを組み立てる。1 つは必ず、あとは budgetMs の間だけ。 */
-  private integrateCompleted(budgetMs: number): void {
+  /** 届いたチャンクを組み立てる。1 つは必ず、あとは budgetMs の間・maxCount 個まで。 */
+  private integrateCompleted(budgetMs: number, maxCount: number): void {
     const start = performance.now();
+    let n = 0;
     while (this.completed.length > 0) {
       this.integrateBuilt(this.completed.shift()!);
-      if (performance.now() - start >= budgetMs) break;
+      n++;
+      if (n >= maxCount || performance.now() - start >= budgetMs) break;
     }
   }
 
