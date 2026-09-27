@@ -5,8 +5,9 @@ import { gridToWorld } from './ground';
 
 /**
  * 見渡す島の 1 枚（render/overviewMesh.ts）の中身を、生の配列として作る。
- * **Worker で作る**（island/worker.ts）。59 万頂点の色付けは 1 秒近くかかり、画面側で作ると
+ * **Worker で作る**（island/worker.ts）。最大 59 万頂点の色付けは 1 秒近くかかり、画面側で作ると
  * その間 画面が止まっていた。three.js に頼らない形にしてあるのは Worker で動かすため。
+ * スマホは元の格子を間引いて作り、物理・コースの精度はそのままに遠景の頂点と GPU メモリだけを減らす。
  */
 
 export interface OverviewArrays {
@@ -19,22 +20,30 @@ export interface OverviewArrays {
   index: Uint32Array;
 }
 
-export function buildOverviewArrays(island: Island, terrain: Terrain): OverviewArrays {
+export function buildOverviewArrays(island: Island, terrain: Terrain, sampleStep = 1): OverviewArrays {
   const { n, cell, height, temperature, moisture } = island;
-  const position = new Float32Array(n * n * 3);
-  const normal = new Float32Array(n * n * 3);
-  const color = new Float32Array(n * n * 3);
-  const rock = new Float32Array(n * n * 3);
-  const surf = new Float32Array(n * n * 3);
+  const step = Math.max(1, Math.floor(sampleStep));
+  const samples: number[] = [];
+  for (let i = 0; i < n - 1; i += step) samples.push(i);
+  samples.push(n - 1);
+  const sn = samples.length;
+  const position = new Float32Array(sn * sn * 3);
+  const normal = new Float32Array(sn * sn * 3);
+  const color = new Float32Array(sn * sn * 3);
+  const rock = new Float32Array(sn * sn * 3);
+  const surf = new Float32Array(sn * sn * 3);
   const layers = new Float32Array(SURFACE_STRIDE);
   const at = (i: number, j: number) =>
     height[Math.max(0, Math.min(n - 1, j)) * n + Math.max(0, Math.min(n - 1, i))];
-  for (let j = 0; j < n; j++) {
+  for (let sj = 0; sj < sn; sj++) {
+    const j = samples[sj];
     const z = gridToWorld(j, n);
-    for (let i = 0; i < n; i++) {
-      const k = j * n + i;
+    for (let si = 0; si < sn; si++) {
+      const i = samples[si];
+      const source = j * n + i;
+      const k = sj * sn + si;
       const x = gridToWorld(i, n);
-      const h = height[k];
+      const h = height[source];
       position[k * 3] = x;
       position[k * 3 + 1] = h;
       position[k * 3 + 2] = z;
@@ -46,7 +55,18 @@ export function buildOverviewArrays(island: Island, terrain: Terrain): OverviewA
       normal[k * 3 + 1] = 1 / len;
       normal[k * 3 + 2] = -dz / len;
       const slope = Math.min(1, Math.sqrt(dx * dx + dz * dz));
-      terrain.surface(x, z, h, slope, temperature[k], moisture[k], terrain.specialAt(x, z), terrain.patchAt(x, z), layers, 0);
+      terrain.surface(
+        x,
+        z,
+        h,
+        slope,
+        temperature[source],
+        moisture[source],
+        terrain.specialAt(x, z),
+        terrain.patchAt(x, z),
+        layers,
+        0,
+      );
       for (let c = 0; c < 3; c++) {
         color[k * 3 + c] = layers[c];
         rock[k * 3 + c] = layers[3 + c];
@@ -55,16 +75,20 @@ export function buildOverviewArrays(island: Island, terrain: Terrain): OverviewA
     }
   }
 
-  const index = new Uint32Array((n - 1) * (n - 1) * 6);
+  const index = new Uint32Array((sn - 1) * (sn - 1) * 6);
   let o = 0;
-  for (let j = 0; j < n - 1; j++) {
-    for (let i = 0; i < n - 1; i++) {
-      const a = j * n + i;
+  for (let j = 0; j < sn - 1; j++) {
+    for (let i = 0; i < sn - 1; i++) {
+      const a = j * sn + i;
       const b = a + 1;
-      const d = a + n;
+      const d = a + sn;
       const e = d + 1;
       // チャンクと同じ割り方（高低差の小さい対角線）。
-      if (splitsAlongMainDiagonal(height[a], height[b], height[d], height[e])) {
+      const h00 = height[samples[j] * n + samples[i]];
+      const h10 = height[samples[j] * n + samples[i + 1]];
+      const h01 = height[samples[j + 1] * n + samples[i]];
+      const h11 = height[samples[j + 1] * n + samples[i + 1]];
+      if (splitsAlongMainDiagonal(h00, h10, h01, h11)) {
         index[o++] = a;
         index[o++] = d;
         index[o++] = e;
@@ -121,4 +145,3 @@ export function buildOverviewWaterArray(island: Island): Float32Array | null {
   }
   return pos.length === 0 ? null : new Float32Array(pos);
 }
-

@@ -109,12 +109,14 @@ export class ChunkManager {
     scene: THREE.Scene,
     init: Omit<InitRequest, 'type'>,
     waterMaterial: THREE.Material,
+    maxWorkers = 4,
   ) {
     this.scene = scene;
     this.material = createTerrainMaterial();
     this.waterMaterial = waterMaterial;
 
-    const count = Math.max(2, Math.min(4, (navigator.hardwareConcurrency || 4) - 1));
+    // スマホで Worker を増やしすぎると、描画と島生成が CPU を奪い合って操作が詰まる。
+    const count = Math.max(1, Math.min(maxWorkers, (navigator.hardwareConcurrency || 4) - 1));
     for (let i = 0; i < count; i++) {
       const w = new Worker(new URL('../world/worker.ts', import.meta.url), { type: 'module' });
       w.onmessage = (ev: MessageEvent<BuiltChunk>) => this.onBuilt(w, ev.data);

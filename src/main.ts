@@ -34,6 +34,7 @@ import { GolfGame, type GolfStatus, scoreName, toPar } from './golf/game';
 import { AudioEngine } from './audio/engine';
 import { HoleMap } from './ui/holeMap';
 import { GolfSounds } from './audio/golfSounds';
+import { Music } from './audio/music';
 
 /**
  * Hole in Isle（コード名 island-golf）。合言葉ひとつで、山に囲まれた谷に 9 ホールのコースがある島がひとつできる。
@@ -628,6 +629,8 @@ function request(): void {
     params: { ...params },
     n: FULL_RES,
     erosionN: EROSION_RES,
+    // 遠景だけを 1 点おきにする。島の生成・ゴルフ物理・近景チャンクは FULL_RES のまま。
+    overviewStep: preferredTouch ? 2 : 1,
     sun: [sun.x, sun.y, sun.z],
     // ピン位置は日ごとに替わる（同じ URL なら、同じ日は誰でも同じピン）。
     day: courseDay,
@@ -820,11 +823,13 @@ const holeMap = new HoleMap(overlay.holeMapCanvas);
 /** 音（最初に入るとき＝利用者の操作の中で作る。ブラウザの決まり）。 */
 let audio: AudioEngine | null = null;
 let sounds: GolfSounds | null = null;
+let music: Music | null = null;
 function ensureAudio(): void {
   try {
     if (!audio) {
       audio = new AudioEngine();
       sounds = new GolfSounds(audio);
+      music = new Music(audio);
     }
     audio.resume();
   } catch {
@@ -1073,6 +1078,8 @@ function toggleScout(): void {
 function handleStart(pointerType: string): void {
   if (!ground) return;
   ensureAudio();
+  // この利用者操作の中で play() を呼び、自動再生制限を解除する。取得するのは選ばれた 1 曲だけ。
+  music?.play();
   if (!ensureGolf()) {
     // ホールを置けない島は、空から眺めるだけにする。
     scout = true;
@@ -1154,6 +1161,7 @@ function prepareCourseView(): void {
     scene,
     { params: madeParams, landscape: island.landscape, water: island.water, field: courseField },
     water.material,
+    preferredTouch ? 2 : 4,
   );
   overview.setCoverage(chunks.coverage);
   farForest.setCoverage(chunks.coverage);
@@ -1171,6 +1179,7 @@ function prepareCourseView(): void {
 function startPlaying(): void {
   if (playing) return;
   playing = true;
+  music?.play();
   if (!entered) {
     entered = true;
     overlay.setEntered();
@@ -1206,6 +1215,7 @@ function startPlaying(): void {
 function stopPlaying(): void {
   if (!playing) return;
   playing = false;
+  music?.pause();
   // ホールの切り替えの途中なら打ち切る（休憩中の暗転は空撮が受け持つ）。
   holeFade = null;
   if (golf) golf.aids.visible = false;
@@ -1271,6 +1281,7 @@ async function requestMouseLock(): Promise<void> {
         overlay.flash('タッチ操作で開始します。');
         return;
       }
+      music?.pause();
       overlay.flash('少し待ってから、もう一度クリックしてください');
     }
   }

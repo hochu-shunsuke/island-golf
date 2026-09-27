@@ -30,6 +30,8 @@ export interface GenerateRequest {
   /** 見渡す島の格子と、侵食の格子（1 辺の点数）。 */
   n: number;
   erosionN: number;
+  /** 遠景の格子を何点ごとに使うか。スマホは 2 で、物理の格子を保ったまま描画だけ軽くする。 */
+  overviewStep: number;
   /** 太陽へ向かう単位ベクトル（光を焼き込むのに使う）。 */
   sun: [number, number, number];
   /** 今日（1970 年からの日数）。ピン位置を日ごとに替える。 */
@@ -83,7 +85,7 @@ const post = (msg: WorkerResult, transfer: Transferable[]) =>
   (self as unknown as Worker).postMessage(msg, transfer);
 
 self.onmessage = (ev: MessageEvent<GenerateRequest>) => {
-  const { id, params, n, erosionN, sun, day } = ev.data;
+  const { id, params, n, erosionN, overviewStep, sun, day } = ev.data;
   const started = performance.now();
   const progress = (step: number) => post({ type: 'progress', id, step }, []);
   // コースを先に並べ（route）、その周りに世界を作り（谷底と山）、地面に合わせて高さを入れ（settle）、
@@ -104,7 +106,7 @@ self.onmessage = (ev: MessageEvent<GenerateRequest>) => {
   if (field) shapeGrid(island, terrain, field);
   const course = { holes: holesOf(design, day, params.seed), field };
   progress(3);
-  const overview = buildOverviewArrays(island, terrain);
+  const overview = buildOverviewArrays(island, terrain, overviewStep);
   const overviewWater = buildOverviewWaterArray(island);
   const map = renderIslandMap(island, terrain);
 

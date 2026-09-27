@@ -273,6 +273,7 @@ export class Overlay {
           </div>
           <p class="status"></p>
           <p class="lead">${DEFAULT_LEAD}</p>
+          <p class="music-credit">BGM: <a href="https://musmus.main.jp" target="_blank" rel="noreferrer">MusMus</a></p>
         </section>
         <section class="play-panel">
           <div class="mode-switch" role="radiogroup" aria-label="遊び方">

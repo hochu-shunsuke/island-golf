@@ -6,7 +6,8 @@ import { RENDER_ORDER } from './order';
 import { createTerrainMaterial } from './terrainMaterial';
 
 /**
- * 島全体を 1 枚で描く（12m 格子）。「つくる」で見渡す島であり、飛んでいる間の遠景でもある。
+ * 島全体を 1 枚で描く。「つくる」で見渡す島であり、飛んでいる間の遠景でもある。
+ * PC は元の約 5.3m 格子、スマホは 1 点おきの約 10.7m 格子を使う。
  *
  * 中身の配列は Worker が作る（island/overviewArrays.ts）。地面の色は近くのチャンクと同じ。
  * 飛んでいる間は、近くのチャンクができている所を描かない（coverage）。

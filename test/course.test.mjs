@@ -15,6 +15,29 @@ try {
   const { buildCourseField, CourseField } = await server.ssrLoadModule('/src/golf/field.ts');
   const { greenSurface } = await server.ssrLoadModule('/src/golf/greens.ts');
   const { FULL_RES, EROSION_RES, ISLAND_SIZE } = await server.ssrLoadModule('/src/island/grid.ts');
+  const { buildOverviewArrays } = await server.ssrLoadModule('/src/island/overviewArrays.ts');
+  const { MUSIC_TRACK } = await server.ssrLoadModule('/src/audio/music.ts');
+
+  assert.equal(MUSIC_TRACK, '/mp3/MusMus-BGM-102.mp3', '指定外の BGM が選ばれました');
+
+  // スマホ用の遠景は元の島を作り直さず、端を含めて 1 点おきにする。
+  const overviewIsland = {
+    n: 5,
+    cell: ISLAND_SIZE / 4,
+    height: Float32Array.from({ length: 25 }, (_, k) => k),
+    temperature: new Float32Array(25),
+    moisture: new Float32Array(25),
+  };
+  const overviewTerrain = {
+    specialAt: () => 0,
+    patchAt: () => 0,
+    surface: (_x, _z, _h, _slope, _temperature, _moisture, _special, _patch, layers) => layers.fill(0.5),
+  };
+  const mobileOverview = buildOverviewArrays(overviewIsland, overviewTerrain, 2);
+  assert.equal(mobileOverview.position.length / 3, 9, '遠景が 1 点おきの 3×3 頂点になりません');
+  assert.equal(mobileOverview.index.length / 3, 8, '遠景が 2×2 面の 8 三角形になりません');
+  assert.equal(mobileOverview.position.at(-3), ISLAND_SIZE / 2, '遠景の右端が欠けています');
+  assert.equal(mobileOverview.position.at(-1), ISLAND_SIZE / 2, '遠景の奥端が欠けています');
 
   // 1. 並べる: 30 の合言葉で。
   let minGap = Infinity;

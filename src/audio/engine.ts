@@ -1,8 +1,8 @@
 import { mulberry32 } from '../core/rng';
 
 /**
- * 音は全部その場で合成する。音声ファイルを持たないので、
- * 地形と同じく URL ひとつで完結する。
+ * 環境音と効果音はその場で合成する。BGM だけは music.ts がストリーミング再生し、
+ * どちらも同じ master を通して M キーでまとめて消せる。
  */
 export class AudioEngine {
   readonly ctx: AudioContext;

@@ -1820,6 +1820,21 @@ kbd {
   color: var(--ink);
 }
 
+.music-credit {
+  margin: 1px 0 0;
+  font-size: 10px;
+  color: var(--faint);
+}
+
+.music-credit a {
+  color: inherit;
+  text-underline-offset: 2px;
+}
+
+.music-credit a:hover {
+  color: var(--ink);
+}
+
 .play-panel {
   position: absolute;
   right: max(24px, env(safe-area-inset-right));
