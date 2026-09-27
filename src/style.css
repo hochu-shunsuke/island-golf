@@ -1666,10 +1666,45 @@ kbd {
   pointer-events: auto;
 }
 
+.course-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 18px;
+}
+
 .course-label {
   font-size: 10.5px;
   letter-spacing: 0.22em;
   color: var(--faint);
+}
+
+/* 今日のコースは、名前を少し明るく（毎日替わる、いちばん遊んでほしいコース）。 */
+.course-label.daily {
+  color: var(--ink);
+  letter-spacing: 0.16em;
+}
+
+/* 別のコースにいるときだけ、今日のコースへ戻る小さな文字のボタン。 */
+.today-btn {
+  display: none;
+  padding: 2px 0;
+  font-size: 11.5px;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  background: none;
+  border: none;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.today-btn.on {
+  display: inline;
+}
+
+.today-btn:hover {
+  color: var(--ink);
 }
 
 .course-id {

@@ -23,6 +23,8 @@ export interface OverlayHandlers {
   onNewCourse: () => void;
   /** 遊び方（COM と対戦・ひとりで）を替えた。 */
   onMode: (mode: PlayMode) => void;
+  /** 「今日のコースへ」（別のコースを回っているとき）。 */
+  onToday: () => void;
 }
 
 /** 遊び方。 */
@@ -224,7 +226,10 @@ export class Overlay {
           <p class="tagline">合言葉ひとつで、ゴルフの島がひとつ。</p>
         </header>
         <section class="course-panel">
-          <span class="course-label">コース ID</span>
+          <div class="course-top">
+            <span class="course-label">コース ID</span>
+            <button type="button" class="today-btn">今日のコースへ</button>
+          </div>
           <div class="course-id">
             <b class="course-seed"></b>
             <button type="button" class="seed-dice" title="ランダムに新しいコースを作る">${ICON.refresh}新しいコース</button>
@@ -328,6 +333,9 @@ export class Overlay {
     this.panel = this.root.querySelector('.panel')!;
     this.lead = this.root.querySelector('.lead')!;
     this.courseSeed = this.root.querySelector('.course-seed')!;
+    this.courseLabel = this.root.querySelector('.course-label')!;
+    this.todayBtn = this.root.querySelector('.today-btn')!;
+    this.todayBtn.addEventListener('click', () => this.handlers.onToday());
     this.attractCaption = this.root.querySelector('.attract-caption')!;
     this.screenFade = this.root.querySelector('.screen-fade')!;
     this.startBtn = this.root.querySelector('.start')!;
@@ -427,6 +435,8 @@ export class Overlay {
   private readonly golfHint: HTMLElement;
   private readonly golfTouch: HTMLElement;
   private readonly flagLayer: HTMLElement;
+  private readonly courseLabel: HTMLElement;
+  private readonly todayBtn: HTMLElement;
   private readonly rivalLayer: HTMLElement;
   private readonly rivalEls: { el: HTMLElement; text: string }[] = [];
   private readonly standings: HTMLElement;
@@ -569,6 +579,16 @@ export class Overlay {
       ${card ? `<div class="sc-head">${card.head}</div>` : ''}
       ${scoreTable(pars, rows, current, card !== null)}
       ${card ? `<div class="sc-foot">${card.foot}</div>` : ''}`;
+  }
+
+  /**
+   * 今日のコースか。date（「9/27」）を渡すと「今日のコース · 9/27」と出し、null なら「コース ID」と
+   * 「今日のコースへ」のボタンを出す。
+   */
+  setDaily(date: string | null): void {
+    this.courseLabel.textContent = date ? `今日のコース · ${date}` : 'コース ID';
+    this.courseLabel.classList.toggle('daily', date !== null);
+    this.todayBtn.classList.toggle('on', date === null);
   }
 
   /** 遊び方の切り替えの見た目（選んでいる方）。 */

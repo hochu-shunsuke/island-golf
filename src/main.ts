@@ -6,7 +6,8 @@ import type { Island } from './island/generate';
 import { EROSION_RES, FULL_RES, ISLAND_SIZE } from './island/grid';
 import { LOAD_STEPS } from './island/loadSteps';
 import { IslandGround } from './island/ground';
-import { type IslandParams, cleanSeed, courseParams, randomSeed } from './island/params';
+import { type IslandParams, cleanSeed, courseParams, dailySeed, randomSeed } from './island/params';
+import { dayIndex, dayLabel } from './core/day';
 import type { GenerateRequest, GenerateResult, WorkerResult } from './island/worker';
 import { Player } from './player/controller';
 import { ChunkManager } from './render/chunkManager';
@@ -71,6 +72,13 @@ let inputMode: 'touch' | 'keys' = preferredTouch ? 'touch' : 'keys';
 document.documentElement.dataset.input = inputMode;
 
 let params: IslandParams = courseParams(location.hash);
+// `#` 無しで開いたら今日のコース（同じ日なら誰でも同じコース。スコアを見せ合える）。
+if (!cleanSeed(location.hash.replace(/^#/, '').split('.')[0] ?? '')) params = { ...params, seed: dailySeed(dayIndex()) };
+
+/** 今日のコースを回っているか。 */
+function isDaily(): boolean {
+  return params.seed === dailySeed(dayIndex());
+}
 
 // ── 描画 ───────────────────────────────────────────────
 const renderer = new THREE.WebGLRenderer({
@@ -139,6 +147,13 @@ const overlay = new Overlay(document.getElementById('ui')!, params, inputMode ==
     goNextHole();
     if (inputMode === 'keys' && document.pointerLockElement !== canvas) void requestMouseLock();
   },
+  // 今日のコースへ戻る。
+  onToday: () => {
+    if (isDaily()) return;
+    params = { ...params, seed: dailySeed(dayIndex()) };
+    overlay.setParams(params);
+    commit();
+  },
   // 遊び方を替えた: 覚えておき、COM の相手を置き直して 1 番のティーから回り直す。
   onMode: (mode) => {
     playMode = mode;
@@ -177,7 +192,7 @@ function applyRivals(): void {
   holedCardAt = 0;
   finalePending = null;
   // 乱数の元は合言葉と日付（同じコース・同じ日なら COM も同じ打ち方をする）。
-  golf.setRivals(playMode === 'com' ? RIVALS : [], `${params.seed}:${Math.floor(Date.now() / 86_400_000)}`);
+  golf.setRivals(playMode === 'com' ? RIVALS : [], `${params.seed}:${dayIndex()}`);
   if (entered) {
     entered = false;
     overlay.resetEntered();
@@ -289,7 +304,7 @@ function request(): void {
     erosionN: EROSION_RES,
     sun: [sun.x, sun.y, sun.z],
     // ピン位置は日ごとに替わる（同じ URL なら、同じ日は誰でも同じピン）。
-    day: Math.floor(Date.now() / 86_400_000),
+    day: dayIndex(),
   };
   lastRequested = req.id;
   sceneReady = false;
@@ -390,7 +405,9 @@ worker.onmessage = (ev: MessageEvent<WorkerResult>) => {
 };
 
 function commit(): void {
-  history.replaceState(null, '', `#${params.seed}`);
+  // 今日のコースは `#` を付けない（読み直しても、次の日に開いても、その日の今日のコースになる）。
+  history.replaceState(null, '', isDaily() ? location.pathname : `#${params.seed}`);
+  overlay.setDaily(isDaily() ? dayLabel() : null);
   request();
 }
 
@@ -453,7 +470,7 @@ function ensureGolf(): GolfGame | null {
     else holedCardAt = performance.now() + HOLED_CARD_DELAY;
   };
   // 遊び方に合わせて COM の相手を置く（初めは 1 番のティーから）。
-  golf.setRivals(playMode === 'com' ? RIVALS : [], `${params.seed}:${Math.floor(Date.now() / 86_400_000)}`);
+  golf.setRivals(playMode === 'com' ? RIVALS : [], `${params.seed}:${dayIndex()}`);
   // 開始画面の空撮の間は、打つための目印を出さない（遊び始めたら出す）。
   golf.aids.visible = playing;
   scene.add(golf.group);
@@ -537,8 +554,8 @@ function startFinale(total: number, totalPar: number): void {
   const pars = golf.course.map((h) => h.par);
   const scores = [...golf.roundScores];
   const stats = golf.roundStats;
-  const day = new Date(Math.floor(Date.now() / 86_400_000) * 86_400_000);
-  const dateLabel = `${day.getUTCMonth() + 1}/${day.getUTCDate()}`;
+  const dateLabel = dayLabel();
+  const daily = isDaily();
   const marks = pars.map((p, k) => scoreEmoji(scores[k], p)).join('');
   // COM と回ったときの順位（合計の少ない順。同じなら同じ順位）。
   const rivals = golf.rivalStates;
@@ -579,10 +596,11 @@ function startFinale(total: number, totalPar: number): void {
     ranking,
     rivalRows: rivals.map((r) => ({ label: r.spec.name, scores: [...r.scores], color: r.spec.color })),
     shareText: [
-      `Hole in Isle ${seed}（${dateLabel} のピン）`,
+      daily ? `Hole in Isle 今日のコース（${dateLabel}）` : `Hole in Isle ${seed}（${dateLabel} のピン）`,
       `${total} 打（${toPar(total, totalPar)}）${myRank ? ` · COM と ${ranking.length} 人で ${myRank} 位` : ''}`,
       marks,
-      `${location.origin}${location.pathname}#${seed}`,
+      // 今日のコースは、`#` 無しのアドレスを送る（開いた人がその日の今日のコースを回れる。Wordle と同じ）。
+      daily ? `${location.origin}${location.pathname}` : `${location.origin}${location.pathname}#${seed}`,
     ].join('\n'),
   };
   roundResultAt = performance.now() + 2200;

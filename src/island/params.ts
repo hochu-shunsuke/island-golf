@@ -1,3 +1,5 @@
+import { hashSeed, mulberry32 } from '../core/rng';
+
 /**
  * 島のつまみ。URL の `#` 以降に載るので、同じ URL なら誰が開いても同じ島になる。
  * サーバに島を保存しない（送るのは URL だけ）。
@@ -78,6 +80,17 @@ export function randomSeed(): string {
   const buf = new Uint32Array(6);
   crypto.getRandomValues(buf);
   for (const v of buf) s += SEED_CHARS[v % SEED_CHARS.length];
+  return s;
+}
+
+/**
+ * 今日のコースの合言葉（日付から決まる 8 文字）。`#` 無しで開いた人は全員これを回る（core/day.ts の日で替わる）。
+ * 日付をそのまま合言葉にすると、先の日の合言葉を当てて前もって回れてしまうので、日付を混ぜた値から作る。
+ */
+export function dailySeed(day: number): string {
+  const rand = mulberry32(hashSeed(`hole-in-isle:daily:${day}`)[0]);
+  let s = '';
+  for (let i = 0; i < 8; i++) s += SEED_CHARS[Math.floor(rand() * SEED_CHARS.length)];
   return s;
 }
 
