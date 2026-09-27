@@ -484,6 +484,7 @@ kbd {
 }
 
 /* 落とし所の輪の上の距離。位置は JS が transform で毎フレーム決める。 */
+/* 落とし所の距離。輪の下に出す（上に出る旗の札と分ける。placeAimLabel）。 */
 .aim-label {
   position: absolute;
   left: 0;
@@ -491,7 +492,7 @@ kbd {
   display: none;
   padding: 2px 8px;
   border-radius: 999px;
-  translate: -50% -100%;
+  translate: -50% 0;
   font-size: 13px;
   font-weight: 600;
   color: #fff;
@@ -2657,4 +2658,12 @@ kbd {
   height: 9px;
   border: none;
   box-shadow: 0 0 0 1.5px rgba(8, 14, 18, 0.55), 0 1px 4px rgba(0, 0, 0, 0.4);
+}
+
+/* 旗の札の小さな旗（打つ間、番号の代わり）。 */
+.fm-flag {
+  width: 9px;
+  height: 11px;
+  margin-right: 4px;
+  vertical-align: -1px;
 }

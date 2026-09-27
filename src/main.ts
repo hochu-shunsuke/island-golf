@@ -1569,7 +1569,12 @@ function fitNearPlane(): void {
 }
 
 const pinScreen = new THREE.Vector3();
-const flagMarkers: { x: number; y: number; text: string; target: boolean; own: boolean }[] = [];
+const flagMarkers: { x: number; y: number; text: string; target: boolean; own: boolean; flag: boolean }[] = [];
+/**
+ * 今のホールの旗の札が画面のどこにあるか（px）。落とし所の札（placeAimLabel）と重ねないために使う。
+ * top・bottom は札（下の三角を含む）の上下、half は幅の半分、ground は旗の根元。
+ */
+let pinLabel: { x: number; top: number; bottom: number; half: number; ground: number } | null = null;
 /**
  * 旗の目印（番号と距離）を、旗の上の実際の画面位置へ（遠いと旗が小さくて見えないため）。
  * 打っている間は目標の旗に距離を付け、他の旗は番号だけ。空からは全部に距離を付ける。
@@ -1577,6 +1582,7 @@ const flagMarkers: { x: number; y: number; text: string; target: boolean; own: b
  */
 function placeFlagMarkers(game: GolfGame, from: { x: number; z: number }): void {
   flagMarkers.length = 0;
+  pinLabel = null;
   // このフレームで動かしたカメラから投影する（描画の前なので自分で行列を更新する）。
   camera.updateMatrixWorld();
   for (const h of game.course) {
@@ -1588,13 +1594,21 @@ function placeFlagMarkers(game: GolfGame, from: { x: number; z: number }): void 
     game.pinTop(h, pinScreen).project(camera);
     if (pinScreen.z >= 1 || Math.abs(pinScreen.x) > 1 || Math.abs(pinScreen.y) > 1) continue;
     const name = `${h.number}`;
-    flagMarkers.push({
-      x: ((pinScreen.x + 1) / 2) * innerWidth,
-      y: ((1 - pinScreen.y) / 2) * innerHeight - (target ? 10 : 2),
-      text: target || scout ? `${name} · ${Math.round(d)} m` : name,
-      target,
-      own: false,
-    });
+    const x = ((pinScreen.x + 1) / 2) * innerWidth;
+    const y = ((1 - pinScreen.y) / 2) * innerHeight - (target ? 10 : 2);
+    // 打つ間は今のホールの旗しか出さないので、番号は付けない（旗の印と距離だけ）。空から見る間は番号も。
+    const text = scout ? (target ? `${name} · ${Math.round(d)} m` : name) : `${Math.round(d)} m`;
+    flagMarkers.push({ x, y, text, target, own: false, flag: target && !scout });
+    if (target && !scout) {
+      pinScreen.set(h.pin.x, game.ground.height(h.pin.x, h.pin.z), h.pin.z).project(camera);
+      pinLabel = {
+        x,
+        top: y - 24,
+        bottom: y + 9,
+        half: (34 + text.length * 7.4) / 2,
+        ground: ((1 - pinScreen.y) / 2) * innerHeight,
+      };
+    }
   }
   overlay.setFlagMarkers(flagMarkers);
 }
@@ -1644,23 +1658,32 @@ function placeTiming(game: GolfGame): void {
 }
 
 const aimScreen = new THREE.Vector3();
+/** 落とし所の距離の札: 輪の真ん中から下へのすき間と、札の高さ（px）。 */
+const AIM_LABEL_GAP = 9;
+const AIM_LABEL_H = 22;
 /** 落とし所の輪の上に距離を出す（狙っている間と構えている間）。 */
 function placeAimLabel(game: GolfGame): void {
   if (game.phase !== 'aim' && game.phase !== 'swing') {
     overlay.setAimLabel(null);
     return;
   }
-  game.aimTop(aimScreen).project(camera);
+  game.aimBase(aimScreen).project(camera);
   if (aimScreen.z >= 1 || Math.abs(aimScreen.x) > 1 || Math.abs(aimScreen.y) > 1) {
     overlay.setAimLabel(null);
     return;
   }
   const d = game.aimDistance;
-  overlay.setAimLabel({
-    x: ((aimScreen.x + 1) / 2) * innerWidth,
-    y: ((1 - aimScreen.y) / 2) * innerHeight,
-    text: game.putting ? `${d.toFixed(1)} m` : `${Math.round(d)} m`,
-  });
+  const text = game.putting ? `${d.toFixed(1)} m` : `${Math.round(d)} m`;
+  const x = ((aimScreen.x + 1) / 2) * innerWidth;
+  // 輪の下に出す（旗の札は旗の上）。以前はどちらも目印の上で、遠くでは高さの差が数 px しかなく重なった。
+  let y = ((1 - aimScreen.y) / 2) * innerHeight + AIM_LABEL_GAP;
+  // 落とし所が旗よりずっと奥なら、輪の下でも旗の札に届く。そのときは旗の根元より下へずらす。
+  const half = (16 + text.length * 7.8) / 2;
+  const p = pinLabel;
+  if (p && Math.abs(x - p.x) < half + p.half + 4 && y < p.bottom + 4 && y + AIM_LABEL_H > p.top - 4) {
+    y = Math.max(p.ground, p.bottom) + AIM_LABEL_GAP;
+  }
+  overlay.setAimLabel({ x, y, text });
 }
 
 const timer = new THREE.Timer();

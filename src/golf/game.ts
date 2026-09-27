@@ -285,9 +285,9 @@ export class GolfGame {
     return out.set(h.pin.x, this.golfGround.height(h.pin.x, h.pin.z) + 3.2, h.pin.z);
   }
 
-  /** 落とし所の輪の上（距離の目印を出すため）。 */
-  aimTop(out: THREE.Vector3): THREE.Vector3 {
-    return out.set(this.aimPoint.x, this.golfGround.height(this.aimPoint.x, this.aimPoint.z) + 1.2, this.aimPoint.z);
+  /** 落とし所の輪の真ん中（地面。距離の札を輪の下に出すため）。 */
+  aimBase(out: THREE.Vector3): THREE.Vector3 {
+    return out.set(this.aimPoint.x, this.golfGround.height(this.aimPoint.x, this.aimPoint.z), this.aimPoint.z);
   }
 
   /** 球の地面（COM と友達の球も同じ地面を転がる）。 */

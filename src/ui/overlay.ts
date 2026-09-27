@@ -120,6 +120,9 @@ const ICON = {
   back: svg('M9 14 4 9l5-5M4 9h10.5a5.5 5.5 0 0 1 0 11H11'),
 };
 
+/** 旗の札の小さな旗（打つ間、番号の代わりに付ける）。 */
+const FLAG_ICON = `<svg class="fm-flag" viewBox="0 0 12 14" aria-hidden="true"><path d="M2.5 1.2v11.6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" fill="none"/><path d="M3.2 1.6h7l-1.9 2.4 1.9 2.4h-7z" fill="currentColor"/></svg>`;
+
 /** 打つボタンの球（白い丸の中に、くぼみの点）。 */
 const BALL_ICON = `<svg class="ball-icon" viewBox="0 0 24 24" aria-hidden="true">
   <circle cx="12" cy="12" r="8.5"/>
@@ -927,7 +930,9 @@ export class Overlay {
    * 要素は使い回して位置は transform だけで動かす（stroll の友達の名前と同じ）。
    * target は今の目標、own は自分の旗。
    */
-  setFlagMarkers(items: readonly { x: number; y: number; text: string; target: boolean; own: boolean }[]): void {
+  setFlagMarkers(
+    items: readonly { x: number; y: number; text: string; target: boolean; own: boolean; flag?: boolean }[],
+  ): void {
     while (this.flagEls.length < items.length) {
       const el = document.createElement('div');
       el.className = 'flag-marker';
@@ -942,9 +947,11 @@ export class Overlay {
         m.el.className = cls;
       }
       if (!item) return;
-      if (item.text !== m.text) {
-        m.text = item.text;
-        m.el.textContent = item.text;
+      const key = `${item.flag ? '⚑' : ''}${item.text}`;
+      if (key !== m.text) {
+        m.text = key;
+        if (item.flag) m.el.innerHTML = `${FLAG_ICON}${escapeHtml(item.text)}`;
+        else m.el.textContent = item.text;
       }
       m.el.style.transform = `translate(${item.x.toFixed(1)}px, ${item.y.toFixed(1)}px)`;
     });
