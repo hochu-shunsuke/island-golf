@@ -608,6 +608,8 @@ let lastRequested = 0;
 let sceneReady = false;
 /** 読み込み中の暗転の濃さ（別のコースへ替えるときは、今の絵からゆっくり暗くする）。 */
 let loadingCurtain = 1;
+/** 暗転中も、形やテクスチャを差し替えた直後だけ 1 枚描いて GPU の準備を済ませる。 */
+let renderWarmupNeeded = true;
 let busy = false;
 let pending: GenerateRequest | null = null;
 let drawnId = 0;
@@ -676,6 +678,7 @@ function show(msg: GenerateResult): void {
   terrain = new Terrain(made, next.landscape, new IslandWater(next.water), field);
   // 見渡す島の 1 枚と地図は Worker が作ってある。ここでは貼るだけ（画面を止めない）。
   overview.set(msg.overview, msg.overviewWater);
+  renderWarmupNeeded = true;
   // 水深は川に合わせて彫った後の高さで測る。彫る前の高さだと川の中が浅瀬扱いになり、
   // 川幅いっぱいに岸の泡が立って雪の土手のように見えた。
   const carved = next.landscape.height.map((h, k) => h + next.water.carve[k]);
@@ -705,18 +708,24 @@ worker.onmessage = (ev: MessageEvent<WorkerResult>) => {
     return;
   }
   if (msg.type === 'forest') {
-    if (msg.id === drawnId) farForest.set(msg.forest);
+    if (msg.id === drawnId) {
+      farForest.set(msg.forest);
+      renderWarmupNeeded = true;
+    }
+    // 光はこのあと約 0.7 秒で届き、もともと 0.6 秒かけて浮かび上がる作り。
+    // 林が揃った時点で空撮の暗転を明け始めれば、光の計算を黒い 1.1 秒の中へ隠せる。
+    if (msg.id === drawnId && msg.id === lastRequested) {
+      sceneReady = true;
+      overlay.setReady(true);
+      renderRoom();
+    }
     return;
   }
   if (msg.type === 'light') {
     // 光は島の後から届く。今見せている島の光だけを使う。
-    if (msg.id === drawnId) setIslandLight(msg.lighting);
-    // 島・木・光が揃った。空撮を始めて「プレイ」を押せるようにする。
-    if (msg.id === drawnId && msg.id === lastRequested) {
-      sceneReady = true;
-      overlay.setReady(true);
-      // 部屋の窓の「はじめる」「スタート」も押せるように。
-      renderRoom();
+    if (msg.id === drawnId) {
+      setIslandLight(msg.lighting);
+      renderWarmupNeeded = true;
     }
     // Worker は光まで計算し終えたので、次の島を頼める。
     busy = false;
@@ -1743,6 +1752,8 @@ function updateMobileRenderScale(dt: number): void {
 renderer.setAnimationLoop(() => {
   timer.update();
   const dt = Math.min(timer.getDelta(), 0.1);
+  // 別のアプリを見ている間は、空撮も WebGL も止める。戻ったときの差分は dt の上限で吸収する。
+  if (document.hidden) return;
   elapsed += dt;
   updateMobileRenderScale(dt);
   if (playing && scout && player) {
@@ -1855,11 +1866,17 @@ renderer.setAnimationLoop(() => {
     overlay.setFade(0);
   }
   if (camera.view) camera.clearViewOffset();
-  fitNearPlane();
-  sky.update(camera, elapsed);
-  updateIslandLight(dt);
-  water.update(camera, elapsed);
-  renderer.render(scene, camera);
+  // 完全な暗転中は、進捗の文字だけ更新すればよい。3D を描き続けると、島を作る Worker と
+  // CPU/GPU・発熱を奪い合う。形が届いた直後だけ 1 枚描き、シェーダーと転送を先に温める。
+  const fullyCovered = !sceneReady && loadingCurtain >= 0.999;
+  if (!fullyCovered || renderWarmupNeeded) {
+    fitNearPlane();
+    sky.update(camera, elapsed);
+    updateIslandLight(dt);
+    water.update(camera, elapsed);
+    renderer.render(scene, camera);
+    renderWarmupNeeded = false;
+  }
 });
 
 addEventListener('hashchange', () => location.reload());

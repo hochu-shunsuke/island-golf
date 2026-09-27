@@ -79,6 +79,8 @@ export class ChunkManager {
   private queue: Pending[] = [];
   private workers: Worker[] = [];
   private freeWorkers: Worker[] = [];
+  /** Worker から届き、次の描画フレームで GPU の形へ組み立てるチャンク。 */
+  private completed: { worker: Worker; data: BuiltChunk }[] = [];
   private nextId = 1;
   private lastChunkX = Number.NaN;
   private lastChunkZ = Number.NaN;
@@ -119,7 +121,7 @@ export class ChunkManager {
     const count = Math.max(1, Math.min(maxWorkers, (navigator.hardwareConcurrency || 4) - 1));
     for (let i = 0; i < count; i++) {
       const w = new Worker(new URL('../world/worker.ts', import.meta.url), { type: 'module' });
-      w.onmessage = (ev: MessageEvent<BuiltChunk>) => this.onBuilt(w, ev.data);
+      w.onmessage = (ev: MessageEvent<BuiltChunk>) => this.onCompleted(w, ev.data);
       w.postMessage({ type: 'init', ...init } satisfies WorkerRequest);
       this.workers.push(w);
       this.freeWorkers.push(w);
@@ -151,6 +153,10 @@ export class ChunkManager {
     for (const w of this.workers) w.terminate();
     for (const chunk of this.chunks.values()) this.disposeChunk(chunk);
     this.chunks.clear();
+    this.completed.length = 0;
+    this.queue.length = 0;
+    this.inFlight.clear();
+    this.freeWorkers.length = 0;
     this.coverage.dispose();
   }
 
@@ -186,7 +192,7 @@ export class ChunkManager {
 
   /** 決めた範囲のチャンクが全部できたか（作る途中・待ちが無い）。 */
   get settled(): boolean {
-    return !this.dirty && this.queue.length === 0 && this.inFlight.size === 0;
+    return !this.dirty && this.queue.length === 0 && this.inFlight.size === 0 && this.completed.length === 0;
   }
 
   private get rings(): readonly number[] {
@@ -221,6 +227,10 @@ export class ChunkManager {
     const moved = pcx !== this.lastChunkX || pcz !== this.lastChunkZ;
     this.lastChunkX = pcx;
     this.lastChunkZ = pcz;
+
+    // 複数の Worker が同時に返っても、BufferGeometry・木の当たり判定・GPU への登録を
+    // 1 フレームにまとめない。特にスマホでは、この山が操作の引っ掛かりになっていた。
+    this.integrateCompleted();
 
     // 範囲が替わった時と、カメラの周りを読むときにカメラが別のチャンクへ移った時だけ、差分を洗い直す。
     if (this.dirty || (!this.focus && moved)) {
@@ -285,9 +295,19 @@ export class ChunkManager {
     }
   }
 
-  private onBuilt(w: Worker, data: BuiltChunk): void {
-    this.freeWorkers.push(w);
+  private onCompleted(worker: Worker, data: BuiltChunk): void {
     this.inFlight.delete(data.id);
+    this.completed.push({ worker, data });
+  }
+
+  private integrateCompleted(): void {
+    const done = this.completed.shift();
+    if (!done) return;
+    this.freeWorkers.push(done.worker);
+    this.integrateBuilt(done.data);
+  }
+
+  private integrateBuilt(data: BuiltChunk): void {
 
     const key = this.key(data.cx, data.cz);
 

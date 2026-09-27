@@ -248,17 +248,18 @@ export class Terrain {
     // 岩の種類は地方ごと（波長 約 1.5km）。
     const rockTone = this.nRock.noise(x * 0.0007, z * 0.0007);
     surfaceIsland(h, slopeLocal, this.fields, temp, moisture, special, patch, rockTone, out, o);
-    this.paintForestFloor(x, z, out, o);
-    if (this.course) this.paintMown(x, z, out, o);
+    const onCourse = this.course?.sample(x, z) ?? false;
+    this.paintForestFloor(x, z, onCourse, out, o);
+    if (onCourse) this.paintMown(out, o);
   }
 
   /**
    * 谷底の森の地面は濃い緑（木の下の暗い地面）。木を詰め込んで森に見せると木が 2.5 倍・三角形が 1.6 倍に
    * なって重くなったので、地面の色で森の濃さを出し、木は程々にする。
    */
-  private paintForestFloor(x: number, z: number, out: Float32Array, o: number): void {
+  private paintForestFloor(x: number, z: number, onCourse: boolean, out: Float32Array, o: number): void {
     let f = this.valleyAt(x, z);
-    if (this.course?.sample(x, z)) f = Math.max(f, this.course.forest) * (1 - Math.max(this.course.clear, this.course.path));
+    if (onCourse) f = Math.max(f, this.course!.forest) * (1 - Math.max(this.course!.clear, this.course!.path));
     if (f <= 0) return;
     const k = f * 0.8;
     for (let c = 0; c < 3; c++) out[o + c] += (C_FOREST_FLOOR[c] - out[o + c]) * k;
@@ -267,9 +268,8 @@ export class Terrain {
   }
 
   /** コースの芝と砂の色。岩と雪は消す（造成した所に岩肌や雪は出さない）。 */
-  private paintMown(x: number, z: number, out: Float32Array, o: number): void {
+  private paintMown(out: Float32Array, o: number): void {
     const m = this.course!;
-    if (!m.sample(x, z)) return;
     const any = Math.max(m.green, m.tee, m.fairway, m.sand, m.clear, m.path);
     if (any <= 0) return;
     for (let c = 0; c < 3; c++) {

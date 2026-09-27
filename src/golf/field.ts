@@ -193,6 +193,32 @@ export function buildCourseField(island: Island, design: CourseDesign, seed: str
     });
   });
 
+  // 造成格子の全点で全ホール・全歩道を測ると、広い島では大半が明らかに遠いのに
+  // 同じ折れ線の距離計算を繰り返す。影響が届く範囲を四角で先に絞る。
+  // 四角の外なら折れ線までの距離も必ず reach より大きいので、結果は変わらない。
+  const holeSearch = design.holes.map((hole) => {
+    let bx0 = Infinity;
+    let bz0 = Infinity;
+    let bx1 = -Infinity;
+    let bz1 = -Infinity;
+    for (const p of hole.line) {
+      bx0 = Math.min(bx0, p.x);
+      bz0 = Math.min(bz0, p.z);
+      bx1 = Math.max(bx1, p.x);
+      bz1 = Math.max(bz1, p.z);
+    }
+    const corridorReach = Math.max(...hole.corridor.map((c) => c.half)) + ROUGH + BLEND;
+    const reach = Math.max(FOREST_FAR, corridorReach);
+    return { hole, x0: bx0 - reach, z0: bz0 - reach, x1: bx1 + reach, z1: bz1 + reach };
+  });
+  const pathSearch = paths.map((path) => ({
+    path,
+    x0: Math.min(path.ax, path.bx) - 2,
+    z0: Math.min(path.az, path.bz) - 2,
+    x1: Math.max(path.ax, path.bx) + 2,
+    z1: Math.max(path.az, path.bz) + 2,
+  }));
+
   for (let j = 0; j < nz; j++) {
     const z = z0 + j * STEP;
     for (let i = 0; i < nx; i++) {
@@ -202,7 +228,9 @@ export function buildCourseField(island: Island, design: CourseDesign, seed: str
       let hole: HoleDesign | null = null;
       let corridor = 0;
       let nearest = Infinity;
-      for (const h of design.holes) {
+      for (const candidate of holeSearch) {
+        if (x < candidate.x0 || x > candidate.x1 || z < candidate.z0 || z > candidate.z1) continue;
+        const h = candidate.hole;
         const l = lineDistance(h.line, x, z);
         nearest = Math.min(nearest, l.d);
         const half = corridorHalf(h, l.s) + ROUGH;
@@ -222,7 +250,9 @@ export function buildCourseField(island: Island, design: CourseDesign, seed: str
       f.forest[k] = byte((1 - corridor) * (1 - smooth(FOREST_NEAR, FOREST_FAR, nearest)) * edgeFade);
       // 歩道（幅 2.4m、縁はなめらかに）。林の中にも通して、木を生やさない。
       let path = 0;
-      for (const p of paths) {
+      for (const candidate of pathSearch) {
+        if (x < candidate.x0 || x > candidate.x1 || z < candidate.z0 || z > candidate.z1) continue;
+        const p = candidate.path;
         const d = lineDistance(
           [
             { x: p.ax, z: p.az },
@@ -338,6 +368,9 @@ export class CourseField {
   clear = 0;
   forest = 0;
   path = 0;
+  private lastSampleX = Number.NaN;
+  private lastSampleZ = Number.NaN;
+  private lastSampleInside = false;
 
   constructor(readonly a: FieldArrays) {}
 
@@ -368,11 +401,18 @@ export class CourseField {
 
   /** 芝の種類の強さを引いて、fairway・green・tee・sand・clear に入れる。範囲の外なら false。 */
   sample(x: number, z: number): boolean {
+    // height・気温・地表・植生は、同じ点について続けて芝を尋ねる。
+    // 補間した値は上の公開欄に残っているので、同じ座標ならそのまま使える。
+    if (x === this.lastSampleX && z === this.lastSampleZ) return this.lastSampleInside;
+    this.lastSampleX = x;
+    this.lastSampleZ = z;
     const c = this.cellOf(x, z);
     if (!c) {
+      this.lastSampleInside = false;
       this.fairway = this.green = this.tee = this.sand = this.rough = this.clear = this.forest = this.path = 0;
       return false;
     }
+    this.lastSampleInside = true;
     const { k, u, v } = c;
     this.fairway = this.lerp(this.a.fairway, k, u, v) / 255;
     this.green = this.lerp(this.a.green, k, u, v) / 255;
