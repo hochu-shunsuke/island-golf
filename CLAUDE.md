@@ -199,6 +199,9 @@ src/render/   見渡す島と遠景（overviewMesh.ts）、遠目の木（farFor
 
 ```bash
 npm run dev   # http://localhost:5173（LAN 公開）
-npm run ci    # 型・ビルド（テストはまだ無い）
-npm run deploy  # ビルドして Cloudflare へ（island-golf。まだ出していない）。静的ファイルだけ
+npm run ci    # 型・ビルド・テスト（球の物理とコースの生成）。push 前にこれを通す
+npm run deploy  # ビルドして Cloudflare へ。静的ファイルだけ
 ```
+
+本番は https://island-golf.hochu.workers.dev （2026-09-27 に初めて出した）。GitHub Actions はまだ無く、
+手元から `npm run deploy` で出す。出すのは利用者に聞いてから。
