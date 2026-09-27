@@ -61,7 +61,7 @@ export class Flyover {
     private readonly still = false,
   ) {
     // 島全体: 海に浮かぶ島（山の輪に囲まれた谷と、その中のコース）を、沖の高い所からゆっくり寄って見る。
-    // 名前（Birdie Isle）の「島」を最初の絵で伝える。
+    // 名前（Hole in Isle）の「島」を最初の絵で伝える。
     let cx = 0;
     let cz = 0;
     for (const h of holes) {
@@ -70,12 +70,13 @@ export class Flyover {
     }
     cx /= holes.length * 2;
     cz /= holes.length * 2;
+    // 島のカットは短く（7 秒）、大きく回り込みながら寄る（島の周りを 45° ほど回る。小さく動くと止まって見えた）。
     this.add({
-      from: new THREE.Vector3(cx - 1500, 1550, cz + 2700),
-      to: new THREE.Vector3(cx - 950, 1250, cz + 2250),
+      from: new THREE.Vector3(cx - 1900, 1650, cz + 2400),
+      to: new THREE.Vector3(cx - 250, 1150, cz + 2600),
       lookFrom: new THREE.Vector3(cx, 0, cz + 150),
-      lookTo: new THREE.Vector3(cx, 0, cz + 100),
-      duration: 12,
+      lookTo: new THREE.Vector3(cx, 0, cz + 150),
+      duration: 7,
       hole: null,
       area: 'none',
       wide: true,

@@ -29,7 +29,7 @@ import { HoleMap } from './ui/holeMap';
 import { GolfSounds } from './audio/golfSounds';
 
 /**
- * Birdie Isle（コード名 island-golf）。合言葉ひとつで、山に囲まれた谷に 9 ホールのコースがある島がひとつできる。
+ * Hole in Isle（コード名 island-golf）。合言葉ひとつで、山に囲まれた谷に 9 ホールのコースがある島がひとつできる。
  * 合言葉は URL の `#` に載るので、URL を送れば同じ島・同じコースを渡せる。ピンと風は日ごとに替わる。
  *
  * 開くと、暗い読み込み画面から島の空撮（開始画面）へ。「プレイ」で 1 番のティーから回り、F で空から見る。
@@ -455,7 +455,7 @@ function startFinale(total: number, totalPar: number): void {
     putts: stats.reduce((a, st) => a + (st?.putts ?? 0), 0),
     birdies: pars.filter((p, k) => scores[k] !== undefined && scores[k]! < p).length,
     shareText: [
-      `Birdie Isle ${seed}（${dateLabel} のピン）`,
+      `Hole in Isle ${seed}（${dateLabel} のピン）`,
       `${total} 打（${toPar(total, totalPar)}）`,
       marks,
       `${location.origin}${location.pathname}#${seed}`,
