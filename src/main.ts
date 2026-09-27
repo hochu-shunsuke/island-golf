@@ -15,15 +15,16 @@ import { setIslandLight, updateIslandLight } from './render/islandLight';
 import { OverviewMesh } from './render/overviewMesh';
 import { MORNING, Sky } from './render/sky';
 import { Water } from './render/water';
-import { type RoundResult, Overlay } from './ui/overlay';
+import { type PlayMode, type RoundResult, type ScoreRow, type StandingRow, Overlay } from './ui/overlay';
+import { RIVALS } from './golf/rivals';
 import { type TouchControls, createTouchControls, hasTouchInput, isTouchDevice } from './ui/touch';
 import { Flyover } from './view/flyover';
 import { FinaleCamera } from './view/finale';
 import { IslandWater } from './world/islandWater';
 import { Terrain } from './world/terrain';
-import { type Hole, holeArea, holeIntro } from './golf/course';
+import { type Hole, holeArea } from './golf/course';
 import { CourseField, type FieldArrays } from './golf/field';
-import { GolfGame, scoreName, toPar } from './golf/game';
+import { GolfGame, type GolfStatus, scoreName, toPar } from './golf/game';
 import { AudioEngine } from './audio/engine';
 import { HoleMap } from './ui/holeMap';
 import { GolfSounds } from './audio/golfSounds';
@@ -138,6 +139,16 @@ const overlay = new Overlay(document.getElementById('ui')!, params, inputMode ==
     goNextHole();
     if (inputMode === 'keys' && document.pointerLockElement !== canvas) void requestMouseLock();
   },
+  // 遊び方を替えた: 覚えておき、COM の相手を置き直して 1 番のティーから回り直す。
+  onMode: (mode) => {
+    playMode = mode;
+    try {
+      localStorage.setItem(MODE_KEY, mode);
+    } catch {
+      // 覚えられない環境では、この画面の間だけ。
+    }
+    applyRivals();
+  },
   // ラウンドの終わり: 開始画面へ戻って、別のコースを引く。
   onNewCourse: () => {
     leaveFinale();
@@ -146,6 +157,90 @@ const overlay = new Overlay(document.getElementById('ui')!, params, inputMode ==
     newCourse();
   },
 });
+
+// ── 遊び方（COM と対戦・ひとりで） ────────────────────────
+/** 遊び方はこの端末に覚えておく。初めてはひとりで（利用者が決めた）。 */
+const MODE_KEY = 'hole-in-isle:mode';
+let playMode: PlayMode = (() => {
+  try {
+    return localStorage.getItem(MODE_KEY) === 'com' ? 'com' : 'solo';
+  } catch {
+    return 'solo';
+  }
+})();
+overlay.setMode(playMode);
+
+/** 遊び方に合わせて COM の相手を置き直し、1 番のティーから回り直す（回っている途中なら、続きは捨てる）。 */
+function applyRivals(): void {
+  if (!golf) return;
+  leaveFinale();
+  holedCardAt = 0;
+  finalePending = null;
+  // 乱数の元は合言葉と日付（同じコース・同じ日なら COM も同じ打ち方をする）。
+  golf.setRivals(playMode === 'com' ? RIVALS : [], `${params.seed}:${Math.floor(Date.now() / 86_400_000)}`);
+  if (entered) {
+    entered = false;
+    overlay.resetEntered();
+  }
+}
+
+/** スコアカードの行（自分と COM）。 */
+function scoreRows(status: GolfStatus): ScoreRow[] {
+  return [
+    { label: 'あなた', scores: status.scores, you: true },
+    ...status.rivals.map((r) => ({ label: r.spec.name, scores: r.scores, color: r.spec.color })),
+  ];
+}
+
+/** 回り終えたホールの打数の合計と、そのパーの合計。 */
+function sumScores(scores: readonly (number | undefined)[], pars: readonly number[]): { total: number; par: number } {
+  let total = 0;
+  let par = 0;
+  pars.forEach((p, k) => {
+    const s = scores[k];
+    if (s === undefined) return;
+    total += s;
+    par += p;
+  });
+  return { total, par };
+}
+
+/** 順位（回り終えたホールの通算で。同じなら同じ順位）。COM がいなければ null。 */
+function standingsOf(status: GolfStatus, pars: readonly number[]): StandingRow[] | null {
+  if (status.rivals.length === 0) return null;
+  const me = sumScores(status.scores, pars);
+  const rows = [
+    {
+      name: 'あなた',
+      color: null,
+      you: true,
+      diff: me.total - me.par,
+      total: me.total,
+      par: me.par,
+      now: status.phase === 'holed' ? '✓' : status.strokes === 0 ? 'ティー' : `${status.strokes} 打`,
+    },
+    ...status.rivals.map((r) => {
+      const t = sumScores(r.scores, pars);
+      return {
+        name: r.spec.name,
+        color: r.spec.color,
+        you: false,
+        diff: t.total - t.par,
+        total: t.total,
+        par: t.par,
+        now: r.holed ? '✓' : r.strokes === 0 ? 'ティー' : `${r.strokes} 打`,
+      };
+    }),
+  ].sort((a, b) => a.diff - b.diff);
+  return rows.map((r) => ({
+    rank: 1 + rows.filter((x) => x.diff < r.diff).length,
+    name: r.name,
+    color: r.color,
+    total: toPar(r.total, r.par),
+    now: r.now,
+    you: r.you,
+  }));
+}
 
 /** 合言葉を振り直して、別のコースを引く。 */
 function newCourse(): void {
@@ -353,9 +448,12 @@ function ensureGolf(): GolfGame | null {
   golf.onShotFeedback = (kind) => overlay.shotFeedback(kind);
   golf.onHoled = (hole, strokes, total, totalPar, last) => {
     overlay.celebrate(scoreName(strokes, hole.par), strokes === 1 || strokes <= hole.par - 2);
-    if (last) startFinale(total, totalPar);
+    // COM の相手が残りを打ち切るのを待ってから、結果（最後のホール）かスコアカードを出す。
+    if (last) finalePending = { total, totalPar };
     else holedCardAt = performance.now() + HOLED_CARD_DELAY;
   };
+  // 遊び方に合わせて COM の相手を置く（初めは 1 番のティーから）。
+  golf.setRivals(playMode === 'com' ? RIVALS : [], `${params.seed}:${Math.floor(Date.now() / 86_400_000)}`);
   // 開始画面の空撮の間は、打つための目印を出さない（遊び始めたら出す）。
   golf.aids.visible = playing;
   scene.add(golf.group);
@@ -390,6 +488,8 @@ let scorecardHeld = false;
  */
 let holedCardAt = 0;
 const HOLED_CARD_DELAY = 1300;
+/** 最後のホールを入れた後、COM の相手が打ち終えるのを待っている間の、自分の合計（揃ったら結果を出す）。 */
+let finalePending: { total: number; totalPar: number } | null = null;
 
 /** 自己ベスト（合言葉ごと、この端末だけ）。読めない・書けない環境では何もしない。 */
 function bestKey(seed: string): string {
@@ -440,6 +540,28 @@ function startFinale(total: number, totalPar: number): void {
   const day = new Date(Math.floor(Date.now() / 86_400_000) * 86_400_000);
   const dateLabel = `${day.getUTCMonth() + 1}/${day.getUTCDate()}`;
   const marks = pars.map((p, k) => scoreEmoji(scores[k], p)).join('');
+  // COM と回ったときの順位（合計の少ない順。同じなら同じ順位）。
+  const rivals = golf.rivalStates;
+  const entries = [
+    { name: 'あなた', total, par: totalPar, you: true, color: null as number | null },
+    ...rivals.map((r) => {
+      const t = sumScores(r.scores, pars);
+      return { name: r.spec.name, total: t.total, par: t.par, you: false, color: r.spec.color as number | null };
+    }),
+  ].sort((a, b) => a.total - b.total);
+  const ranking =
+    rivals.length === 0
+      ? []
+      : entries.map((e) => ({
+          rank: 1 + entries.filter((x) => x.total < e.total).length,
+          name: e.name,
+          total: e.total,
+          toPar: toPar(e.total, e.par),
+          you: e.you,
+          color: e.color,
+        }));
+  const myRank = ranking.find((x) => x.you)?.rank;
+  if (myRank === 1) sounds?.cheer(true);
   roundResult = {
     seed,
     dateLabel,
@@ -454,9 +576,11 @@ function startFinale(total: number, totalPar: number): void {
     fairwayOf: stats.filter((st) => st && st.fairway !== null).length,
     putts: stats.reduce((a, st) => a + (st?.putts ?? 0), 0),
     birdies: pars.filter((p, k) => scores[k] !== undefined && scores[k]! < p).length,
+    ranking,
+    rivalRows: rivals.map((r) => ({ label: r.spec.name, scores: [...r.scores], color: r.spec.color })),
     shareText: [
       `Hole in Isle ${seed}（${dateLabel} のピン）`,
-      `${total} 打（${toPar(total, totalPar)}）`,
+      `${total} 打（${toPar(total, totalPar)}）${myRank ? ` · COM と ${ranking.length} 人で ${myRank} 位` : ''}`,
       marks,
       `${location.origin}${location.pathname}#${seed}`,
     ].join('\n'),
@@ -486,6 +610,7 @@ function enterFinaleView(fromNow: boolean): void {
 /** 締めの絵をやめる（次のラウンド・別のコースへ）。 */
 function leaveFinale(): void {
   roundResult = null;
+  finalePending = null;
   roundResultAt = 0;
   finaleCam = null;
   overlay.hideRoundResult();
@@ -507,15 +632,18 @@ function holedCard(game: GolfGame): { head: string; foot: string } {
   });
   const next = game.course[(game.course.indexOf(h) + 1) % game.course.length];
   const how = inputMode === 'touch' ? 'タップ' : 'クリックかどれかのキー';
+  const ranks = lastStatus ? standingsOf(lastStatus, game.course.map((c) => c.par)) : null;
+  const rank = ranks?.find((r) => r.you)?.rank;
   return {
-    head: `<b>${h.number} 番</b> ${strokes} 打 · ${scoreName(strokes, h.par)}<span>通算 ${toPar(total, par)}</span>`,
+    head: `<b>${h.number} 番</b> ${strokes} 打 · ${scoreName(strokes, h.par)}<span>通算 ${toPar(total, par)}${rank ? ` · ${rank} 位` : ''}</span>`,
     foot: `${how}で ${next.number} 番のティーへ ▸`,
   };
 }
 
 /** カップインの後に押した: スコアカードがまだならすぐ出し、出ていれば次のティーへ。 */
 function holedPress(): void {
-  if (!golf || roundResult) return;
+  // 結果を出している間と、COM の相手がまだ打ち終えていない間（スコアカードがまだ）は進まない。
+  if (!golf || roundResult || !golf.rivalsSettled) return;
   if (holedCardAt > performance.now()) {
     holedCardAt = performance.now();
     return;
@@ -552,6 +680,9 @@ function toggleScout(): void {
   if (!scout) {
     if (!preparePlayer()) return;
     scout = true;
+    overlay.setRivalMarkers([]);
+    overlay.setStandings(null);
+    overlay.setTiming(null, 0);
     // 空から見る間はコースの外へも飛ぶので、カメラの周りを読み込む。
     chunks?.setFocus(null);
     holeFade = null;
@@ -559,7 +690,7 @@ function toggleScout(): void {
     overlay.setGolf(null);
     overlay.setAimLabel(null);
     overlay.flash(
-      inputMode === 'touch' ? '空から見ています。「球へ戻る」で打つ所へ。' : '空から見ています。F で球へ戻ります。',
+      inputMode === 'touch' ? '空から見ています。右上の戻るボタンで打つ所へ。' : '空から見ています。F で球へ戻ります。',
     );
   } else {
     scout = false;
@@ -695,7 +826,6 @@ function startPlaying(): void {
     camera.fov = GOLF_FOV;
     camera.updateProjectionMatrix();
     golf?.emit();
-    if (golf && golf.strokes === 0 && golf.phase === 'aim') overlay.flash(holeIntro(golf.target));
   }
   // 空から眺めるだけの島では、カメラの周りを読み込む（空撮が決めた範囲のままにしない）。
   if (scout) chunks?.setFocus(null);
@@ -722,6 +852,9 @@ function stopPlaying(): void {
   overlay.setGolf(null);
   overlay.setAimLabel(null);
   overlay.setFlagMarkers([]);
+  overlay.setRivalMarkers([]);
+  overlay.setStandings(null);
+  overlay.setTiming(null, 0);
   overlay.hideScorecard();
   scorecardHeld = false;
   // 締めの絵はしまう（結果は覚えておき、戻ったらまた出す）。
@@ -964,7 +1097,6 @@ canvas.addEventListener('pointercancel', endAim);
 overlay.bindGolfTouch({
   onShotDown: shotPress,
   onShotUp: () => {},
-  onClub: (step) => golf?.changeClub(step),
   onScout: toggleScout,
   onPause: stopPlaying,
   onCancel: () => golf?.cancelSwing(),
@@ -1059,6 +1191,46 @@ function placeFlagMarkers(game: GolfGame, from: { x: number; z: number }): void 
   overlay.setFlagMarkers(flagMarkers);
 }
 
+const rivalScreen = new THREE.Vector3();
+const rivalMarkers: { x: number; y: number; text: string; color: number }[] = [];
+/** COM の相手の球の上に名前を出す（画面に映っている球だけ）。カメラの行列は placeFlagMarkers が更新してある。 */
+function placeRivalMarkers(rivals: readonly import('./golf/rivals').RivalState[]): void {
+  rivalMarkers.length = 0;
+  for (const r of rivals) {
+    if (!r.ball) continue;
+    rivalScreen.set(r.ball.x, r.ball.y + 1.1, r.ball.z).project(camera);
+    if (rivalScreen.z >= 1 || Math.abs(rivalScreen.x) > 1 || Math.abs(rivalScreen.y) > 1) continue;
+    rivalMarkers.push({
+      x: ((rivalScreen.x + 1) / 2) * innerWidth,
+      y: ((1 - rivalScreen.y) / 2) * innerHeight,
+      text: r.spec.name,
+      color: r.spec.color,
+    });
+  }
+  overlay.setRivalMarkers(rivalMarkers);
+}
+
+const ballScreen = new THREE.Vector3();
+/**
+ * 構えている間、球のすぐ下に正確さのバーを出す。球が画面の外（真下など）にあるときは、画面の下寄りの真ん中へ。
+ * 画面の下の端のバーは、狙い（輪）から目線が離れて見づらかった。
+ */
+function placeTiming(game: GolfGame): void {
+  if (game.phase !== 'swing') {
+    overlay.setTiming(null, 0);
+    return;
+  }
+  ballScreen.set(game.ball.pos.x, game.ball.pos.y, game.ball.pos.z).project(camera);
+  const inside = ballScreen.z < 1 && Math.abs(ballScreen.x) < 1 && Math.abs(ballScreen.y) < 1;
+  const x = inside ? ((ballScreen.x + 1) / 2) * innerWidth : innerWidth / 2;
+  const y = (inside ? ((1 - ballScreen.y) / 2) * innerHeight : innerHeight * 0.7) + 34;
+  // バーの幅の半分（約 150px）は画面の中に収める。下は打数の帯の上まで。
+  overlay.setTiming(
+    { x: Math.max(160, Math.min(innerWidth - 160, x)), y: Math.max(140, Math.min(innerHeight - 130, y)) },
+    game.needle,
+  );
+}
+
 const aimScreen = new THREE.Vector3();
 /** 落とし所の輪の上に距離を出す（狙っている間と構えている間）。 */
 function placeAimLabel(game: GolfGame): void {
@@ -1115,21 +1287,42 @@ renderer.setAnimationLoop(() => {
     }
     chunks?.update(camera.position.x, camera.position.z);
     sounds?.update(dt, lastStatus?.windSpeed ?? 0, 1, 0);
+    // 最後のホールの後、COM の相手が打ち終えたら結果へ。
+    if (finalePending && golf.rivalsSettled) {
+      startFinale(finalePending.total, finalePending.totalPar);
+      finalePending = null;
+    }
+    const rivals = golf.rivalStates;
     holeMap.setHole(golf.target, courseSampler);
-    holeMap.draw(golf.ball.pos, golf.phase === 'aim' || golf.phase === 'swing' ? golf.aimPoint : null, golf.target.pin);
+    holeMap.draw(
+      golf.ball.pos,
+      golf.phase === 'aim' || golf.phase === 'swing' ? golf.aimPoint : null,
+      golf.target.pin,
+      rivals.flatMap((r) => (r.ball ? [{ x: r.ball.x, z: r.ball.z, color: r.spec.color }] : [])),
+    );
     if (lastStatus) {
-      const card = holedCardAt > 0 && performance.now() >= holedCardAt && golf.phase === 'holed' && !holeFade;
+      const pars = golf.course.map((h) => h.par);
+      // カップインの後のスコアカードは、COM の相手が打ち終えてから（全員の打数を並べて出す）。
+      const card =
+        holedCardAt > 0 && performance.now() >= holedCardAt && golf.phase === 'holed' && !holeFade && golf.rivalsSettled;
       overlay.setScorecard(
-        golf.course.map((h) => h.par),
-        lastStatus.scores,
+        pars,
+        scoreRows(lastStatus),
         lastStatus.target.number,
         !roundResult && (card || scorecardHeld || overlay.scorecardPinned),
         card ? holedCard(golf) : null,
       );
+      // スコアカードを出している間は順位をしまう（カードに全員の打数が並ぶ。スマホでは重なって見えた）。
+      overlay.setStandings(finaleCam || card ? null : standingsOf(lastStatus, pars));
     }
     if (!finaleCam) {
       placeFlagMarkers(golf, golf.ball.pos);
+      placeRivalMarkers(rivals);
       placeAimLabel(golf);
+      placeTiming(golf);
+    } else {
+      overlay.setRivalMarkers([]);
+      overlay.setTiming(null, 0);
     }
   } else if (flyover && sceneReady) {
     // 開始画面・休憩中: コース紹介の空撮。カットの範囲を読み込み、揃うまでは暗いまま待つ（flyover.ts）。

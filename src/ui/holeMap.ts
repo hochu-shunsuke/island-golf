@@ -124,8 +124,13 @@ export class HoleMap {
     return [Math.max(4, Math.min(this.canvas.width - 4, px)), Math.max(4, Math.min(this.canvas.height - 4, py))];
   }
 
-  /** 球・狙いの輪・ピンを重ねる。aim は狙っている間だけ。 */
-  draw(ball: { x: number; z: number }, aim: { x: number; z: number } | null, pin: { x: number; z: number }): void {
+  /** 球・狙いの輪・ピンを重ねる。aim は狙っている間だけ。others は COM の相手の球（色の点）。 */
+  draw(
+    ball: { x: number; z: number },
+    aim: { x: number; z: number } | null,
+    pin: { x: number; z: number },
+    others: readonly { x: number; z: number; color: number }[] = [],
+  ): void {
     const g = this.ctx;
     const { width: w, height: h } = this.canvas;
     g.clearRect(0, 0, w, h);
@@ -160,6 +165,16 @@ export class HoleMap {
     g.moveTo(fx, fy);
     g.lineTo(fx, fy - 10);
     g.stroke();
+    // COM の相手の球（自分の球の下に）。
+    for (const o of others) {
+      const [ox, oy] = this.toPixel(o.x, o.z);
+      g.fillStyle = `#${o.color.toString(16).padStart(6, '0')}`;
+      g.strokeStyle = 'rgba(0,0,0,0.6)';
+      g.beginPath();
+      g.arc(ox, oy, 3, 0, Math.PI * 2);
+      g.fill();
+      g.stroke();
+    }
     // 球。
     g.fillStyle = '#fff';
     g.strokeStyle = 'rgba(0,0,0,0.6)';

@@ -1,3 +1,4 @@
+import { PERFECT } from '../golf/aim';
 import { LIE_NAMES, toPar, type GolfStatus } from '../golf/game';
 import { KIND_NAMES } from '../golf/course';
 import type { IslandParams } from '../island/params';
@@ -20,6 +21,33 @@ export interface OverlayHandlers {
   onAgain: () => void;
   /** ラウンドの終わりの「新しいコース」（開始画面へ戻って合言葉を振り直す）。 */
   onNewCourse: () => void;
+  /** 遊び方（COM と対戦・ひとりで）を替えた。 */
+  onMode: (mode: PlayMode) => void;
+}
+
+/** 遊び方。 */
+export type PlayMode = 'com' | 'solo';
+
+/** スコアカードの 1 行（プレイヤーか COM の 1 人）。 */
+export interface ScoreRow {
+  label: string;
+  scores: readonly (number | undefined)[];
+  /** 自分の行（強調する）。 */
+  you?: boolean;
+  /** COM の色（名前の前の点）。 */
+  color?: number;
+}
+
+/** 順位の表示の 1 行。 */
+export interface StandingRow {
+  rank: number;
+  name: string;
+  color: number | null;
+  /** 回り終えたホールの通算（+2・±0）。 */
+  total: string;
+  /** 今のホールの様子（「ティー」「3 打」、入れたら「✓」）。 */
+  now: string;
+  you: boolean;
 }
 
 /** ラウンドの終わりに出す結果。 */
@@ -41,6 +69,10 @@ export interface RoundResult {
   birdies: number;
   /** 「結果を共有」で渡す文。 */
   shareText: string;
+  /** COM と回ったときの順位（ひとりなら空）。 */
+  ranking: readonly { rank: number; name: string; total: number; toPar: string; you: boolean; color: number | null }[];
+  /** スコアカードの COM の行（ひとりなら空）。 */
+  rivalRows: readonly ScoreRow[];
 }
 
 /** 見出しの下の一文。ふだんは出さず、休憩中の知らせだけに使う。 */
@@ -54,7 +86,19 @@ const ICON = {
   enter: svg('M10 17l5-5-5-5M15 12H3M14 4h5a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1h-5'),
   link: svg('M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1'),
   close: svg('M6 6l12 12M18 6L6 18'),
+  /** 空から見る（目）。 */
+  eye: svg('M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12zM12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z'),
+  /** 球へ戻る（戻る矢印）。 */
+  back: svg('M9 14 4 9l5-5M4 9h10.5a5.5 5.5 0 0 1 0 11H11'),
 };
+
+/** 打つボタンの球（白い丸の中に、くぼみの点）。 */
+const BALL_ICON = `<svg class="ball-icon" viewBox="0 0 24 24" aria-hidden="true">
+  <circle cx="12" cy="12" r="8.5"/>
+  <circle class="dimple" cx="9" cy="9.5" r="1.1"/><circle class="dimple" cx="13" cy="8.5" r="1.1"/>
+  <circle class="dimple" cx="15" cy="12.2" r="1.1"/><circle class="dimple" cx="10.5" cy="13.4" r="1.1"/>
+  <circle class="dimple" cx="13.6" cy="15.8" r="1.1"/>
+</svg>`;
 
 /** 打数とパーの差から、スコアカードの印（丸・四角）の種類。 */
 function scoreMark(s: number | undefined, p: number): string {
@@ -63,41 +107,54 @@ function scoreMark(s: number | undefined, p: number): string {
   return d <= -2 ? 'eagle' : d === -1 ? 'birdie' : d === 0 ? 'par' : d === 1 ? 'bogey' : 'double';
 }
 
+/** 0xrrggbb → CSS の色。 */
+function hex(c: number): string {
+  return `#${c.toString(16).padStart(6, '0')}`;
+}
+
 /**
- * スコアカードの表（ホール・パー・打数）。current のホールを強調し、fresh なら入れたばかりの打数を弾ませる。
- * stagger なら打数のマスを 1 つずつ順に出す（ラウンドの終わり）。
+ * スコアカードの表（ホール・パー・打数の行）。rows の 1 行目が自分、続けて COM。current のホールを強調し、
+ * fresh なら入れたばかりの打数を弾ませる。stagger なら打数のマスを 1 つずつ順に出す（ラウンドの終わり）。
  */
 function scoreTable(
   pars: readonly number[],
-  scores: readonly (number | undefined)[],
+  rows: readonly ScoreRow[],
   current: number,
   fresh: boolean,
   stagger = false,
 ): string {
-  let total = 0;
-  let par = 0;
-  pars.forEach((p, k) => {
-    const s = scores[k];
-    if (s === undefined) return;
-    total += s;
-    par += p;
-  });
   const head = pars.map((_, k) => `<th class="${k + 1 === current ? 'now' : ''}">${k + 1}</th>`).join('');
   const parRow = pars.map((p) => `<td>${p}</td>`).join('');
-  const scoreRow = pars
-    .map((p, k) => {
-      const s = scores[k];
-      const cls = [scoreMark(s, p), fresh && k + 1 === current ? 'fresh' : '', stagger ? 'stagger' : ''].join(' ');
-      const delay = stagger ? ` style="animation-delay:${(300 + k * 90).toString()}ms"` : '';
-      return `<td><span class="${cls}"${delay}>${s ?? ''}</span></td>`;
+  const sum = pars.reduce((a, b) => a + b, 0);
+  const many = rows.length > 1;
+  const body = rows
+    .map((row, n) => {
+      let total = 0;
+      let par = 0;
+      pars.forEach((p, k) => {
+        const s = row.scores[k];
+        if (s === undefined) return;
+        total += s;
+        par += p;
+      });
+      const cells = pars
+        .map((p, k) => {
+          const s = row.scores[k];
+          const cls = [scoreMark(s, p), fresh && k + 1 === current ? 'fresh' : '', stagger ? 'stagger' : ''].join(' ');
+          const delay = stagger ? ` style="animation-delay:${(300 + (k + n * 3) * 70).toString()}ms"` : '';
+          return `<td><span class="${cls}"${delay}>${s ?? ''}</span></td>`;
+        })
+        .join('');
+      const dot = row.color !== undefined ? `<i class="sc-dot" style="background:${hex(row.color)}"></i>` : '';
+      const label = many ? `${dot}${row.label}` : '打数';
+      return `<tr class="score${row.you && many ? ' you' : ''}"><th>${label}</th>${cells}<td>${total || ''}<small>${par === 0 ? '' : toPar(total, par)}</small></td></tr>`;
     })
     .join('');
-  const sum = pars.reduce((a, b) => a + b, 0);
   return `
     <table>
       <tr><th>ホール</th>${head}<th>計</th></tr>
       <tr class="par"><th>パー</th>${parRow}<td>${sum}</td></tr>
-      <tr class="score"><th>打数</th>${scoreRow}<td>${total || ''}<small>${par === 0 ? '' : toPar(total, par)}</small></td></tr>
+      ${body}
     </table>`;
 }
 
@@ -176,6 +233,10 @@ export class Overlay {
           <p class="lead">${DEFAULT_LEAD}</p>
         </section>
         <section class="play-panel">
+          <div class="mode-switch" role="radiogroup" aria-label="遊び方">
+            <button type="button" class="mode-btn" data-mode="solo" role="radio">ひとりで</button>
+            <button type="button" class="mode-btn" data-mode="com" role="radio">COM と対戦</button>
+          </div>
           <button class="start" disabled>コースを作っています…</button>
           <div class="sub-btns">
             <button type="button" class="join-open">${ICON.enter}IDで入る</button>
@@ -218,6 +279,8 @@ export class Overlay {
       <canvas class="hole-map" width="120" height="220"></canvas>
       <div class="shot-feedback"></div>
       <div class="flag-markers" aria-hidden="true"></div>
+      <div class="rival-markers" aria-hidden="true"></div>
+      <div class="standings" aria-label="順位"></div>
       <div class="aim-label" aria-hidden="true"></div>
       <div class="celebrate" aria-live="polite"></div>
       <div class="scorecard"></div>
@@ -226,6 +289,7 @@ export class Overlay {
           <header class="rr-head"><span class="rr-title">ラウンド終了</span><span class="rr-course"></span></header>
           <div class="rr-total"><b class="rr-strokes"></b><span class="rr-unit">打</span><span class="rr-par"></span></div>
           <div class="rr-best"></div>
+          <div class="rr-ranking"></div>
           <div class="rr-table"></div>
           <div class="rr-stats"></div>
           <div class="rr-actions">
@@ -241,20 +305,19 @@ export class Overlay {
           <span class="shot-lie"></span>
           <span class="shot-dist"></span>
         </div>
-        <div class="golf-meter"><div class="shot-sweet"></div><div class="shot-needle"></div></div>
         <span class="golf-hint"></span>
+      </div>
+      <div class="timing" aria-hidden="true">
+        <div class="t-track"><i class="t-sweet"></i><i class="t-needle"></i></div>
       </div>
       <div class="golf-touch">
         <button class="g-btn g-pause" aria-label="休憩"></button>
-        <button class="g-btn g-scout">空から</button>
-        <button class="g-btn g-cancel">やめる</button>
-        <button class="g-btn g-prev" aria-label="長いクラブへ">‹</button>
-        <button class="g-btn g-next" aria-label="短いクラブへ">›</button>
-        <button class="g-btn g-shot">打つ</button>
+        <button class="g-btn g-scout" aria-label="空から見る">${ICON.eye}</button>
+        <button class="g-btn g-cancel" aria-label="構えをやめる">${ICON.close}</button>
+        <button class="g-btn g-shot" aria-label="打つ">${BALL_ICON}</button>
       </div>
       <div class="keyboard-guide" aria-label="操作方法" aria-hidden="true">
         <span><kbd>マウス</kbd><kbd>WASD</kbd> 落とし所の輪を動かす</span>
-        <span><kbd>Q</kbd><kbd>E</kbd><kbd>ホイール</kbd> クラブ</span>
         <span><kbd>クリック</kbd><kbd>Space</kbd> 構える → 針が真ん中で打つ</span>
         <span><kbd>F</kbd> 空から見る／戻る</span>
         <span><kbd>Esc</kbd> 構えをやめる／休憩</span>
@@ -287,7 +350,8 @@ export class Overlay {
     this.shotShort = this.root.querySelector('.shot-short')!;
     this.shotName = this.root.querySelector('.shot-name')!;
     this.shotDist = this.root.querySelector('.shot-dist')!;
-    this.shotNeedle = this.root.querySelector('.shot-needle')!;
+    this.timing = this.root.querySelector('.timing')!;
+    this.timingNeedle = this.root.querySelector('.t-needle')!;
     this.aimLabel = this.root.querySelector('.aim-label')!;
     this.holeNo = this.root.querySelector('.hole-no')!;
     this.holeOf = this.root.querySelector('.hole-of')!;
@@ -316,6 +380,16 @@ export class Overlay {
     this.golfHint = this.root.querySelector('.golf-hint')!;
     this.golfTouch = this.root.querySelector('.golf-touch')!;
     this.flagLayer = this.root.querySelector('.flag-markers')!;
+    this.rivalLayer = this.root.querySelector('.rival-markers')!;
+    this.standings = this.root.querySelector('.standings')!;
+    for (const b of this.root.querySelectorAll<HTMLButtonElement>('.mode-btn')) {
+      b.addEventListener('click', () => {
+        const mode = b.dataset.mode as PlayMode;
+        if (mode === this.mode) return;
+        this.setMode(mode);
+        this.handlers.onMode(mode);
+      });
+    }
     this.golfScoutBtn = this.root.querySelector('.g-scout')!;
   }
 
@@ -326,7 +400,8 @@ export class Overlay {
   private readonly shotShort: HTMLElement;
   private readonly shotName: HTMLElement;
   private readonly shotDist: HTMLElement;
-  private readonly shotNeedle: HTMLElement;
+  private readonly timing: HTMLElement;
+  private readonly timingNeedle: HTMLElement;
   private readonly aimLabel: HTMLElement;
   private aimLabelText = '';
   private readonly holeNo: HTMLElement;
@@ -352,6 +427,11 @@ export class Overlay {
   private readonly golfHint: HTMLElement;
   private readonly golfTouch: HTMLElement;
   private readonly flagLayer: HTMLElement;
+  private readonly rivalLayer: HTMLElement;
+  private readonly rivalEls: { el: HTMLElement; text: string }[] = [];
+  private readonly standings: HTMLElement;
+  private standingsKey = '';
+  private mode: PlayMode = 'solo';
   private readonly flagEls: { el: HTMLElement; text: string; cls: string }[] = [];
   private readonly golfScoutBtn: HTMLElement;
   private golfText = '';
@@ -365,7 +445,6 @@ export class Overlay {
     this.root.classList.toggle('golfing', on);
     // カップインの後は、真ん中のスコアカードが次へ進む案内を出すので、下の打つ表示はしまう。
     this.golfPower.classList.toggle('on', on && status.phase !== 'moving' && status.phase !== 'holed');
-    this.golfPower.classList.toggle('swing', on && status.phase === 'swing');
     this.golfTouch.classList.toggle('swinging', on && status.phase === 'swing');
     if (!status) return;
     const { target } = status;
@@ -395,13 +474,12 @@ export class Overlay {
       this.golfHint.textContent =
         status.phase === 'swing'
           ? this.touch
-            ? '針が真ん中に来たら、もう一度 打つ（やめるで戻る）'
+            ? '針が真ん中に来たら、もう一度 ◯'
             : '針が真ん中に来たら、もう一度押す（Esc か右クリックで戻る）'
           : this.touch
-            ? '画面をなぞって輪を動かす · 打つで構える'
-            : 'マウスで輪を動かす · クリックか Space で構える';
+            ? 'なぞって狙う · ◯ で構える'
+            : 'マウスで狙う · クリックか Space で構える';
     }
-    this.shotNeedle.style.transform = `translateX(${(((status.needle + 1) / 2) * 100).toFixed(2)}%)`;
     // 風のメーター: 針は狙う向きを上にした風の向き。数字は大きく。
     const calm = status.windSpeed < 0.3;
     this.windNeedle.style.visibility = calm ? 'hidden' : 'visible';
@@ -477,20 +555,70 @@ export class Overlay {
    */
   setScorecard(
     pars: readonly number[],
-    scores: readonly (number | undefined)[],
+    rows: readonly ScoreRow[],
     current: number,
     visible: boolean,
     card: { head: string; foot: string } | null = null,
   ): void {
     this.scorecard.classList.toggle('on', visible);
     this.scorecard.classList.toggle('result', card !== null);
-    const key = `${pars.join(',')}|${scores.join(',')}|${current}|${card?.head ?? ''}|${card?.foot ?? ''}`;
+    const key = `${pars.join(',')}|${rows.map((r) => r.scores.join(',')).join('/')}|${current}|${card?.head ?? ''}|${card?.foot ?? ''}`;
     if (key === this.scorecardKey) return;
     this.scorecardKey = key;
     this.scorecard.innerHTML = `
       ${card ? `<div class="sc-head">${card.head}</div>` : ''}
-      ${scoreTable(pars, scores, current, card !== null)}
+      ${scoreTable(pars, rows, current, card !== null)}
       ${card ? `<div class="sc-foot">${card.foot}</div>` : ''}`;
+  }
+
+  /** 遊び方の切り替えの見た目（選んでいる方）。 */
+  setMode(mode: PlayMode): void {
+    this.mode = mode;
+    for (const b of this.root.querySelectorAll<HTMLButtonElement>('.mode-btn')) {
+      const on = b.dataset.mode === mode;
+      b.classList.toggle('on', on);
+      b.setAttribute('aria-checked', String(on));
+    }
+  }
+
+  /** 順位の表示（COM と回っている間）。null で隠す。 */
+  setStandings(rows: readonly StandingRow[] | null): void {
+    this.standings.classList.toggle('on', rows !== null && rows.length > 1);
+    if (!rows) return;
+    const key = rows.map((r) => `${r.rank}${r.name}${r.total}${r.now}`).join('|');
+    if (key === this.standingsKey) return;
+    this.standingsKey = key;
+    this.standings.innerHTML = rows
+      .map(
+        (r) => `<div class="st-row${r.you ? ' you' : ''}">
+          <span class="st-rank">${r.rank}</span>
+          <i class="st-dot" style="background:${r.color === null ? '#ffffff' : hex(r.color)}"></i>
+          <span class="st-name">${r.name}</span>
+          <span class="st-now">${r.now}</span>
+          <b class="st-total">${r.total}</b>
+        </div>`,
+      )
+      .join('');
+  }
+
+  /** COM の球の上の名前。画面の位置（px）で。 */
+  setRivalMarkers(items: readonly { x: number; y: number; text: string; color: number }[]): void {
+    while (this.rivalEls.length < items.length) {
+      const el = document.createElement('div');
+      el.className = 'rival-marker';
+      this.rivalLayer.appendChild(el);
+      this.rivalEls.push({ el, text: '' });
+    }
+    this.rivalEls.forEach((m, k) => {
+      const item = items[k];
+      m.el.classList.toggle('on', item !== undefined);
+      if (!item) return;
+      if (item.text !== m.text) {
+        m.text = item.text;
+        m.el.innerHTML = `<i style="background:${hex(item.color)}"></i>${item.text}`;
+      }
+      m.el.style.transform = `translate(${item.x.toFixed(1)}px, ${item.y.toFixed(1)}px)`;
+    });
   }
 
   /** 画面の飾りを隠して、ラウンドの終わりの絵にする（打つための表示を全部しまう）。 */
@@ -513,7 +641,22 @@ export class Overlay {
       : r.best
         ? `<small>自己ベスト ${r.best.total} 打（${toPar(r.best.total, r.best.par)}）</small>`
         : '';
-    q('.rr-table').innerHTML = scoreTable(r.pars, r.scores, 0, false, true);
+    q('.rr-table').innerHTML = scoreTable(
+      r.pars,
+      [{ label: 'あなた', scores: r.scores, you: true }, ...r.rivalRows],
+      0,
+      false,
+      true,
+    );
+    const me = r.ranking.find((x) => x.you);
+    q('.rr-ranking').innerHTML = me
+      ? `<div class="rr-place">${me.rank === 1 ? '優勝' : `${me.rank} 位`}<small>${r.ranking.length} 人中</small></div>` +
+        r.ranking
+          .map(
+            (x) => `<div class="rr-rank${x.you ? ' you' : ''}"><span>${x.rank}</span><i style="background:${x.color === null ? '#ffffff' : hex(x.color)}"></i><span>${x.name}</span><b>${x.total}</b><small>${x.toPar}</small></div>`,
+          )
+          .join('')
+      : '';
     const holes = r.pars.length;
     q('.rr-stats').innerHTML = [
       [`${r.gir}<small>/${holes}</small>`, 'パーオン'],
@@ -564,6 +707,19 @@ export class Overlay {
     }
   }
 
+  /**
+   * 構えている間、球のすぐ下に出す正確さのバー（針が左右に振れる）。真ん中の帯で止めるとナイスショット、
+   * 端ほど左・右へ曲がる。画面の下の端に置くと、狙いから目線が離れて見づらかった。
+   * 同じ太さのバーにする（真ん中が高い山の形は、強さのゲージに見えた）。at は球の画面の位置（px）、null で隠す。
+   */
+  setTiming(at: { x: number; y: number } | null, needle: number): void {
+    this.timing.classList.toggle('on', at !== null);
+    if (!at) return;
+    this.timing.style.transform = `translate(${at.x.toFixed(1)}px, ${at.y.toFixed(1)}px)`;
+    this.timingNeedle.style.left = `${(((needle + 1) / 2) * 100).toFixed(2)}%`;
+    this.timing.classList.toggle('sweet', Math.abs(needle) < PERFECT);
+  }
+
   /** 落とし所の輪の上に、距離の目印。画面の位置（px）か、null で隠す。 */
   setAimLabel(at: { x: number; y: number; text: string } | null): void {
     this.aimLabel.classList.toggle('on', at !== null);
@@ -604,20 +760,20 @@ export class Overlay {
   }
 
   /**
-   * タッチのゴルフ用ボタン。scouting（空から見ている間）は「球へ戻る」だけを出す
+   * タッチのゴルフ用ボタン。scouting（空から見ている間）は、休憩と「球へ戻る」（目のボタンと同じ場所）だけを出す
    * （飛ぶ操作は stroll と同じタッチ操作が受け持つ）。
    */
   setGolfTouch(active: boolean, scouting = false): void {
     this.golfTouch.classList.toggle('on', active);
     this.golfTouch.classList.toggle('scouting', scouting);
-    this.golfScoutBtn.textContent = scouting ? '球へ戻る' : '空から';
+    this.golfScoutBtn.innerHTML = scouting ? ICON.back : ICON.eye;
+    this.golfScoutBtn.setAttribute('aria-label', scouting ? '球へ戻る' : '空から見る');
   }
 
   /** タッチのゴルフ用ボタンに役割をつなぐ。 */
   bindGolfTouch(handlers: {
     onShotDown: () => void;
     onShotUp: () => void;
-    onClub: (step: number) => void;
     onScout: () => void;
     onPause: () => void;
     onCancel: () => void;
@@ -630,8 +786,6 @@ export class Overlay {
     });
     shot.addEventListener('pointerup', () => handlers.onShotUp());
     shot.addEventListener('pointercancel', () => handlers.onShotUp());
-    this.golfTouch.querySelector('.g-prev')!.addEventListener('click', () => handlers.onClub(-1));
-    this.golfTouch.querySelector('.g-next')!.addEventListener('click', () => handlers.onClub(1));
     this.golfTouch.querySelector('.g-scout')!.addEventListener('click', () => handlers.onScout());
     this.golfTouch.querySelector('.g-pause')!.addEventListener('click', () => handlers.onPause());
     this.golfTouch.querySelector('.g-cancel')!.addEventListener('click', () => handlers.onCancel());
