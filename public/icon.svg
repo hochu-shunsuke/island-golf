@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <defs>
+    <linearGradient id="sea" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#86bddc"/>
+      <stop offset="0.5" stop-color="#2f7fb0"/>
+      <stop offset="1" stop-color="#1b5a85"/>
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="14" fill="url(#sea)"/>
+  <ellipse cx="32" cy="47" rx="30" ry="11" fill="#8fdcd0"/>
+  <path d="M3 47 L12 31 L18.5 37 L24 22 L30 37 L34 37 L40 21 L46 35 L51.5 29 L61 47 Z" fill="#3f7f3c"/>
+  <path d="M24 22 L30 37 L18.5 37 Z" fill="#2c5f2e"/>
+  <path d="M40 21 L46 35 L34 37 Z" fill="#2c5f2e"/>
+  <path d="M12 31 L18.5 37 L9 38.5 Z" fill="#2c5f2e"/>
+  <path d="M24 22 L26.8 28.6 L21.3 28.8 Z" fill="#f4f7f8"/>
+  <path d="M40 21 L42.8 27.4 L37.3 27.6 Z" fill="#f4f7f8"/>
+  <ellipse cx="32" cy="41.5" rx="11" ry="4" fill="#8ccf5e"/>
+  <path d="M31 41 L31 9" stroke="#ffffff" stroke-width="2.6" stroke-linecap="round"/>
+  <path d="M32 8.5 L48 14 L32 19.5 Z" fill="#e8413c"/>
+</svg>

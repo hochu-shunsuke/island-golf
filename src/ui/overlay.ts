@@ -3,7 +3,7 @@ import { KIND_NAMES } from '../golf/course';
 import type { IslandParams } from '../island/params';
 
 /**
- * island golf の画面。見た目は stroll と同じ言葉（モノクロのガラス、字間を空けた見出し、丸いボタン）。
+ * Birdie Isle の画面。見た目は stroll と同じ言葉（モノクロのガラス、字間を空けた見出し、丸いボタン）。
  *
  * 開始・休憩の画面は、後ろでコース紹介の空撮を流し、部品を四隅に寄せる:
  * 左上にタイトル、左下にコース ID と「新しいコース」、右下に「プレイ」と「IDで入る」「共有」。
@@ -162,7 +162,10 @@ export class Overlay {
     this.root.innerHTML = `
       <div class="screen-fade"></div>
       <aside class="panel">
-        <h1 class="title-logo">island golf</h1>
+        <header class="title">
+          <h1 class="title-logo">Birdie Isle</h1>
+          <p class="tagline">合言葉ひとつで、ゴルフの島がひとつ。</p>
+        </header>
         <section class="course-panel">
           <span class="course-label">コース ID</span>
           <div class="course-id">

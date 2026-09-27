@@ -29,13 +29,12 @@ import { HoleMap } from './ui/holeMap';
 import { GolfSounds } from './audio/golfSounds';
 
 /**
- * island golf（island-maker の島で回るゴルフ。作り始め）。カードのつまみで島を作りながら見渡し、
- * 「この島へ入る」で鳥になって飛ぶ。
- * つまみと種は URL の `#` に載るので、URL を送れば同じ島を渡せる。
+ * Birdie Isle（コード名 island-golf）。合言葉ひとつで、山に囲まれた谷に 9 ホールのコースがある島がひとつできる。
+ * 合言葉は URL の `#` に載るので、URL を送れば同じ島・同じコースを渡せる。ピンと風は日ごとに替わる。
  *
- * 入口と操作は stroll と同じ（Pointer Lock とタッチの切り替え、iOS Safari の入力の誤報への備え、
- * Esc で休憩、最初の 15 秒の操作ガイド、速度と高度の表示、AUTO、速さで広がる視野、
- * 高度で薄くなる霧）。休憩すると島を見渡す画面へ戻り、つまみを触れる。
+ * 開くと、暗い読み込み画面から島の空撮（開始画面）へ。「プレイ」で 1 番のティーから回り、F で空から見る。
+ * 入口と操作は stroll と同じ（Pointer Lock とタッチの切り替え、iOS Safari の入力の誤報への備え、Esc で休憩、
+ * 最初の 15 秒の操作ガイド）。
  */
 
 const LOOK_SENSITIVITY = 0.0022;
@@ -456,7 +455,7 @@ function startFinale(total: number, totalPar: number): void {
     putts: stats.reduce((a, st) => a + (st?.putts ?? 0), 0),
     birdies: pars.filter((p, k) => scores[k] !== undefined && scores[k]! < p).length,
     shareText: [
-      `island golf ${seed}（${dateLabel} のピン）`,
+      `Birdie Isle ${seed}（${dateLabel} のピン）`,
       `${total} 打（${toPar(total, totalPar)}）`,
       marks,
       `${location.origin}${location.pathname}#${seed}`,
@@ -1138,7 +1137,7 @@ renderer.setAnimationLoop(() => {
     chunks?.update(camera.position.x, camera.position.z);
     flyover.update(dt, camera, chunks?.settled ?? true);
     // 霧は空撮の間ずっと同じ濃さ（高さで変えると、カットが替わるたびに遠くの山がじわっと出たり消えたりする）。
-    fog.density = FOG_ATTRACT;
+    fog.density = FOG_ATTRACT * flyover.fogScale;
     overlay.setAttractCaption(flyover.caption);
     overlay.setFade(flyover.fade);
     loadingCurtain = flyover.fade;

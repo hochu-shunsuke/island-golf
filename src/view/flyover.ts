@@ -5,8 +5,8 @@ import type { Area } from '../render/chunkManager';
 
 /**
  * 開始画面の後ろで流すコース紹介の空撮。
- * 谷全体を遠くから見せてから、1 番から順に 1 ホール 1 カット: ティーの後ろの空から、ゆっくり前へ進みながらグリーンを見る。
- * カットの間は暗転でつなぐ（ホールからホールへ飛び回らない）。最後のホールの後は、また谷全体へ戻って繰り返す。
+ * 海に浮かぶ島全体を沖から見せてから、1 番から順に 1 ホール 1 カット: ティーの後ろの空から、ゆっくり前へ進みながら
+ * グリーンを見る。カットの間は暗転でつなぐ（ホールからホールへ飛び回らない）。最後のホールの後は、また島全体へ戻って繰り返す。
  *
  * どのカットも「位置と注視点をまっすぐ動かすだけ」。地面に潜らない高さは作るときに通り道を測って決め、
  * 毎フレームは地面を見ない（起伏でカメラが上下に揺れないように）。
@@ -22,11 +22,19 @@ interface Shot {
   lookTo: THREE.Vector3;
   /** 秒。 */
   duration: number;
-  /** 字幕に出すホール（谷全体のカットは null）。 */
+  /** 字幕に出すホール（島全体のカットは null）。 */
   hole: Hole | null;
-  /** 映している間に読み込んでおく範囲。谷全体は遠くから見るので読み込まない（島全体の 1 枚で足りる）。 */
+  /** 映している間に読み込んでおく範囲。島全体は遠くから見るので読み込まない（島全体の 1 枚で足りる）。 */
   area: Area | 'none';
+  /** 島全体を収めるカット。縦長の画面では横の視野が狭いので、その分だけ視線に沿って引く。 */
+  wide?: boolean;
 }
+
+/**
+ * 島全体のカットで、これより縦長の画面なら引く（縦横比）。横長の画面では島が幅の 6 割ほどに映る。
+ * 縦長の画面では余白を詰めて、幅の 8〜9 割に映るようにする（同じ 6 割だと小さすぎた）。
+ */
+const WIDE_ASPECT = 1.15;
 
 /** 暗転から明けるまで・暗転するまでの秒数。 */
 const FADE = 1.1;
@@ -43,6 +51,8 @@ export class Flyover {
   private waiting = 0;
   private readonly pos = new THREE.Vector3();
   private readonly look = new THREE.Vector3();
+  /** 今のカットでどれだけ引いているか（1 なら引いていない）。 */
+  private pull = 1;
 
   constructor(
     holes: readonly Hole[],
@@ -50,7 +60,8 @@ export class Flyover {
     /** 動きを減らす設定の人には、カメラを動かさず止め絵を順に見せる。 */
     private readonly still = false,
   ) {
-    // 谷全体: コースの真ん中を、南の高い所から横へゆっくり流して見る。
+    // 島全体: 海に浮かぶ島（山の輪に囲まれた谷と、その中のコース）を、沖の高い所からゆっくり寄って見る。
+    // 名前（Birdie Isle）の「島」を最初の絵で伝える。
     let cx = 0;
     let cz = 0;
     for (const h of holes) {
@@ -59,17 +70,16 @@ export class Flyover {
     }
     cx /= holes.length * 2;
     cz /= holes.length * 2;
-    const center = new THREE.Vector3(cx, ground(cx, cz), cz);
     this.add({
-      from: new THREE.Vector3(cx - 260, center.y + 480, cz + 900),
-      to: new THREE.Vector3(cx + 180, center.y + 440, cz + 820),
-      lookFrom: center.clone(),
-      lookTo: center.clone(),
+      from: new THREE.Vector3(cx - 1500, 1550, cz + 2700),
+      to: new THREE.Vector3(cx - 950, 1250, cz + 2250),
+      lookFrom: new THREE.Vector3(cx, 0, cz + 150),
+      lookTo: new THREE.Vector3(cx, 0, cz + 100),
       duration: 12,
       hole: null,
       area: 'none',
+      wide: true,
     });
-
     holes.forEach((h, k) => {
       const dx = h.pin.x - h.tee.x;
       const dz = h.pin.z - h.tee.z;
@@ -120,7 +130,7 @@ export class Flyover {
     return this.shots[this.index];
   }
 
-  /** 字幕（今のホール）。谷全体のカットの間は null。 */
+  /** 字幕（今のホール）。島全体のカットの間は null。 */
   get caption(): string | null {
     const h = this.shot.hole;
     return h ? `${h.number} 番 ${KIND_NAMES[h.kind]} · パー ${h.par} · ${Math.round(h.length)} m` : null;
@@ -131,6 +141,14 @@ export class Flyover {
     return this.shot.area;
   }
 
+  /**
+   * 霧の濃さの倍率。引いたカットは、引いた分だけ霧を薄くして見え方を揃える。
+   * 霧が替わるのはカットの境目（暗転している間）だけ。
+   */
+  get fogScale(): number {
+    return 1 / this.pull;
+  }
+
   /** 暗転の濃さ（0 = 明るい、1 = 真っ暗）。カットの始めと終わりだけ暗い。読み込みを待つ間は真っ暗。 */
   get fade(): number {
     if (this.waiting >= 0) return 1;
@@ -139,7 +157,7 @@ export class Flyover {
     return 1 - smooth(Math.max(0, Math.min(1, a)));
   }
 
-  /** 最初（谷全体・暗転から）に戻す。休憩から開始画面へ戻ったとき用。 */
+  /** 最初（島全体・暗転から）に戻す。休憩から開始画面へ戻ったとき用。 */
   restart(): void {
     this.index = 0;
     this.t = 0;
@@ -169,6 +187,9 @@ export class Flyover {
     const e = u * 0.8 + smooth(u) * 0.2;
     this.pos.lerpVectors(s.from, s.to, e);
     this.look.lerpVectors(s.lookFrom, s.lookTo, e);
+    // 横の視野は縦の視野 × 縦横比で決まるので、縦長ほど（WIDE_ASPECT / 縦横比）倍だけ引けば同じ幅が収まる。
+    this.pull = s.wide ? Math.max(1, WIDE_ASPECT / camera.aspect) : 1;
+    if (this.pull > 1) this.pos.sub(this.look).multiplyScalar(this.pull).add(this.look);
     camera.position.copy(this.pos);
     camera.lookAt(this.look);
   }
