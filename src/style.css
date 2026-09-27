@@ -58,71 +58,53 @@ button {
 
 /* ---- つくる・休憩のカード ---- */
 
+/* 開始・休憩の画面（Sword Masters などのブラウザゲームの定番の配置）:
+   左上にタイトル、左下にコースの情報、右下に大きな「プレイ」と「IDで入る」「共有」。後ろはコース紹介の空撮。
+   .panel は全面の入れ物（押せるのは中の部品だけ）。 */
 .panel {
   position: absolute;
-  left: max(20px, env(safe-area-inset-left));
-  top: max(20px, env(safe-area-inset-top));
-  bottom: max(20px, env(safe-area-inset-bottom));
-  width: 340px;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  text-align: center;
-  background: var(--glass);
-  border: 1px solid var(--edge);
-  border-radius: 22px;
-  backdrop-filter: blur(10px);
-  box-shadow: 0 10px 40px rgba(4, 10, 14, 0.25);
-  pointer-events: auto;
+  inset: 0;
+  pointer-events: none;
   transition: opacity 450ms ease, visibility 450ms, transform 450ms ease;
 }
 
 /* つまみは中でスクロールし、入口のボタンは常に下に見えている。 */
-.panel-body {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 22px;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  touch-action: pan-y;
-  scrollbar-width: none;
-  padding: 30px 26px 22px;
-}
-
-.panel-body::-webkit-scrollbar {
-  display: none;
-}
-
-.panel-foot {
-  flex: none;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 4px;
-  padding: 16px 26px 14px;
-  border-top: 1px solid rgba(255, 255, 255, 0.07);
-}
 
 .panel.hidden {
   opacity: 0;
   visibility: hidden;
-  transform: translateX(-12px);
+  transform: translateY(12px);
 }
 
-.brand {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
+/* コース紹介の字幕（タイトルの下）。 */
+.attract-caption {
+  position: absolute;
+  left: max(24px, env(safe-area-inset-left));
+  top: calc(max(26px, env(safe-area-inset-top)) + 54px);
+  padding: 7px 16px;
+  border-radius: 999px;
+  font-size: 13px;
+  letter-spacing: 0.08em;
+  color: var(--ink);
+  background: var(--glass);
+  border: 1px solid var(--edge);
+  backdrop-filter: blur(10px);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 600ms ease;
 }
 
-.panel h1 {
-  margin: 0;
-  font-size: 26px;
-  font-weight: 500;
-  letter-spacing: 0.24em;
-  text-indent: 0.24em;
+/* 画面の暗転（空撮のカットの間・ホールの切り替え）。字や操作の部品より下に敷く。 */
+.screen-fade {
+  position: absolute;
+  inset: 0;
+  background: #0b1216;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.attract-caption.on {
+  opacity: 1;
 }
 
 .lead {
@@ -138,277 +120,15 @@ button {
 
 /* ---- 入力欄 ---- */
 
-.fields {
-  display: flex;
-  flex-direction: column;
-  gap: 18px;
-  text-align: left;
-}
-
-.field {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.field-label {
-  font-size: 11px;
-  letter-spacing: 0.1em;
-  color: var(--faint);
-}
-
-.hint {
-  margin: 2px 0 0;
-  font-size: 10.5px;
-  line-height: 1.5;
-  color: #7d8e94;
-}
-
-.seed-field {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.seed-input {
-  flex: 1;
-  min-width: 0;
-  font: inherit;
-  font-size: 15px;
-  letter-spacing: 0.12em;
-  color: var(--ink);
-  padding: 9px 13px;
-  border-radius: 10px;
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  background: rgba(255, 255, 255, 0.06);
-  -webkit-user-select: text;
-  user-select: text;
-}
-
-.seed-input:focus {
-  outline: none;
-  border-color: rgba(255, 255, 255, 0.45);
-  background: rgba(255, 255, 255, 0.1);
-}
-
-.seed-dice {
-  flex: none;
-  width: 36px;
-  height: 36px;
-  display: grid;
-  place-items: center;
-  font-size: 20px;
-  line-height: 1;
-  color: var(--muted);
-  background: transparent;
-  border: 1px solid rgba(255, 255, 255, 0.16);
-}
-
-.seed-dice:hover {
-  color: var(--ink);
-  border-color: rgba(255, 255, 255, 0.4);
-}
-
-.seed-dice:active {
-  transform: rotate(-18deg);
-}
-
 /* ---- つまみ ---- */
 
-.sliders {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-}
-
-.slider {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.slider-head {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-}
-
-.slider-value {
-  font-size: 11px;
-  font-variant-numeric: tabular-nums;
-  color: var(--muted);
-}
-
-.slider input {
-  -webkit-appearance: none;
-  appearance: none;
-  width: 100%;
-  height: 22px;
-  margin: 0;
-  background: transparent;
-  cursor: pointer;
-  touch-action: pan-x;
-}
-
-.slider input::-webkit-slider-runnable-track {
-  height: 3px;
-  border-radius: 3px;
-  background: rgba(255, 255, 255, 0.16);
-}
-
-.slider input::-moz-range-track {
-  height: 3px;
-  border-radius: 3px;
-  background: rgba(255, 255, 255, 0.16);
-}
-
-.slider input::-webkit-slider-thumb {
-  -webkit-appearance: none;
-  width: 16px;
-  height: 16px;
-  margin-top: -6.5px;
-  border-radius: 50%;
-  background: #dfe9e6;
-  border: none;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
-  transition: transform 120ms ease;
-}
-
-.slider input::-moz-range-thumb {
-  width: 16px;
-  height: 16px;
-  border-radius: 50%;
-  background: #dfe9e6;
-  border: none;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
-}
-
-.slider input:active::-webkit-slider-thumb {
-  transform: scale(1.18);
-  background: #fff;
-}
-
-.slider input:focus {
-  outline: none;
-}
-
-.slider-ends {
-  display: flex;
-  justify-content: space-between;
-  font-size: 10px;
-  color: #7d8e94;
-}
-
-.minimap {
-  width: 100%;
-  aspect-ratio: 1;
-  border-radius: 14px;
-  border: 1px solid var(--edge);
-}
-
 /* ---- ボタン ---- */
-
-.start {
-  align-self: center;
-  min-width: 210px;
-  padding: 13px 32px;
-  font-size: 14.5px;
-  color: #10201f;
-  background: #dfe9e6;
-  border: none;
-}
-
-.start:hover:not(:disabled) {
-  background: #fff;
-}
-
-.start:active:not(:disabled) {
-  transform: translateY(1px);
-}
-
-.start:disabled {
-  cursor: default;
-  opacity: 0.45;
-  background: rgba(223, 233, 230, 0.3);
-  color: rgba(255, 255, 255, 0.7);
-}
-
-.share {
-  align-self: center;
-  padding: 7px 16px;
-  font-size: 11.5px;
-  color: var(--muted);
-  background: transparent;
-  border: none;
-}
-
-.share:hover {
-  color: var(--ink);
-}
-
-.status {
-  margin: 0;
-  font-size: 10px;
-  color: #6f8087;
-  font-variant-numeric: tabular-nums;
-}
 
 .status:empty {
   display: none;
 }
 
 /* ---- 操作の説明（折りたたみ） ---- */
-
-.controls {
-  font-size: 11px;
-  color: var(--faint);
-  border-top: 1px solid rgba(255, 255, 255, 0.07);
-  padding-top: 18px;
-}
-
-.controls summary {
-  cursor: pointer;
-  list-style: none;
-  letter-spacing: 0.14em;
-  color: #7d8e94;
-  user-select: none;
-}
-
-.controls summary::-webkit-details-marker {
-  display: none;
-}
-
-.controls summary::after {
-  content: ' ＋';
-  opacity: 0.6;
-}
-
-.controls[open] summary::after {
-  content: ' －';
-}
-
-.keys {
-  list-style: none;
-  margin: 16px 0 0;
-  padding: 0;
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  gap: 8px 14px;
-  color: var(--muted);
-}
-
-.keys li {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-}
-
-.controls-note {
-  margin: 12px 0 0;
-  line-height: 1.6;
-  color: #7d8e94;
-}
 
 kbd {
   font: inherit;
@@ -543,31 +263,7 @@ kbd {
    条件は JS が決めた結果（data-input）を見る。メディアクエリで独立に
    判定すると、JS 側の判断と食い違って中途半端な画面になる。 */
 :root[data-input='touch'] {
-  .start {
-    padding: 15px 36px;
-    font-size: 15.5px;
-  }
-
   /* iOS は 16px 未満の入力欄に触れると画面を拡大する。 */
-  .seed-input {
-    font-size: 16px;
-  }
-
-  .seed-dice {
-    width: 40px;
-    height: 40px;
-    font-size: 22px;
-  }
-
-  .slider input {
-    height: 30px;
-  }
-
-  .slider input::-webkit-slider-thumb {
-    width: 22px;
-    height: 22px;
-    margin-top: -9.5px;
-  }
 
   /* 操作の説明はタッチ端末では出さない。触れば分かるうえ、狭い画面では場所を食う。 */
   .controls,
@@ -576,42 +272,7 @@ kbd {
   }
 }
 
-/* スマホ: カードは下から出す。上半分で島が見えるように、高さを抑えて中をスクロールさせる。 */
 @media (max-width: 720px) {
-  .panel {
-    left: max(10px, env(safe-area-inset-left));
-    right: max(10px, env(safe-area-inset-right));
-    top: auto;
-    bottom: max(10px, env(safe-area-inset-bottom));
-    width: auto;
-    max-height: 52vh;
-  }
-
-  .panel-body {
-    gap: 18px;
-    padding: 20px 20px 16px;
-  }
-
-  .panel-foot {
-    padding: 12px 20px 10px;
-  }
-
-  .panel.hidden {
-    transform: translateY(16px);
-  }
-
-  .panel h1 {
-    font-size: 22px;
-  }
-
-  .brand {
-    gap: 6px;
-  }
-
-  .minimap {
-    display: none;
-  }
-
   .keyboard-guide {
     gap: 6px 10px;
     padding-inline: 12px;
@@ -627,31 +288,6 @@ kbd {
 }
 
 /* ---- ゴルフ ---- */
-
-.golf-hud {
-  position: absolute;
-  left: 50%;
-  top: max(16px, env(safe-area-inset-top));
-  transform: translateX(-50%);
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 3px;
-  padding: 8px 16px 9px;
-  border-radius: 16px;
-  text-align: center;
-  color: rgba(255, 255, 255, 0.9);
-  background: rgba(12, 20, 26, 0.36);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  backdrop-filter: blur(6px);
-  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.45);
-  opacity: 0;
-  transition: opacity 250ms ease;
-}
-
-.golf-hud.on {
-  opacity: 1;
-}
 
 /* 旗の目印: 旗の上に番号と距離。位置は JS が transform で毎フレーム決める（CSS で位置を動かさない）。
    目標の旗は赤い三角を付けて大きく、自分の旗は黄色。 */
@@ -712,32 +348,7 @@ kbd {
   border-top-color: rgba(242, 194, 48, 0.9);
 }
 
-.golf-hole {
-  font-size: 11px;
-  letter-spacing: 0.12em;
-  color: rgba(255, 255, 255, 0.62);
-}
-
-.golf-line {
-  font-size: 13px;
-  letter-spacing: 0.04em;
-  font-variant-numeric: tabular-nums;
-}
-
 /* タッチは右上に休憩ボタンがあるので、打数の表示を左へ寄せ、1 行に収める。 */
-:root[data-input='touch'] .golf-hud {
-  left: max(16px, env(safe-area-inset-left));
-  transform: none;
-  align-items: flex-start;
-  max-width: calc(100vw - 92px);
-  padding: 7px 13px 8px;
-}
-
-:root[data-input='touch'] .golf-line {
-  font-size: 12px;
-  letter-spacing: 0.02em;
-  white-space: nowrap;
-}
 
 .golf-power {
   position: absolute;
@@ -757,10 +368,6 @@ kbd {
 .golf-power.on {
   opacity: 1;
   transform: translate(-50%, 0);
-}
-
-.golf-power.done .golf-meter {
-  visibility: hidden;
 }
 
 .shot-top {
@@ -981,4 +588,1352 @@ kbd {
 /* タッチでは力のメーターを打つボタンの上に寄せない（中央下のまま）。 */
 :root[data-input='touch'] .golf-power {
   bottom: max(28px, calc(env(safe-area-inset-bottom) + 14px));
+}
+
+/* 風: 矢印は狙う向きを上にした向き。 */
+
+/* カップインのお祝い。 */
+.celebrate {
+  position: absolute;
+  left: 50%;
+  top: 22%;
+  translate: -50% -50%;
+  font-size: 34px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: #fff;
+  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.45), 0 0 24px rgba(255, 220, 120, 0.55);
+  pointer-events: none;
+  opacity: 0;
+  white-space: nowrap;
+}
+
+.celebrate.on {
+  animation: celebrate-pop 2.6s ease forwards;
+}
+
+.celebrate.big {
+  font-size: 48px;
+  color: #ffe98a;
+}
+
+@keyframes celebrate-pop {
+  0% {
+    opacity: 0;
+    scale: 0.6;
+  }
+  12% {
+    opacity: 1;
+    scale: 1.08;
+  }
+  20% {
+    scale: 1;
+  }
+  80% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    scale: 1;
+  }
+}
+
+/* スコアカード（カップインの後と、Tab・打数の表示を押している間）。
+   実際のスコアカードと同じ印: アンダーは丸（イーグルは二重丸）、オーバーは四角（ダブルボギー以上は二重四角）。 */
+.scorecard {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  translate: -50% -50%;
+  /* left: 50% のままだと幅が画面の半分に縛られ、見出しがはみ出す。中身の幅に合わせる。 */
+  width: max-content;
+  max-width: calc(100vw - 16px);
+  padding: 16px 20px;
+  border-radius: 20px;
+  color: var(--ink);
+  background: rgba(18, 27, 33, 0.78);
+  border: 1px solid var(--edge);
+  backdrop-filter: blur(12px);
+  box-shadow: 0 16px 48px rgba(4, 10, 14, 0.35);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 250ms ease, scale 250ms ease;
+  scale: 0.97;
+  font-variant-numeric: tabular-nums;
+}
+
+.scorecard.on {
+  opacity: 1;
+  scale: 1;
+}
+
+.sc-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin: 0 4px 12px;
+  font-size: 17px;
+  letter-spacing: 0.06em;
+}
+
+.sc-head b {
+  font-weight: 600;
+}
+
+.sc-head span {
+  margin-left: auto;
+  padding-left: 16px;
+  white-space: nowrap;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.sc-foot {
+  margin: 14px 4px 0;
+  font-size: 13px;
+  letter-spacing: 0.08em;
+  text-align: center;
+  color: var(--muted);
+  animation: sc-blink 1.8s ease-in-out infinite;
+}
+
+@keyframes sc-blink {
+  50% {
+    opacity: 0.45;
+  }
+}
+
+.scorecard table,
+.rr-table table {
+  border-collapse: collapse;
+  font-size: 16px;
+}
+
+.scorecard th,
+.scorecard td,
+.rr-table th,
+.rr-table td {
+  min-width: 38px;
+  padding: 6px 4px;
+  text-align: center;
+  font-weight: 400;
+  white-space: nowrap;
+}
+
+.scorecard th:first-child,
+.rr-table th:first-child {
+  min-width: 48px;
+  padding-right: 10px;
+  text-align: left;
+  font-size: 12px;
+  letter-spacing: 0.12em;
+  color: var(--faint);
+}
+
+.scorecard tr:first-child th,
+.rr-table tr:first-child th {
+  color: var(--faint);
+  font-size: 13px;
+}
+
+.scorecard tr:first-child th:first-child,
+.rr-table tr:first-child th:first-child {
+  font-size: 12px;
+}
+
+.scorecard th.now {
+  color: #fff;
+  font-weight: 700;
+}
+
+.scorecard tr.par td,
+.rr-table tr.par td {
+  color: var(--faint);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.scorecard tr.score td,
+.rr-table tr.score td {
+  padding-top: 9px;
+}
+
+.scorecard td:last-child,
+.rr-table td:last-child,
+.scorecard th:last-child,
+.rr-table th:last-child {
+  min-width: 64px;
+  border-left: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.scorecard td small,
+.rr-table td small {
+  margin-left: 4px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* 印の枠は表のマスの中だけに付ける（見出しの「通算」まで幅が固定されて、字がカードからはみ出した）。 */
+.scorecard td span,
+.rr-table td span {
+  display: inline-grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+}
+
+.scorecard .birdie,
+.scorecard .eagle,
+.rr-table .birdie,
+.rr-table .eagle {
+  border: 1.5px solid #8fd3ff;
+  border-radius: 50%;
+}
+
+/* 二重の印は枠線の二重線で描く（外へ広げると、隣のマスの印と重なった）。 */
+.scorecard .eagle,
+.rr-table .eagle {
+  border: 4px double #8fd3ff;
+}
+
+.scorecard .bogey,
+.scorecard .double,
+.rr-table .bogey,
+.rr-table .double {
+  border: 1.5px solid #ffb38a;
+  border-radius: 3px;
+}
+
+.scorecard .double,
+.rr-table .double {
+  border: 4px double #ffb38a;
+}
+
+/* 入れたばかりの打数は弾ませる。 */
+.scorecard .fresh {
+  font-weight: 700;
+  animation: sc-pop 700ms cubic-bezier(0.2, 1.6, 0.4, 1) both;
+}
+
+@keyframes sc-pop {
+  0% {
+    opacity: 0;
+    scale: 2.2;
+  }
+  100% {
+    opacity: 1;
+    scale: 1;
+  }
+}
+
+:root[data-input='touch'] .scorecard {
+  padding: 12px 12px;
+}
+
+:root[data-input='touch'] .scorecard table,
+:root[data-input='touch'] .rr-table table {
+  font-size: 14px;
+}
+
+:root[data-input='touch'] .scorecard th,
+:root[data-input='touch'] .scorecard td,
+:root[data-input='touch'] .rr-table th,
+:root[data-input='touch'] .rr-table td {
+  min-width: 27px;
+  padding: 5px 1px;
+}
+
+:root[data-input='touch'] .scorecard th:first-child,
+:root[data-input='touch'] .rr-table th:first-child {
+  min-width: 34px;
+  padding-right: 4px;
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+}
+
+:root[data-input='touch'] .scorecard td:last-child,
+:root[data-input='touch'] .rr-table td:last-child,
+:root[data-input='touch'] .scorecard th:last-child,
+:root[data-input='touch'] .rr-table th:last-child {
+  min-width: 46px;
+}
+
+:root[data-input='touch'] .scorecard td span,
+:root[data-input='touch'] .rr-table td span {
+  width: 24px;
+  height: 24px;
+}
+
+:root[data-input='touch'] .sc-head {
+  font-size: 15px;
+}
+
+/* ---- ラウンドの終わり ---- */
+
+/* 締めの絵の間は、打つための表示を全部しまう。 */
+.finale .golf-hud,
+.finale .wind-meter,
+.finale .hole-map,
+.finale .golf-power,
+.finale .flag-markers,
+.finale .aim-label,
+.finale .golf-touch,
+.finale .shot-feedback,
+.finale .keyboard-guide {
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+
+.round-result {
+  position: absolute;
+  inset: 0;
+  display: none;
+  place-items: center;
+  padding: 16px;
+  background: radial-gradient(ellipse at center, rgba(4, 10, 14, 0.15), rgba(4, 10, 14, 0.5));
+  pointer-events: auto;
+  z-index: 4;
+}
+
+.round-result.on {
+  display: grid;
+  animation: rr-fade 600ms ease both;
+}
+
+@keyframes rr-fade {
+  from {
+    opacity: 0;
+  }
+}
+
+.rr-card {
+  width: min(560px, 100%);
+  max-height: 100%;
+  overflow-y: auto;
+  padding: 22px 24px 20px;
+  border-radius: 24px;
+  color: var(--ink);
+  background: rgba(18, 27, 33, 0.86);
+  border: 1px solid var(--edge);
+  backdrop-filter: blur(14px);
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.45);
+  font-variant-numeric: tabular-nums;
+}
+
+.round-result.on .rr-card {
+  animation: rr-rise 700ms cubic-bezier(0.2, 0.9, 0.3, 1) both;
+}
+
+@keyframes rr-rise {
+  from {
+    opacity: 0;
+    translate: 0 24px;
+  }
+}
+
+.rr-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 4px 12px;
+}
+
+.rr-title {
+  font-size: 13px;
+  letter-spacing: 0.3em;
+  white-space: nowrap;
+  color: var(--muted);
+}
+
+.rr-course {
+  white-space: nowrap;
+}
+
+.rr-course {
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  color: var(--faint);
+}
+
+.rr-total {
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.rr-strokes {
+  font-size: 72px;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: 0.02em;
+}
+
+.rr-unit {
+  font-size: 18px;
+  color: var(--muted);
+}
+
+.rr-par {
+  margin-left: 10px;
+  padding: 4px 12px;
+  font-size: 22px;
+  font-weight: 600;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  animation: rr-pop 500ms 900ms cubic-bezier(0.2, 1.6, 0.4, 1) both;
+}
+
+.rr-par.under {
+  color: #8fd3ff;
+  border-color: rgba(143, 211, 255, 0.5);
+}
+
+.rr-par.over {
+  color: #ffb38a;
+  border-color: rgba(255, 179, 138, 0.5);
+}
+
+.rr-best {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  min-height: 24px;
+  margin-top: 12px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.rr-badge {
+  padding: 4px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  color: #10201f;
+  background: #eef2f3;
+  border-radius: 999px;
+  animation: rr-pop 600ms 1300ms cubic-bezier(0.2, 1.6, 0.4, 1) both;
+}
+
+@keyframes rr-pop {
+  from {
+    opacity: 0;
+    scale: 0.5;
+  }
+}
+
+.rr-table {
+  display: flex;
+  /* 収まらないときは左端から（center のままだと左の「ホール」などが切れる）。 */
+  justify-content: safe center;
+  margin-top: 16px;
+  overflow-x: auto;
+}
+
+/* 結果の窓では、パーとの差は上の大きな札が出すので、表の計には打数だけ。 */
+.rr-table td small {
+  display: none;
+}
+
+.rr-table .stagger {
+  animation: sc-pop 500ms cubic-bezier(0.2, 1.6, 0.4, 1) both;
+}
+
+.rr-stats {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.rr-stats div {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+}
+
+.rr-stats b {
+  font-size: 22px;
+  font-weight: 600;
+}
+
+.rr-stats b small {
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--faint);
+}
+
+.rr-stats span {
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  white-space: nowrap;
+  color: var(--faint);
+}
+
+.rr-actions {
+  display: grid;
+  grid-template-columns: 1.3fr 1fr 1fr;
+  gap: 10px;
+  margin-top: 20px;
+}
+
+.rr-actions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 13px 10px;
+  font-size: 14px;
+  letter-spacing: 0.06em;
+  white-space: nowrap;
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+}
+
+.rr-actions button:hover {
+  border-color: rgba(255, 255, 255, 0.4);
+}
+
+.rr-actions .rr-again {
+  font-weight: 600;
+  color: #10201f;
+  background: #eef2f3;
+  border-color: transparent;
+}
+
+.rr-actions .rr-again:hover {
+  background: #fff;
+}
+
+.rr-actions .done {
+  color: var(--muted);
+}
+
+/* 幅 360px 前後の電話でも、9 ホールと計が 1 行に収まるように詰める。 */
+@media (max-width: 380px) {
+  .scorecard,
+  :root[data-input='touch'] .scorecard {
+    padding: 12px 8px;
+  }
+
+  .scorecard th,
+  .scorecard td,
+  .rr-table th,
+  .rr-table td,
+  :root[data-input='touch'] .scorecard th,
+  :root[data-input='touch'] .scorecard td,
+  :root[data-input='touch'] .rr-table th,
+  :root[data-input='touch'] .rr-table td {
+    min-width: 21px;
+    padding: 4px 0;
+  }
+
+  /* 後ろの幅 560px 以下の指定より強く（左右の余白を削って表の幅を空ける）。 */
+  .round-result .rr-card {
+    padding-inline: 8px;
+  }
+
+  .scorecard th:first-child,
+  .rr-table th:first-child,
+  :root[data-input='touch'] .scorecard th:first-child,
+  :root[data-input='touch'] .rr-table th:first-child {
+    min-width: 28px;
+    padding-right: 2px;
+    font-size: 10px;
+  }
+
+  .scorecard td:last-child,
+  .rr-table td:last-child,
+  .scorecard th:last-child,
+  .rr-table th:last-child,
+  :root[data-input='touch'] .scorecard td:last-child,
+  :root[data-input='touch'] .rr-table td:last-child,
+  :root[data-input='touch'] .scorecard th:last-child,
+  :root[data-input='touch'] .rr-table th:last-child {
+    min-width: 38px;
+  }
+
+  .scorecard td span,
+  .rr-table td span,
+  :root[data-input='touch'] .scorecard td span,
+  :root[data-input='touch'] .rr-table td span {
+    width: 21px;
+    height: 21px;
+  }
+
+  .scorecard td small,
+  .rr-table td small {
+    margin-left: 2px;
+    font-size: 10px;
+  }
+
+  .rr-stats span {
+    font-size: 10px;
+    letter-spacing: 0.02em;
+  }
+}
+
+@media (max-width: 560px) {
+  .rr-card {
+    padding: 18px 12px 16px;
+  }
+
+  .rr-strokes {
+    font-size: 60px;
+  }
+
+  .rr-stats b {
+    font-size: 19px;
+  }
+
+  .rr-actions {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .rr-actions .rr-again {
+    grid-column: 1 / -1;
+    padding: 15px;
+    font-size: 16px;
+  }
+}
+
+/* タッチの細い画面では、クラブの長い名前を省く（短い名前は残す）。 */
+:root[data-input='touch'] .shot-name {
+  display: none;
+}
+
+/* ---- ゴルフの画面（他のゴルフゲームの定番に合わせた配置） ----
+   左上: ホールの札（大きな番号・パー・距離・何打目）。右上: 風のメーター。横: ホールの小さな地図。
+   下: クラブ・ライ・高低差・狙いの距離と針。真ん中: ナイスショット・フック・スライス。 */
+.golf-hud {
+  position: absolute;
+  left: max(16px, env(safe-area-inset-left));
+  top: max(16px, env(safe-area-inset-top));
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px 8px 10px;
+  border-radius: 14px;
+  color: rgba(255, 255, 255, 0.92);
+  background: rgba(12, 20, 26, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(6px);
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.45);
+  opacity: 0;
+  transition: opacity 250ms ease;
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+.golf-hud.on {
+  opacity: 1;
+}
+
+.hole-num {
+  display: flex;
+  align-items: baseline;
+  padding-right: 10px;
+  border-right: 1px solid rgba(255, 255, 255, 0.18);
+}
+
+.hole-num b {
+  font-size: 34px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.hole-num small {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.6);
+  margin-left: 2px;
+}
+
+.hole-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.golf-hole {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+
+.golf-line {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.78);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* 風のメーター: 円の中の針が、狙う向き（上）から見た風の向き。数字は大きく。 */
+.wind-meter {
+  position: absolute;
+  right: max(16px, env(safe-area-inset-right));
+  top: max(16px, env(safe-area-inset-top));
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px 8px 8px;
+  border-radius: 14px;
+  color: #fff;
+  background: rgba(12, 20, 26, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(6px);
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.45);
+  opacity: 0;
+  transition: opacity 250ms ease;
+  pointer-events: none;
+}
+
+.wind-meter.on {
+  opacity: 1;
+}
+
+.wind-dial {
+  position: relative;
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.55);
+  background: radial-gradient(circle, rgba(120, 190, 255, 0.18), rgba(12, 20, 26, 0.2));
+}
+
+/* 目盛り（上 = 狙う向き）。 */
+.wind-dial::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 2px;
+  width: 2px;
+  height: 6px;
+  translate: -50% 0;
+  background: rgba(255, 255, 255, 0.7);
+}
+
+.wind-needle {
+  position: absolute;
+  inset: 0;
+  transition: transform 200ms ease;
+}
+
+.wind-needle::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 12px;
+  bottom: 10px;
+  width: 4px;
+  translate: -50% 0;
+  border-radius: 2px;
+  background: #8fd3ff;
+}
+
+.wind-needle::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 5px;
+  translate: -50% 0;
+  border-left: 8px solid transparent;
+  border-right: 8px solid transparent;
+  border-bottom: 11px solid #8fd3ff;
+}
+
+.wind-info {
+  display: grid;
+  grid-template-columns: auto auto;
+  align-items: baseline;
+  column-gap: 3px;
+  font-variant-numeric: tabular-nums;
+}
+
+.wind-info b {
+  font-size: 26px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.wind-info small {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.wind-kind {
+  grid-column: 1 / 3;
+  font-size: 11.5px;
+  color: rgba(255, 255, 255, 0.85);
+}
+
+/* ホールの小さな地図（ティーが下、グリーンが上）。 */
+.hole-map {
+  position: absolute;
+  right: max(16px, env(safe-area-inset-right));
+  top: max(96px, calc(env(safe-area-inset-top) + 80px));
+  width: 120px;
+  height: 220px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+  opacity: 0;
+  transition: opacity 250ms ease;
+  pointer-events: none;
+}
+
+.hole-map.on {
+  opacity: 0.95;
+}
+
+/* 真ん中の大きな知らせ（ナイスショット・フック・スライス）。 */
+.shot-feedback {
+  position: absolute;
+  left: 50%;
+  top: 40%;
+  translate: -50% -50%;
+  font-size: 40px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  text-shadow: 0 3px 14px rgba(0, 0, 0, 0.45);
+}
+
+.shot-feedback.on {
+  animation: feedback-pop 1.6s ease forwards;
+}
+
+.shot-feedback.nice {
+  color: #ffe98a;
+  text-shadow: 0 3px 14px rgba(0, 0, 0, 0.45), 0 0 26px rgba(255, 210, 90, 0.6);
+}
+
+.shot-feedback.miss {
+  font-size: 32px;
+  color: #ffd2bd;
+}
+
+@keyframes feedback-pop {
+  0% {
+    opacity: 0;
+    scale: 0.7;
+  }
+  12% {
+    opacity: 1;
+    scale: 1.1;
+  }
+  22% {
+    scale: 1;
+  }
+  75% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+/* 下の段の真ん中: ライと高低差。 */
+.shot-lie {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.85);
+  white-space: nowrap;
+}
+
+/* タッチ: 右上は休憩ボタンがあるので、風はその下へ。地図は左の札の下に小さく。 */
+:root[data-input='touch'] .wind-meter {
+  /* 左上の表示が狭い画面で何行かに折り返しても、その下から始める（--hud-bottom は overlay.ts が測る）。 */
+  top: max(66px, calc(env(safe-area-inset-top) + 50px), calc(var(--hud-bottom, 0px) + 8px));
+  padding: 6px 10px 6px 6px;
+}
+
+:root[data-input='touch'] .wind-dial {
+  width: 42px;
+  height: 42px;
+}
+
+:root[data-input='touch'] .wind-info b {
+  font-size: 22px;
+}
+
+:root[data-input='touch'] .hole-map {
+  left: max(16px, env(safe-area-inset-left));
+  right: auto;
+  top: max(92px, calc(env(safe-area-inset-top) + 76px), calc(var(--hud-bottom, 0px) + 8px));
+  width: 78px;
+  height: 143px;
+}
+
+:root[data-input='touch'] .golf-hud {
+  max-width: calc(100vw - 92px);
+  padding: 6px 10px 6px 8px;
+}
+
+/* 狭い画面では、長い行（「6 打でカップイン · ピンまで 0 m · 通算 +23」）を折り返して枠の中に収める。 */
+:root[data-input='touch'] .hole-meta {
+  min-width: 0;
+}
+
+:root[data-input='touch'] .golf-line {
+  white-space: normal;
+}
+
+:root[data-input='touch'] .hole-num b {
+  font-size: 26px;
+}
+
+:root[data-input='touch'] .shot-feedback {
+  font-size: 30px;
+}
+
+/* 構えている間は、クラブのボタンの代わりに「やめる」。 */
+.g-cancel {
+  display: none;
+  left: max(20px, env(safe-area-inset-left));
+  bottom: max(104px, calc(env(safe-area-inset-bottom) + 88px));
+  width: 106px;
+  height: 48px;
+  font-size: 13px;
+}
+
+.golf-touch.swinging .g-cancel {
+  display: grid;
+}
+
+.golf-touch.swinging .g-prev,
+.golf-touch.swinging .g-next {
+  display: none;
+}
+
+/* ---- 開始・休憩の画面（モノクロのガラス。色は使わず、明るさの差だけで押す順を示す） ---- */
+
+.title-logo {
+  position: absolute;
+  left: max(28px, env(safe-area-inset-left));
+  top: max(26px, env(safe-area-inset-top));
+  margin: 0;
+  font-size: 30px;
+  font-weight: 500;
+  letter-spacing: 0.3em;
+  color: #fff;
+  text-shadow: 0 1px 12px rgba(4, 10, 14, 0.45);
+  pointer-events: none;
+}
+
+.icon {
+  width: 17px;
+  height: 17px;
+  flex: none;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.course-panel {
+  position: absolute;
+  left: max(24px, env(safe-area-inset-left));
+  bottom: max(24px, env(safe-area-inset-bottom));
+  width: min(360px, calc(100vw - 48px));
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 16px 18px 15px;
+  border-radius: 20px;
+  background: var(--glass);
+  border: 1px solid var(--edge);
+  backdrop-filter: blur(10px);
+  box-shadow: 0 10px 40px rgba(4, 10, 14, 0.25);
+  pointer-events: auto;
+}
+
+.course-label {
+  font-size: 10.5px;
+  letter-spacing: 0.22em;
+  color: var(--faint);
+}
+
+.course-id {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.course-seed {
+  font-size: 24px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+
+.course-id .seed-dice {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 13px 7px 11px;
+  font-size: 12.5px;
+  white-space: nowrap;
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+}
+
+.course-id .seed-dice .icon {
+  width: 14px;
+  height: 14px;
+}
+
+.course-id .seed-dice:hover {
+  color: var(--ink);
+  border-color: rgba(255, 255, 255, 0.4);
+}
+
+.course-id .seed-dice:active .icon {
+  transform: rotate(-90deg);
+  transition: transform 200ms ease;
+}
+
+.course-panel .status {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.course-panel .lead {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--ink);
+}
+
+.play-panel {
+  position: absolute;
+  right: max(24px, env(safe-area-inset-right));
+  bottom: max(24px, env(safe-area-inset-bottom));
+  width: min(340px, calc(100vw - 48px));
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  pointer-events: auto;
+}
+
+/* 「プレイ」だけを明るい面にして、最初に押すボタンだと分かるように。 */
+.play-panel .start {
+  width: 100%;
+  padding: 18px 16px;
+  font-size: 19px;
+  font-weight: 600;
+  letter-spacing: 0.3em;
+  text-indent: 0.3em;
+  color: #10201f;
+  background: #eef2f3;
+  border: none;
+  box-shadow: 0 10px 30px rgba(4, 10, 14, 0.3);
+}
+
+.play-panel .start:hover:not(:disabled) {
+  background: #fff;
+}
+
+.play-panel .start:active:not(:disabled) {
+  transform: translateY(1px) scale(0.99);
+}
+
+.play-panel .start:disabled {
+  cursor: default;
+  font-size: 14px;
+  letter-spacing: 0.12em;
+  text-indent: 0.12em;
+  color: var(--muted);
+  background: var(--glass);
+  border: 1px solid var(--edge);
+  backdrop-filter: blur(10px);
+  box-shadow: none;
+}
+
+.sub-btns {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.sub-btns button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 13px 10px;
+  font-size: 14.5px;
+  letter-spacing: 0.08em;
+  color: var(--ink);
+  background: var(--glass);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  backdrop-filter: blur(10px);
+}
+
+.sub-btns button:hover {
+  border-color: rgba(255, 255, 255, 0.4);
+}
+
+.sub-btns button:active {
+  transform: translateY(1px);
+}
+
+/* 「IDで入る」「このコースを共有」の窓。 */
+.modal {
+  position: absolute;
+  inset: 0;
+  display: none;
+  place-items: center;
+  background: rgba(4, 10, 14, 0.45);
+  backdrop-filter: blur(3px);
+  pointer-events: auto;
+  z-index: 5;
+}
+
+.modal.on {
+  display: grid;
+}
+
+.modal-card {
+  width: min(420px, calc(100vw - 32px));
+  padding: 8px 0 20px;
+  border-radius: 22px;
+  background: rgba(18, 27, 33, 0.9);
+  border: 1px solid var(--edge);
+  backdrop-filter: blur(14px);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.45);
+}
+
+.modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px 6px 22px;
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  color: var(--ink);
+}
+
+.modal-close {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid transparent;
+}
+
+.modal-close:hover {
+  color: var(--ink);
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+.modal-label {
+  display: block;
+  margin: 14px 22px 7px;
+  font-size: 10.5px;
+  letter-spacing: 0.22em;
+  color: var(--faint);
+}
+
+.modal-row {
+  display: flex;
+  gap: 8px;
+  margin: 0 22px;
+}
+
+.modal-row input {
+  flex: 1;
+  min-width: 0;
+  padding: 11px 14px;
+  font: inherit;
+  font-size: 15px;
+  letter-spacing: 0.04em;
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 12px;
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+.modal-row input:focus {
+  outline: none;
+  border-color: rgba(255, 255, 255, 0.45);
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.join-input,
+.share-id {
+  letter-spacing: 0.14em;
+}
+
+.modal-go {
+  flex: none;
+  min-width: 86px;
+  padding: 0 18px;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: #10201f;
+  background: #eef2f3;
+  border: none;
+}
+
+.modal-go:hover {
+  background: #fff;
+}
+
+.modal-go.done {
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.modal-note {
+  margin: 14px 22px 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--faint);
+}
+
+/* 休憩・開始の画面が隠れている間は、中の部品も押せない。 */
+.panel.hidden .course-panel,
+.panel.hidden .play-panel {
+  pointer-events: none;
+}
+
+/* iOS は 16px 未満の入力欄に触れると画面を拡大する。 */
+:root[data-input='touch'] .modal-row input {
+  font-size: 16px;
+}
+
+@media (max-width: 720px) {
+  .title-logo {
+    left: 50%;
+    translate: -50% 0;
+    top: max(22px, env(safe-area-inset-top));
+    font-size: 24px;
+    white-space: nowrap;
+    text-indent: 0.3em;
+  }
+
+  .course-panel {
+    left: 16px;
+    right: 16px;
+    width: auto;
+    bottom: calc(max(16px, env(safe-area-inset-bottom)) + 136px);
+    padding: 13px 15px 12px;
+  }
+
+  .course-seed {
+    font-size: 21px;
+  }
+
+  .attract-caption {
+    left: 50%;
+    translate: -50% 0;
+    top: calc(max(22px, env(safe-area-inset-top)) + 44px);
+    white-space: nowrap;
+    font-size: 12px;
+  }
+
+  .play-panel {
+    left: 16px;
+    right: 16px;
+    width: auto;
+    bottom: max(16px, env(safe-area-inset-bottom));
+  }
+
+  .play-panel .start {
+    padding: 16px;
+    font-size: 18px;
+  }
+
+  .sub-btns button {
+    padding: 12px 8px;
+  }
+}
+
+/* 横向きの電話など、高さが低い画面: 結果の窓を詰めて、ボタンまでスクロールせずに見えるように。 */
+@media (max-height: 520px) {
+  .round-result {
+    padding: 8px;
+  }
+
+  .rr-card {
+    padding: 12px 18px;
+  }
+
+  .rr-total {
+    margin-top: 2px;
+  }
+
+  .rr-strokes {
+    font-size: 42px;
+  }
+
+  .rr-par {
+    font-size: 17px;
+  }
+
+  .rr-best {
+    min-height: 0;
+    margin-top: 6px;
+  }
+
+  .rr-table {
+    margin-top: 6px;
+  }
+
+  .rr-table th,
+  .rr-table td,
+  :root[data-input='touch'] .rr-table th,
+  :root[data-input='touch'] .rr-table td {
+    padding-top: 2px;
+    padding-bottom: 2px;
+  }
+
+  .rr-table tr.score td {
+    padding-top: 4px;
+  }
+
+  .rr-stats {
+    margin-top: 6px;
+    padding-top: 6px;
+  }
+
+  .rr-stats b {
+    font-size: 17px;
+  }
+
+  .rr-actions {
+    grid-template-columns: 1.3fr 1fr 1fr;
+    margin-top: 10px;
+  }
+
+  .rr-actions .rr-again {
+    grid-column: auto;
+  }
+
+  .rr-actions button,
+  .rr-actions .rr-again {
+    padding: 9px 8px;
+    font-size: 13.5px;
+  }
 }

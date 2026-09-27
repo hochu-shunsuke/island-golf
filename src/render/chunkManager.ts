@@ -8,7 +8,20 @@ import type { BuiltChunk, InitRequest, WorkerRequest } from '../world/worker';
 import type { Tree } from '../golf/ball';
 import { KIND_BUSH, KIND_ROCK } from '../world/vegetationKinds';
 
-const MAX_RING = LOD_RINGS[LOD_RINGS.length - 1];
+/**
+ * 決まった範囲（遊んでいるホール）を読み込むときの粗さの受け持ち。距離は範囲の矩形からのチャンク数。
+ * LOD_STEPS と同じ長さ。
+ *
+ * - 範囲の中だけ最も細かく（2m）、本物の木を置く。4m（1 番目）は木を置く粗さなので使わない
+ *   （1 つ外側まで本物の木にすると、ホールの先まで本物の木が並んで三角形がカメラの周りを読むときの 1.2〜1.6 倍になった。
+ *   ティーからの見た目はほとんど変わらなかった）
+ * - その外側 3 チャンクは 8m。木は遠目の木（farForest）が描く
+ * - その先は読まない。16m・48m のチャンクは島全体の 1 枚（12m 格子）より粗いので、1 枚に任せる
+ */
+const FOCUS_RINGS = [0, 0, 3, 3, 3];
+if (FOCUS_RINGS.length !== LOD_RINGS.length) {
+  throw new Error('FOCUS_RINGS と LOD_RINGS の長さが違う');
+}
 
 /**
  * 島を覆うチャンクの数（1 辺）。島の遠景（overviewMesh.ts）は、近くのチャンクが
@@ -23,6 +36,14 @@ const TREE_LOD = 1;
 /** 球が当たる木を探す升目（m）と、チャンクの 1 辺の升目の数。 */
 const TREE_BUCKET = 16;
 const TREE_BUCKETS = Math.ceil(CHUNK_SIZE / TREE_BUCKET);
+
+/** 読み込む範囲（世界の座標 m の矩形）。 */
+export interface Area {
+  x0: number;
+  z0: number;
+  x1: number;
+  z1: number;
+}
 
 interface Chunk {
   mesh: THREE.Mesh;
@@ -41,7 +62,8 @@ interface Pending {
   cx: number;
   cz: number;
   lod: number;
-  dist: number;
+  /** 作る順（小さいほど先）。 */
+  order: number;
 }
 
 /**
@@ -60,6 +82,15 @@ export class ChunkManager {
   private nextId = 1;
   private lastChunkX = Number.NaN;
   private lastChunkZ = Number.NaN;
+  /**
+   * 読み込む範囲（チャンク番号の矩形）。null ならカメラの周り。
+   * 範囲を決めておくと、カメラがどう動いても作り直しが起きない（出たり消えたり、粗さが替わったりしない）。
+   */
+  private focus: { cx0: number; cz0: number; cx1: number; cz1: number } | null = null;
+  /** 何も読み込まない（島全体の 1 枚と遠目の木だけで描く。遠くからコース全体を見るとき）。 */
+  private nothing = false;
+  /** 範囲が替わったので、次の update で積み直す。 */
+  private dirty = false;
 
   /** 木の形ごとの大きさ（形の外接箱から。高さと葉の広がり）。 */
   private treeDims = new Map<number, { top: number; radius: number }>();
@@ -125,24 +156,75 @@ export class ChunkManager {
     return `${cx},${cz}`;
   }
 
-  /** チェビシェフ距離から、そのチャンクを作るべき粗さを決める。範囲外は -1。 */
+  /**
+   * 読み込む範囲を世界の座標（m）で決める。null ならカメラの周り、'none' なら何も読まない。
+   * 遊ぶ間は今のホールを渡す。範囲を替えるのは画面が暗転している間だけにする（替えた瞬間に作り直しが始まる）。
+   */
+  setFocus(area: Area | null | 'none'): void {
+    const nothing = area === 'none';
+    if (nothing !== this.nothing) {
+      this.nothing = nothing;
+      this.dirty = true;
+    }
+    const next = area && area !== 'none'
+      ? {
+          cx0: Math.floor(area.x0 / CHUNK_SIZE),
+          cz0: Math.floor(area.z0 / CHUNK_SIZE),
+          cx1: Math.floor(area.x1 / CHUNK_SIZE),
+          cz1: Math.floor(area.z1 / CHUNK_SIZE),
+        }
+      : null;
+    const f = this.focus;
+    if (f === next || (f && next && f.cx0 === next.cx0 && f.cz0 === next.cz0 && f.cx1 === next.cx1 && f.cz1 === next.cz1)) {
+      return;
+    }
+    this.focus = next;
+    this.dirty = true;
+  }
+
+  /** 決めた範囲のチャンクが全部できたか（作る途中・待ちが無い）。 */
+  get settled(): boolean {
+    return !this.dirty && this.queue.length === 0 && this.inFlight.size === 0;
+  }
+
+  private get rings(): readonly number[] {
+    return this.focus ? FOCUS_RINGS : LOD_RINGS;
+  }
+
+  private get maxRing(): number {
+    return this.rings[this.rings.length - 1];
+  }
+
+  /** 読み込む範囲からのチャンク数（チェビシェフ距離）。範囲が無ければカメラのチャンクから。 */
+  private distOf(cx: number, cz: number): number {
+    const f = this.focus;
+    if (!f) return Math.max(Math.abs(cx - this.lastChunkX), Math.abs(cz - this.lastChunkZ));
+    return Math.max(f.cx0 - cx, cx - f.cx1, f.cz0 - cz, cz - f.cz1, 0);
+  }
+
+  /** 距離から、そのチャンクを作るべき粗さを決める。範囲外は -1。 */
   private lodFor(dist: number): number {
-    for (let i = 0; i < LOD_RINGS.length; i++) {
-      if (dist <= LOD_RINGS[i]) return i;
+    if (this.nothing) return -1;
+    const rings = this.rings;
+    for (let i = 0; i < rings.length; i++) {
+      if (dist <= rings[i]) return i;
     }
     return -1;
   }
 
+  /** (x, z) はカメラの位置。範囲を決めてある間は、作る順（近い所から）にだけ使う。 */
   update(x: number, z: number): void {
     const pcx = Math.floor(x / CHUNK_SIZE);
     const pcz = Math.floor(z / CHUNK_SIZE);
+    const moved = pcx !== this.lastChunkX || pcz !== this.lastChunkZ;
+    this.lastChunkX = pcx;
+    this.lastChunkZ = pcz;
 
-    // プレイヤーが別のチャンクへ移った時だけ、必要な差分を洗い直す。
-    if (pcx !== this.lastChunkX || pcz !== this.lastChunkZ) {
-      this.lastChunkX = pcx;
-      this.lastChunkZ = pcz;
-      this.rebuildQueue(pcx, pcz);
-      this.evict(pcx, pcz);
+    // 範囲が替わった時と、カメラの周りを読むときにカメラが別のチャンクへ移った時だけ、差分を洗い直す。
+    if (this.dirty || (!this.focus && moved)) {
+      this.dirty = false;
+      this.rebuildQueue();
+      this.evict();
     }
 
     this.dispatch();
@@ -159,24 +241,26 @@ export class ChunkManager {
     }
   }
 
-  private rebuildQueue(pcx: number, pcz: number): void {
+  private rebuildQueue(): void {
     this.queue.length = 0;
-    for (let dz = -MAX_RING; dz <= MAX_RING; dz++) {
-      for (let dx = -MAX_RING; dx <= MAX_RING; dx++) {
-        const dist = Math.max(Math.abs(dx), Math.abs(dz));
+    if (this.nothing) return;
+    const f = this.focus ?? { cx0: this.lastChunkX, cz0: this.lastChunkZ, cx1: this.lastChunkX, cz1: this.lastChunkZ };
+    const r = this.maxRing;
+    for (let cz = f.cz0 - r; cz <= f.cz1 + r; cz++) {
+      for (let cx = f.cx0 - r; cx <= f.cx1 + r; cx++) {
+        const dist = this.distOf(cx, cz);
         const lod = this.lodFor(dist);
         if (lod < 0) continue;
 
-        const cx = pcx + dx;
-        const cz = pcz + dz;
         const key = this.key(cx, cz);
         const existing = this.chunks.get(key);
         if (existing && existing.lod === lod) continue;
-        this.queue.push({ key, cx, cz, lod, dist });
+        // 細かいものから、同じ細かさならカメラに近いものから作る。
+        const near = Math.max(Math.abs(cx - this.lastChunkX), Math.abs(cz - this.lastChunkZ));
+        this.queue.push({ key, cx, cz, lod, order: dist * 1000 + near });
       }
     }
-    // 近いものから作る。
-    this.queue.sort((a, b) => a.dist - b.dist);
+    this.queue.sort((a, b) => a.order - b.order);
   }
 
   private dispatch(): void {
@@ -206,10 +290,7 @@ export class ChunkManager {
     const key = this.key(data.cx, data.cz);
 
     // 届いた頃には遠ざかっていることがある。その場合は捨てる。
-    const dist = Math.max(
-      Math.abs(data.cx - this.lastChunkX),
-      Math.abs(data.cz - this.lastChunkZ),
-    );
+    const dist = this.distOf(data.cx, data.cz);
     const desired = this.lodFor(dist);
     if (desired < 0) return;
 
@@ -282,8 +363,8 @@ export class ChunkManager {
     // 生成中にプレイヤーが動いて、必要な粗さが変わっていることがある。
     // ここで積み直さないと、次にチャンク境界を跨ぐまで粗いまま残る。
     if (desired !== data.lod) {
-      this.queue.push({ key, cx: data.cx, cz: data.cz, lod: desired, dist });
-      this.queue.sort((a, b) => a.dist - b.dist);
+      this.queue.push({ key, cx: data.cx, cz: data.cz, lod: desired, order: dist * 1000 });
+      this.queue.sort((a, b) => a.order - b.order);
     }
   }
 
@@ -358,10 +439,9 @@ export class ChunkManager {
     }
   }
 
-  private evict(pcx: number, pcz: number): void {
+  private evict(): void {
     for (const [key, chunk] of this.chunks) {
-      const dist = Math.max(Math.abs(chunk.cx - pcx), Math.abs(chunk.cz - pcz));
-      if (dist > MAX_RING) {
+      if (this.lodFor(this.distOf(chunk.cx, chunk.cz)) < 0) {
         this.disposeChunk(chunk);
         this.chunks.delete(key);
       }

@@ -18,6 +18,8 @@ const C_FAIRWAY = srgb(0x74a64c);
 const C_TEE = srgb(0x86b85a);
 const C_GREEN = srgb(0x72c95a);
 const C_SAND = srgb(0xe4d3a2);
+/** 歩道（踏み固めた明るい土）。 */
+const C_PATH = srgb(0xcbb88c);
 /** 谷底の森の地面（木の下の暗い緑）。 */
 const C_FOREST_FLOOR = srgb(0x2f5a26);
 /** 林間コースのラフ（フェアウェイより深い緑）。自然の草の色に 7 割だけ寄せて、むらを残す。 */
@@ -256,7 +258,7 @@ export class Terrain {
    */
   private paintForestFloor(x: number, z: number, out: Float32Array, o: number): void {
     let f = this.valleyAt(x, z);
-    if (this.course?.sample(x, z)) f = Math.max(f, this.course.forest) * (1 - this.course.clear);
+    if (this.course?.sample(x, z)) f = Math.max(f, this.course.forest) * (1 - Math.max(this.course.clear, this.course.path));
     if (f <= 0) return;
     const k = f * 0.8;
     for (let c = 0; c < 3; c++) out[o + c] += (C_FOREST_FLOOR[c] - out[o + c]) * k;
@@ -268,7 +270,7 @@ export class Terrain {
   private paintMown(x: number, z: number, out: Float32Array, o: number): void {
     const m = this.course!;
     if (!m.sample(x, z)) return;
-    const any = Math.max(m.green, m.tee, m.fairway, m.sand, m.clear);
+    const any = Math.max(m.green, m.tee, m.fairway, m.sand, m.clear, m.path);
     if (any <= 0) return;
     for (let c = 0; c < 3; c++) {
       let v = out[o + c];
@@ -277,6 +279,7 @@ export class Terrain {
       v += (C_TEE[c] - v) * m.tee;
       v += (C_GREEN[c] - v) * m.green;
       v += (C_SAND[c] - v) * m.sand;
+      v += (C_PATH[c] - v) * m.path * 0.85;
       out[o + c] = v;
     }
     out[o + 6] *= 1 - any;

@@ -741,8 +741,28 @@ function placeCost(h: Shape, route: Route, origin: Vec2, last: boolean): number 
     }
   }
   const g = h.green;
-  // コースをまとめる（1 番のティーから遠くへ延びすぎない）。最後のホールは 1 番のティーへ戻る。
-  let cost = Math.hypot(g.x - origin.x, g.z - origin.z) / 250;
+  // コースを少しまとめる（1 番のティーから遠くへ延びすぎない）。最後のホールは 1 番のティーへ戻る。
+  // 強くまとめると、関係のないホールのグリーンどうしが寄って、上から見てどれがどのホールか読めなくなった。
+  let cost = Math.hypot(g.x - origin.x, g.z - origin.z) / 450;
+  // 関係のないホールとの間隔（実際のコースの目安: ティーとグリーンは他のホールの落とし所に入れず、
+  // 並んだフェアウェイの中心線は 60〜70m 離す。グリーンどうしが近いと、どのホールのものか読めない）。
+  const dist = (a: Vec2, b: Vec2) => Math.hypot(a.x - b.x, a.z - b.z);
+  const landingOf = (x: Shape) => frameAt(x.line, Math.min(240, x.length * 0.62)).p;
+  const tee = h.line[0];
+  const land = landingOf(h);
+  route.holes.forEach((o, k) => {
+    const previous = k === route.holes.length - 1;
+    const returning = last && k === 0;
+    const oTee = o.line[0];
+    const oLand = landingOf(o);
+    if (dist(g, o.green) < 95) cost += 25;
+    if (!previous && dist(tee, o.green) < 70) cost += 25;
+    if (dist(tee, oTee) < 50) cost += 15;
+    if (!returning && dist(g, oTee) < 70) cost += 25;
+    if (o.par > 3 && dist(g, oLand) < 60) cost += 25;
+    if (h.par > 3 && dist(land, o.green) < 60) cost += 25;
+    if (h.par > 3 && !previous && dist(land, oTee) < 60) cost += 25;
+  });
   if (last) cost += Math.hypot(g.x - origin.x, g.z - origin.z) / 40;
   // 前のホールと同じ向きに打たせない（変化をつける）。
   const prev = route.holes[route.holes.length - 1];

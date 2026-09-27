@@ -3,7 +3,8 @@ import { createServer } from 'vite';
 
 /**
  * コースを先に作る生成を確かめる。
- * - 並べる（routeCourse）: どの合言葉でも 9 ホール・パー 36 が並び、ホールどうしが重ならない。同じ合言葉なら同じ
+ * - 並べる（routeCourse）: どの合言葉でも 9 ホール・パー 36 が並び、ホールどうしが重ならない。同じ合言葉なら同じ。
+ *   グリーンどうし、関係ないホールのティーとグリーンが近すぎない（上から見て、どのホールか分からなくならない）
  * - 世界（generateIsland にコースを渡す）: ティーとピン（4 つ）が陸の上にあり、ピンの周りは急すぎず、池の水面が海面より上。
  *   コースの周りが山で囲まれている
  */
@@ -17,12 +18,25 @@ try {
 
   // 1. 並べる: 30 の合言葉で。
   let minGap = Infinity;
+  let minGreens = Infinity;
+  let minTeeGreen = Infinity;
+  const dist = (a, b) => Math.hypot(a.x - b.x, a.z - b.z);
   for (let k = 0; k < 30; k++) {
     const seed = `s${k}x${(k * 7919) % 1000}`;
     const course = routeCourse(seed);
     assert.equal(course.holes.length, 9, `${seed}: ホールが 9 つありません（${course.holes.length}）`);
     assert.equal(course.holes.reduce((a, h) => a + h.par, 0), 36, `${seed}: パーが 36 ではありません`);
     assert.deepEqual(routeCourse(seed), course, `${seed}: 同じ合言葉でコースが変わりました`);
+    // グリーンどうしと、関係ないホールのティーとグリーン（次のホールへ歩いていく組と、9 番 → 1 番は除く）。
+    for (const a of course.holes) {
+      for (const b of course.holes) {
+        if (a.number >= b.number) continue;
+        minGreens = Math.min(minGreens, dist(a.green, b.green));
+        const last = course.holes.length;
+        if (b.number !== a.number + 1 && !(a.number === 1 && b.number === last)) minTeeGreen = Math.min(minTeeGreen, dist(b.line[0], a.green));
+        if (b.number !== a.number + 1) minTeeGreen = Math.min(minTeeGreen, dist(a.line[0], b.green));
+      }
+    }
     // 別のホールの打つ線どうしの間隔（つなぎ目のティーの近く 60m は除く）。
     // 打つ線は曲がっている（ドッグレッグ）ので、ティーとグリーンを結んだ弦ではなく、折れ線の上を歩いて測る。
     for (const a of course.holes) {
@@ -44,6 +58,9 @@ try {
     }
   }
   assert(minGap > 45, `ホールどうしが近すぎます（${minGap.toFixed(0)}m）`);
+  // 実際のコースの安全の目安（並んだフェアウェイは 60〜70m 離す）に合わせて、並べるときに離している。
+  assert(minGreens >= 90, `グリーンどうしが近すぎます（${minGreens.toFixed(0)}m）`);
+  assert(minTeeGreen >= 65, `関係ないホールのティーとグリーンが近すぎます（${minTeeGreen.toFixed(0)}m）`);
 
   // 2. 世界: 2 つの合言葉で。
   const rows = [];

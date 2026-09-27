@@ -21,6 +21,16 @@ import { type Hole, holeIntro } from './course';
 
 export type GolfPhase = 'aim' | 'swing' | 'moving' | 'holed';
 
+/** 1 ホールの記録（ラウンドの終わりに出す。実際のゴルフのスコアカードと同じ 3 つ）。 */
+export interface HoleStats {
+  /** パットの数。 */
+  putts: number;
+  /** ティーショットがフェアウェイ（かグリーン）に残ったか。パー 3 は数えない（null）。 */
+  fairway: boolean | null;
+  /** パーオン: パー − 2 打以内でグリーンに乗せた（入れた）か。 */
+  gir: boolean;
+}
+
 export interface GolfStatus {
   /** 回っているホール。 */
   target: Hole;
@@ -39,9 +49,25 @@ export interface GolfStatus {
   phase: GolfPhase;
   /** 正確さの針 -1..1（swing のとき）。 */
   needle: number;
+  /** 狙い（輪）の高さから球の高さを引いたもの（m。正なら打ち上げ）。 */
+  elevation: number;
+  /** 風の強さ（m/s）と、狙う向きから見た風の向き（ラジアン。0 = 追い風、π = 向かい風、正 = 右へ流れる）。 */
+  windSpeed: number;
+  windAngle: number;
+  /** ホールごとの打数（回り終えた所だけ）。 */
+  scores: readonly (number | undefined)[];
   /** カップに入った後に進む先（最後のホールの後は 1 番）。 */
   next: Hole;
 }
+
+/** 音を鳴らすための知らせ（audio/golfSounds.ts）。 */
+export type GolfSoundEvent =
+  | { type: 'ready' }
+  | { type: 'hit'; kind: 'wood' | 'iron' | 'wedge' | 'putter'; strength: number; perfect: boolean }
+  | { type: 'land'; surface: Surface; speed: number }
+  | { type: 'splash' }
+  | { type: 'cup' }
+  | { type: 'cheer'; big: boolean };
 
 /** 地面の種類の呼び名。 */
 export const LIE_NAMES: Record<Surface, string> = {
@@ -113,6 +139,8 @@ function smoothstep(a: number, b: number, x: number): number {
 
 export class GolfGame {
   readonly group = new THREE.Group();
+  /** 打つための目印（軌道の予告・落とし所の輪・軌跡・傾きの矢印）。開始画面の空撮では隠す。旗と球は残す。 */
+  readonly aids = new THREE.Group();
   readonly ball: Ball;
   phase: GolfPhase = 'aim';
   strokes = 0;
@@ -133,12 +161,20 @@ export class GolfGame {
   target: Hole;
   /** 回り終えたホールの打数（番号 - 1 の位置）。1 番のティーに立つと数え直す。 */
   private readonly scores: number[] = [];
+  /** ホールごとの記録（番号 - 1 の位置）。打数と同じく 1 番で数え直す。 */
+  private readonly stats: HoleStats[] = [];
+  /** 打った一打のでき（真ん中で捉えた・左へ曲がった・右へ曲がった）。画面の真ん中に大きく出す。 */
+  onShotFeedback: ((kind: 'nice' | 'hook' | 'slice') => void) | null = null;
+  /** カップに入ったとき（お祝い・スコアカード・自己ベストのため）。last は最後のホールか。 */
+  onHoled: ((hole: Hole, strokes: number, total: number, totalPar: number, last: boolean) => void) | null = null;
 
   private readonly ballMesh: THREE.Mesh;
   private readonly arc: THREE.Line;
   private readonly roll: THREE.Line;
   private readonly landing: THREE.Mesh;
   private readonly trail: THREE.Line;
+  /** カップインの紙吹雪。 */
+  private confetti: { points: THREE.Points; vel: Float32Array; age: number } | null = null;
   /** パットのときの傾斜の矢印（下る向き・長さと色が急さ）。 */
   private readonly slopes: THREE.LineSegments;
   private slopesFor = '';
@@ -166,6 +202,8 @@ export class GolfGame {
     private readonly onMessage: (text: string) => void,
     /** 球が当たる木（render/chunkManager.ts が知っている）。 */
     trees: GolfGround['trees'] = undefined,
+    /** 音（audio/golfSounds.ts）。 */
+    private readonly onSound: (e: GolfSoundEvent) => void = () => {},
   ) {
     this.golfGround = {
       height: (x, z) => terrain.heightOnGrid(x, z, 2),
@@ -174,6 +212,11 @@ export class GolfGame {
       trees,
     };
     this.ball = new Ball(this.golfGround);
+    this.ball.onEvent = (e) => {
+      if (e.type === 'land') this.onSound({ type: 'land', surface: e.surface, speed: e.speed });
+      else if (e.type === 'water') this.onSound({ type: 'splash' });
+      else this.onSound({ type: 'cup' });
+    };
     this.target = course[0];
 
     this.ballMesh = new THREE.Mesh(
@@ -203,16 +246,18 @@ export class GolfGame {
         polygonOffsetFactor: -4,
       }),
     );
+    // 打った球の軌跡。次に打つまで残す（どう飛んだかを見返して、次の狙いに生かす）。
     this.trail = new THREE.Line(
       new THREE.BufferGeometry(),
-      new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.55 }),
+      new THREE.LineBasicMaterial({ color: 0xffe98a, transparent: true, opacity: 0.85 }),
     );
     this.slopes = new THREE.LineSegments(
       new THREE.BufferGeometry(),
       new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.9 }),
     );
     this.slopes.visible = false;
-    this.group.add(this.arc, this.roll, this.landing, this.trail, this.slopes);
+    this.aids.add(this.arc, this.roll, this.landing, this.trail, this.slopes);
+    this.group.add(this.aids);
     this.teeOff(course[0]);
   }
 
@@ -236,14 +281,40 @@ export class GolfGame {
 
   /** ホールのティーから打ち始める。1 番からなら通算を数え直す。 */
   teeOff(hole: Hole): void {
-    if (hole.number === 1) this.scores.length = 0;
+    if (hole.number === 1) {
+      this.scores.length = 0;
+      this.stats.length = 0;
+    }
+    this.stats[hole.number - 1] = { putts: 0, fairway: hole.par >= 4 ? false : null, gir: false };
     this.target = hole;
     this.ball.cup = { x: hole.pin.x, z: hole.pin.z, r: CUP_RADIUS };
+    this.ball.wind = hole.wind;
+    this.trailPoints.length = 0;
+    setLine(this.trail, []);
     this.strokes = 0;
     this.ball.place(hole.tee.x, hole.tee.z);
     this.ball.lie = 'fairway';
     this.intro = INTRO_TIME;
     this.readyToAim();
+  }
+
+  /** このラウンドの打数（番号 - 1 の位置、回っていないホールは空き）。 */
+  get roundScores(): readonly (number | undefined)[] {
+    return this.scores;
+  }
+
+  /** このラウンドのホールごとの記録。 */
+  get roundStats(): readonly (HoleStats | undefined)[] {
+    return this.stats;
+  }
+
+  /** 球が止まった（入った）ときに、フェアウェイキープとパーオンを付ける。 */
+  private noteRest(holed: boolean): void {
+    const s = this.stats[this.target.number - 1];
+    if (!s) return;
+    const lie = this.ball.lie;
+    if (this.strokes === 1 && s.fairway !== null) s.fairway = holed || lie === 'fairway' || lie === 'green';
+    if ((holed || lie === 'green') && this.strokes <= this.target.par - 2) s.gir = true;
   }
 
   /** カップに入った後に、次のホールのティーへ。 */
@@ -321,8 +392,6 @@ export class GolfGame {
       this.clubIndex = this.clubFor(d);
       this.setAim(yawTo(aim), d);
     }
-    this.trailPoints.length = 0;
-    setLine(this.trail, []);
     this.arc.visible = true;
     this.roll.visible = true;
     this.landing.visible = true;
@@ -376,10 +445,19 @@ export class GolfGame {
       this.phase = 'swing';
       this.needleTime = 0;
       this.needle = -1;
+      this.onSound({ type: 'ready' });
       this.emit();
     } else if (this.phase === 'swing') {
       this.hit();
     }
+  }
+
+  /** 構えをやめて、狙いに戻る（針が振れている間に Esc など）。 */
+  cancelSwing(): void {
+    if (this.phase !== 'swing') return;
+    this.phase = 'aim';
+    this.needle = -1;
+    this.emit();
   }
 
   /** 針を止めた所で打つ。真ん中ならナイスショット。ずれるほど曲がり、少し短くなる。 */
@@ -395,7 +473,19 @@ export class GolfGame {
     const power = this.power * (1 - Math.abs(e) * (putt ? 0.05 : 0.07));
     const lieLoss = putt ? 1 : LIE_POWER[this.ball.lie];
     this.ball.hit(yaw, club.loft, club.speed * power * lieLoss, club.spin, club.bite, putt ? 0 : e * 0.55);
+    const c = this.clubIndex;
+    this.onSound({
+      type: 'hit',
+      kind: putt ? 'putter' : c <= 1 ? 'wood' : c <= 4 ? 'iron' : 'wedge',
+      strength: power * lieLoss,
+      perfect: perfect && !putt,
+    });
+    setLine(this.trail, []);
     this.strokes++;
+    if (putt) {
+      const st = this.stats[this.target.number - 1];
+      if (st) st.putts++;
+    }
     this.phase = 'moving';
     this.restTimer = 0;
     this.trailPoints.length = 0;
@@ -403,12 +493,17 @@ export class GolfGame {
     this.roll.visible = false;
     this.landing.visible = false;
     this.slopes.visible = false;
-    if (perfect && !putt) this.onMessage('ナイスショット！');
+    if (!putt) {
+      if (perfect) this.onShotFeedback?.('nice');
+      else if (e > 0.45) this.onShotFeedback?.('slice');
+      else if (e < -0.45) this.onShotFeedback?.('hook');
+    }
     this.emit();
   }
 
   update(dt: number): void {
     this.intro = Math.max(0, this.intro - dt);
+    this.updateConfetti(dt);
     if (this.phase === 'aim') {
       if (this.aimInput !== 0) this.rotateAim(this.aimInput * AIM_KEY_SPEED * dt);
       if (this.distInput !== 0) this.pushAim(this.distInput * Math.max(3, this.aimDistance * DIST_KEY_SPEED) * dt);
@@ -445,12 +540,14 @@ export class GolfGame {
     if (this.ball.state === 'holed') {
       this.phase = 'holed';
       this.scores[h.number - 1] = this.strokes;
-      let text = `${h.number} 番 カップイン！ ${this.strokes} 打（${scoreName(this.strokes, h.par)}）`;
-      if (h.number === this.course.length) {
-        const { total, totalPar } = this.totals();
-        text += ` · ${this.course.length} ホールで ${total} 打（${toPar(total, totalPar)}）`;
-      }
-      this.onMessage(text);
+      this.noteRest(true);
+      const under = this.strokes < h.par || this.strokes === 1;
+      this.celebrate(this.strokes === 1 || this.strokes <= h.par - 2 ? 260 : under ? 140 : 50);
+      if (under) this.onSound({ type: 'cheer', big: this.strokes === 1 || this.strokes <= h.par - 2 });
+      // 打数と通算は、画面の真ん中のスコアカード（ラウンドの終わりは結果の窓）が出す。
+      const { total, totalPar } = this.totals();
+      const last = h.number === this.course.length;
+      this.onHoled?.(h, this.strokes, total, totalPar, last);
       this.emit();
       return;
     }
@@ -464,9 +561,74 @@ export class GolfGame {
     if (this.ball.state === 'rest') {
       // 止まってから少し見せてから、次の一打へ。
       this.restTimer += dt;
-      if (this.restTimer > 0.7) this.readyToAim();
+      if (this.restTimer > 0.7) {
+        this.noteRest(false);
+        this.readyToAim();
+      }
     }
     this.emit();
+  }
+
+  /** カップの上に紙吹雪。いいスコアほど多く。 */
+  private celebrate(count: number): void {
+    if (this.confetti) {
+      this.group.remove(this.confetti.points);
+      this.confetti.points.geometry.dispose();
+    }
+    const pos = new Float32Array(count * 3);
+    const col = new Float32Array(count * 3);
+    const vel = new Float32Array(count * 3);
+    const color = new THREE.Color();
+    const base = this.golfGround.height(this.target.pin.x, this.target.pin.z);
+    for (let i = 0; i < count; i++) {
+      pos[i * 3] = this.target.pin.x;
+      pos[i * 3 + 1] = base + 0.2;
+      pos[i * 3 + 2] = this.target.pin.z;
+      const a = Math.random() * Math.PI * 2;
+      const r = 1 + Math.random() * 3;
+      vel[i * 3] = Math.cos(a) * r;
+      vel[i * 3 + 1] = 4 + Math.random() * 5;
+      vel[i * 3 + 2] = Math.sin(a) * r;
+      color.setHSL(Math.random(), 0.85, 0.6);
+      col[i * 3] = color.r;
+      col[i * 3 + 1] = color.g;
+      col[i * 3 + 2] = color.b;
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+    const points = new THREE.Points(
+      geo,
+      new THREE.PointsMaterial({ size: 0.16, vertexColors: true, transparent: true, opacity: 1, depthWrite: false }),
+    );
+    this.group.add(points);
+    this.confetti = { points, vel, age: 0 };
+  }
+
+  private updateConfetti(dt: number): void {
+    const c = this.confetti;
+    if (!c) return;
+    c.age += dt;
+    const pos = c.points.geometry.getAttribute('position') as THREE.BufferAttribute;
+    const arr = pos.array as Float32Array;
+    for (let i = 0; i < arr.length; i += 3) {
+      c.vel[i + 1] -= 6 * dt;
+      // 空気の抵抗でふわっと落ちる。
+      const k = Math.exp(-1.6 * dt);
+      c.vel[i] *= k;
+      c.vel[i + 2] *= k;
+      c.vel[i + 1] = Math.max(c.vel[i + 1] * k, -1.8);
+      arr[i] += c.vel[i] * dt;
+      arr[i + 1] += c.vel[i + 1] * dt;
+      arr[i + 2] += c.vel[i + 2] * dt;
+    }
+    pos.needsUpdate = true;
+    (c.points.material as THREE.PointsMaterial).opacity = Math.max(0, 1 - Math.max(0, c.age - 2) / 1.2);
+    if (c.age > 3.3) {
+      this.group.remove(c.points);
+      c.points.geometry.dispose();
+      this.confetti = null;
+    }
   }
 
   private totals(): { total: number; totalPar: number } {
@@ -518,6 +680,8 @@ export class GolfGame {
     const sim = new Ball(this.golfGround, PREVIEW_STEP);
     sim.place(this.ball.pos.x, this.ball.pos.z);
     sim.lie = this.ball.lie;
+    // 狙いの線と輪は「風が無ければ落ちる所」（Golf Clash と同じ）。風の分は風のメーターを見て、輪をずらして読む。
+    // 以前は線だけ風で曲げていて、輪と線の落ちる所が食い違って見えた。
     const lieLoss = this.putting ? 1 : LIE_POWER[this.ball.lie];
     sim.hit(this.aimYaw, club.loft, club.speed * power * lieLoss, club.spin, club.bite);
     const arc: THREE.Vector3[] = [new THREE.Vector3(sim.pos.x, sim.pos.y + 0.05, sim.pos.z)];
@@ -563,9 +727,10 @@ export class GolfGame {
       const lieLoss = LIE_POWER[this.ball.lie];
       power = Math.min(1, this.powerFor(this.clubIndex, d / lieLoss));
       result = this.simulate(power);
-      for (let k = 0; k < 2 && result.land; k++) {
+      // 打ち上げ・打ち下ろしの分を、輪に落ちるまで直す（落ちる所と輪を 1m 以内に）。
+      for (let k = 0; k < 5 && result.land; k++) {
         const got = Math.hypot(result.land.x - this.ball.pos.x, result.land.z - this.ball.pos.z);
-        if (Math.abs(got - d) < 1.5 || got < 1) break;
+        if (Math.abs(got - d) < 0.8 || got < 1) break;
         const next = Math.max(0.1, Math.min(1, power * Math.pow(d / got, 0.7)));
         if (Math.abs(next - power) < 1e-3) break;
         power = next;
@@ -722,6 +887,13 @@ export class GolfGame {
   /** 画面の表示を送り直す。 */
   emit(): void {
     const { total, totalPar } = this.totals();
+    const w = this.ball.wind;
+    const windSpeed = Math.hypot(w.x, w.z);
+    // 狙う向き（-sin, -cos）から見た風の向き。
+    const fx = -Math.sin(this.aimYaw);
+    const fz = -Math.cos(this.aimYaw);
+    const along = w.x * fx + w.z * fz;
+    const across = w.x * -fz + w.z * fx;
     this.onStatus({
       target: this.target,
       holeCount: this.course.length,
@@ -735,6 +907,11 @@ export class GolfGame {
       lie: this.ball.lie,
       phase: this.phase,
       needle: this.needle,
+      elevation:
+        this.golfGround.height(this.aimPoint.x, this.aimPoint.z) - this.golfGround.height(this.ball.pos.x, this.ball.pos.z),
+      windSpeed,
+      windAngle: Math.atan2(across, along),
+      scores: this.scores,
       next: this.nextHole(),
     });
   }
@@ -761,6 +938,8 @@ function buildPin(hole: Hole, ground: GolfGround): THREE.Group {
     new THREE.PlaneGeometry(0.9, 0.55).translate(0.45, 2.3, 0),
     new THREE.MeshLambertMaterial({ color: 0xd8323a, side: THREE.DoubleSide }),
   );
+  // 旗は風下へなびく（旗を見て風を読む）。
+  if (Math.hypot(hole.wind.x, hole.wind.z) > 0.3) flag.rotation.y = Math.atan2(-hole.wind.z, hole.wind.x);
   const cup = new THREE.Mesh(
     new THREE.CircleGeometry(CUP_RADIUS, 24).rotateX(-Math.PI / 2),
     new THREE.MeshBasicMaterial({ color: 0x0d0f0c, polygonOffset: true, polygonOffsetFactor: -2 }),

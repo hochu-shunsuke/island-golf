@@ -91,7 +91,7 @@ self.onmessage = (ev: MessageEvent<GenerateRequest>) => {
     field ? new CourseField(field) : null,
   );
   if (field) shapeGrid(island, terrain, field);
-  const course = { holes: holesOf(design, day), field };
+  const course = { holes: holesOf(design, day, params.seed), field };
   const overview = buildOverviewArrays(island, terrain);
   const overviewWater = buildOverviewWaterArray(island);
   const map = renderIslandMap(island, terrain);

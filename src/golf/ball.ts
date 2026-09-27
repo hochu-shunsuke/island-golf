@@ -57,6 +57,9 @@ export interface GolfGround {
 
 export type BallState = 'rest' | 'flight' | 'roll' | 'holed' | 'water';
 
+/** 球に起きたこと（音を鳴らすため）。 */
+export type BallEvent = { type: 'land'; surface: Surface; speed: number } | { type: 'water' } | { type: 'cup' };
+
 /** 球の半径（m）。本物は 21mm だが、見えるように大きめにしてある（物理も同じ大きさで扱う）。 */
 export const BALL_RADIUS = 0.1;
 const G = 9.81;
@@ -103,6 +106,10 @@ export class Ball {
   private airTime = 0;
   /** 狙っているカップ（中心と半径）。無ければ入らない（狙いの線を引くための試し打ちなど）。 */
   cup: { x: number; z: number; r: number } | null = null;
+  /** 風（m/s、水平）。飛んでいる間の空気の抵抗は、風に対する速さで決まる。転がりには効かない。 */
+  wind = { x: 0, z: 0 };
+  /** 落ちた・水に入った・カップに入ったときに呼ぶ（音のため。試し打ちの球には付けない）。 */
+  onEvent: ((e: BallEvent) => void) | null = null;
 
   /**
    * step は 1 回の計算の刻み。狙いの線を引くための試し打ちは粗く（1/60s）して軽くする
@@ -177,6 +184,7 @@ export class Ball {
     const edge = d < c.r + BALL_RADIUS * 0.5 && s < CUP_EDGE_SPEED;
     if (inside || edge) {
       this.state = 'holed';
+      this.onEvent?.({ type: 'cup' });
       this.vel.x = this.vel.y = this.vel.z = 0;
       this.pos.x = c.x;
       this.pos.z = c.z;
@@ -195,10 +203,14 @@ export class Ball {
   private fly(h: number): void {
     const v = this.vel;
     const s = Math.hypot(v.x, v.y, v.z);
-    // 抗力は速さの逆向き、揚力は速さに垂直で上向き（水平面内の向きは変えない）。
-    let ax = -DRAG * s * v.x;
-    let ay = -DRAG * s * v.y - G;
-    let az = -DRAG * s * v.z;
+    // 抗力は風に対する速さの逆向き（向かい風で押し戻され、横風で流される）。
+    // 揚力は速さに垂直で上向き（水平面内の向きは変えない）。
+    const rx = v.x - this.wind.x;
+    const rz = v.z - this.wind.z;
+    const rs = Math.hypot(rx, v.y, rz);
+    let ax = -DRAG * rs * rx;
+    let ay = -DRAG * rs * v.y - G;
+    let az = -DRAG * rs * rz;
     if (this.spin > 0 && s > 1) {
       const hs = Math.hypot(v.x, v.z);
       // 速さに垂直な上向きの単位ベクトル。
@@ -231,6 +243,7 @@ export class Ball {
 
     if (p.y - BALL_RADIUS < this.ground.water(p.x, p.z)) {
       this.state = 'water';
+      this.onEvent?.({ type: 'water' });
       return;
     }
     const floor = this.ground.height(p.x, p.z) + BALL_RADIUS;
@@ -249,6 +262,7 @@ export class Ball {
     const feel = SURFACE_FEEL[this.lie];
     const vn = v.x * n.x + v.y * n.y + v.z * n.z;
     if (vn >= 0) return;
+    if (-vn > 1.5) this.onEvent?.({ type: 'land', surface: this.lie, speed: -vn });
     const tx = v.x - vn * n.x;
     const ty = v.y - vn * n.y;
     const tz = v.z - vn * n.z;
@@ -328,7 +342,10 @@ export class Ball {
       return;
     }
     p.y = floor;
-    if (p.y - BALL_RADIUS < this.ground.water(p.x, p.z) - 0.05) this.state = 'water';
+    if (p.y - BALL_RADIUS < this.ground.water(p.x, p.z) - 0.05) {
+      this.state = 'water';
+      this.onEvent?.({ type: 'water' });
+    }
   }
 
   /** 木に当たる。幹は跳ね返し、葉（飛んでいるときだけ）は勢いを殺す。 */
