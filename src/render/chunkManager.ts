@@ -7,6 +7,7 @@ import { ISLAND_SIZE } from '../island/grid';
 import type { BuiltChunk, InitRequest, WorkerRequest } from '../world/worker';
 import type { Tree } from '../golf/ball';
 import { KIND_BUSH, KIND_ROCK } from '../world/vegetationKinds';
+import { InstancePicker, type PickEntry } from './instancePicker';
 
 /**
  * 決まった範囲（遊んでいるホール）を読み込むときの粗さの受け持ち。距離は範囲の矩形からのチャンク数。
@@ -58,6 +59,8 @@ interface Chunk {
   cz: number;
   /** 球が当たる木（16m の升目ごと）。木の無いチャンクは null。 */
   trees: Tree[][] | null;
+  /** 画面に入る木だけを描くための登録（render/instancePicker.ts）。 */
+  picks: PickEntry[];
 }
 
 interface Pending {
@@ -85,6 +88,7 @@ export class ChunkManager {
   /** Worker から届き、次の描画フレームで GPU の形へ組み立てるチャンク。 */
   private completed: BuiltChunk[] = [];
   private nextId = 1;
+  private readonly picker = new InstancePicker();
   private lastChunkX = Number.NaN;
   private lastChunkZ = Number.NaN;
   /**
@@ -204,6 +208,11 @@ export class ChunkManager {
 
   private get maxRing(): number {
     return this.rings[this.rings.length - 1];
+  }
+
+  /** 描く前に毎コマ呼ぶ: チャンクの木・岩・茂みのうち、画面に入るものだけを描く。 */
+  updateInstances(camera: THREE.PerspectiveCamera, now: number): void {
+    this.picker.update(camera, now);
   }
 
   /** 読み込む範囲からのチャンク数（チェビシェフ距離）。範囲が無ければカメラのチャンクから。 */
@@ -357,6 +366,7 @@ export class ChunkManager {
     }
 
     let scatter: THREE.Group | null = null;
+    const picks: PickEntry[] = [];
     if (data.batches.length > 0) {
       const veg = vegetation();
       scatter = new THREE.Group();
@@ -366,10 +376,8 @@ export class ChunkManager {
       for (const b of data.batches) {
         const n = b.matrices.length / 16;
         const inst = new THREE.InstancedMesh(veg.geometries[b.kind], veg.material, n);
-        inst.instanceMatrix = new THREE.InstancedBufferAttribute(b.matrices, 16);
-        inst.instanceColor = new THREE.InstancedBufferAttribute(b.colors, 3);
-        inst.instanceMatrix.needsUpdate = true;
-        inst.computeBoundingSphere();
+        // 中身は画面に入る木だけを写す（チャンク 192m の中でも、画面に入るのは一部）。行列はチャンクの原点から。
+        picks.push(this.picker.add(inst, b.matrices, b.colors, mesh.position));
         scatter.add(inst);
       }
     }
@@ -389,6 +397,7 @@ export class ChunkManager {
       cx: data.cx,
       cz: data.cz,
       trees: this.indexTrees(data),
+      picks,
     });
     // 本物の木を置く粗さ（TREE_LOD 以下）なら、遠目の木をここで消す。
     this.setCoverage(data.cx, data.cz, data.lod <= TREE_LOD ? 255 : 128);
@@ -489,6 +498,7 @@ export class ChunkManager {
       this.scene.remove(chunk.lake);
       chunk.lake.geometry.dispose();
     }
+    for (const p of chunk.picks) this.picker.remove(p);
     if (chunk.scatter) {
       this.scene.remove(chunk.scatter);
       for (const child of chunk.scatter.children) {
