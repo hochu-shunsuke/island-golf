@@ -353,13 +353,12 @@ kbd {
 
 .golf-power {
   position: absolute;
-  left: 50%;
+  left: max(18px, env(safe-area-inset-left));
   bottom: max(24px, calc(env(safe-area-inset-bottom) + 14px));
-  transform: translate(-50%, 8px);
+  transform: translateY(8px);
   display: flex;
   flex-direction: column;
-  align-items: center;
-  gap: 6px;
+  align-items: flex-start;
   opacity: 0;
   transition: opacity 250ms ease, transform 250ms ease;
   pointer-events: none;
@@ -367,24 +366,28 @@ kbd {
 
 .golf-power.on {
   opacity: 1;
-  transform: translate(-50%, 0);
+  transform: translateY(0);
 }
 
-/* クラブ・ライ・狙いの距離を 1 行のガラスの帯に（開始画面の部品と同じ質感）。 */
+/* クラブは左下へ直接置く。操作ではない情報を角丸の箱へ閉じ込めない。 */
 .shot-top {
-  display: flex;
-  align-items: baseline;
-  gap: 14px;
-  padding: 8px 18px;
+  display: grid;
+  grid-template-areas: 'club lie' 'club dist';
+  grid-template-columns: auto auto;
+  align-items: end;
+  gap: 1px 14px;
+  padding: 8px 14px;
   white-space: nowrap;
-  border-radius: 999px;
   color: var(--ink);
   background: var(--glass);
   border: 1px solid var(--edge);
+  border-radius: 16px;
   backdrop-filter: blur(10px);
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8), 0 0 12px rgba(0, 0, 0, 0.45);
 }
 
 .shot-club {
+  grid-area: club;
   display: flex;
   align-items: baseline;
   gap: 8px;
@@ -394,26 +397,22 @@ kbd {
 
 /* クラブの短い名前は大きく（何を持っているか一目で分かるように）。 */
 .shot-short {
-  font-size: 22px;
+  font-size: 30px;
   font-weight: 600;
   letter-spacing: 0.02em;
 }
 
 .shot-dist {
-  font-size: 12px;
-  color: rgba(255, 255, 255, 0.82);
+  grid-area: dist;
+  font-size: 10.5px;
+  color: rgba(255, 255, 255, 0.68);
   font-variant-numeric: tabular-nums;
 }
 
 .shot-dist b {
-  font-size: 22px;
+  font-size: 14px;
   font-weight: 600;
   color: #fff;
-}
-
-.shot-dist small {
-  font-size: 11px;
-  color: rgba(255, 255, 255, 0.6);
 }
 
 /* 正確さのバー（構えている間、球のすぐ下）。同じ太さの横長のバーを白の濃淡だけで描く（強さではなく向きなので
@@ -505,15 +504,6 @@ kbd {
 
 .aim-label.on {
   display: block;
-}
-
-.golf-hint {
-  font-size: 10.5px;
-  color: rgba(255, 255, 255, 0.7);
-}
-
-.golf-hint:empty {
-  display: none;
 }
 
 /* タッチのゴルフ用ボタン。文字ではなくアイコン。開始画面と同じガラスの丸で、打つだけを明るい白い丸にする
@@ -1349,22 +1339,22 @@ kbd {
   display: none;
 }
 
-/* ---- ゴルフの画面（他のゴルフゲームの定番に合わせた配置） ----
-   左上: ホールの札（大きな番号・パー・距離・何打目）。右上: 風のメーター。横: ホールの小さな地図。
-   下: クラブ・ライ・高低差・狙いの距離と針。真ん中: ナイスショット・フック・スライス。 */
+/* ---- ゴルフの画面 ----
+   ホールは左上、風は上中央、地図は右、クラブは左下。情報を一枚の札へ詰めず、景色の周囲へ分ける。 */
 .golf-hud {
   position: absolute;
   left: max(16px, env(safe-area-inset-left));
   top: max(16px, env(safe-area-inset-top));
   display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 8px 16px 8px 12px;
-  border-radius: 18px;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 8px 14px 8px 10px;
   color: var(--ink);
   background: var(--glass);
   border: 1px solid var(--edge);
+  border-radius: 16px;
   backdrop-filter: blur(10px);
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.85), 0 0 12px rgba(0, 0, 0, 0.5);
   opacity: 0;
   transition: opacity 250ms ease;
   pointer-events: auto;
@@ -1378,12 +1368,10 @@ kbd {
 .hole-num {
   display: flex;
   align-items: baseline;
-  padding-right: 10px;
-  border-right: 1px solid rgba(255, 255, 255, 0.18);
 }
 
 .hole-num b {
-  font-size: 34px;
+  font-size: 38px;
   font-weight: 700;
   line-height: 1;
 }
@@ -1397,17 +1385,18 @@ kbd {
 .hole-meta {
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 1px;
+  padding-top: 2px;
 }
 
 .golf-hole {
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 600;
   letter-spacing: 0.04em;
 }
 
 .golf-line {
-  font-size: 12px;
+  font-size: 11.5px;
   color: rgba(255, 255, 255, 0.78);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
@@ -1416,17 +1405,21 @@ kbd {
 /* 風のメーター: 円の中の針が、狙う向き（上）から見た風の向き。数字は大きく。 */
 .wind-meter {
   position: absolute;
-  right: max(16px, env(safe-area-inset-right));
+  left: 50%;
+  right: auto;
   top: max(16px, env(safe-area-inset-top));
+  translate: -50% 0;
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 8px 14px 8px 8px;
-  border-radius: 18px;
+  gap: 8px;
+  padding: 5px 10px 5px 5px;
+  border-radius: 16px;
   color: var(--ink);
   background: var(--glass);
   border: 1px solid var(--edge);
   backdrop-filter: blur(10px);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.16);
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.85), 0 0 12px rgba(0, 0, 0, 0.5);
   opacity: 0;
   transition: opacity 250ms ease;
   pointer-events: none;
@@ -1438,11 +1431,11 @@ kbd {
 
 .wind-dial {
   position: relative;
-  width: 52px;
-  height: 52px;
+  width: 44px;
+  height: 44px;
   border-radius: 50%;
   border: 2px solid rgba(255, 255, 255, 0.55);
-  background: radial-gradient(circle, rgba(120, 190, 255, 0.18), rgba(12, 20, 26, 0.2));
+  background: rgba(12, 20, 26, 0.18);
 }
 
 .wind-needle {
@@ -1455,23 +1448,23 @@ kbd {
   content: '';
   position: absolute;
   left: 50%;
-  top: 12px;
-  bottom: 10px;
-  width: 4px;
+  top: 10px;
+  bottom: 8px;
+  width: 3px;
   translate: -50% 0;
   border-radius: 2px;
-  background: #8fd3ff;
+  background: rgba(255, 255, 255, 0.88);
 }
 
 .wind-needle::after {
   content: '';
   position: absolute;
   left: 50%;
-  top: 5px;
+  top: 4px;
   translate: -50% 0;
-  border-left: 8px solid transparent;
-  border-right: 8px solid transparent;
-  border-bottom: 11px solid #8fd3ff;
+  border-left: 7px solid transparent;
+  border-right: 7px solid transparent;
+  border-bottom: 10px solid rgba(255, 255, 255, 0.88);
 }
 
 .wind-info {
@@ -1483,7 +1476,7 @@ kbd {
 }
 
 .wind-info b {
-  font-size: 26px;
+  font-size: 22px;
   font-weight: 700;
   line-height: 1;
 }
@@ -1503,19 +1496,18 @@ kbd {
 .hole-map {
   position: absolute;
   right: max(16px, env(safe-area-inset-right));
-  top: max(96px, calc(env(safe-area-inset-top) + 80px));
-  width: 120px;
-  height: 220px;
-  border-radius: 12px;
-  border: 1px solid rgba(255, 255, 255, 0.25);
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+  top: max(16px, env(safe-area-inset-top));
+  width: 96px;
+  height: 176px;
+  border-radius: 7px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
   opacity: 0;
   transition: opacity 250ms ease;
   pointer-events: none;
 }
 
 .hole-map.on {
-  opacity: 0.95;
+  opacity: 0.82;
 }
 
 /* 真ん中の大きな知らせ（ナイスショット・フック・スライス）。 */
@@ -1569,21 +1561,20 @@ kbd {
 
 /* 下の段の真ん中: ライと高低差。 */
 .shot-lie {
+  grid-area: lie;
   font-size: 12px;
   color: rgba(255, 255, 255, 0.85);
   white-space: nowrap;
 }
 
-/* タッチ: 右上は休憩ボタンがあるので、風はその下へ。地図は左の札の下に小さく。 */
+/* タッチでも風は上中央。地図は操作ボタンを避け、右端の中央へ。 */
 :root[data-input='touch'] .wind-meter {
-  /* 左上の表示が狭い画面で何行かに折り返しても、その下から始める（--hud-bottom は overlay.ts が測る）。 */
-  top: max(120px, calc(env(safe-area-inset-top) + 104px), calc(var(--hud-bottom, 0px) + 8px));
-  padding: 6px 10px 6px 6px;
+  top: calc(var(--hud-bottom, 64px) + 8px);
 }
 
 :root[data-input='touch'] .wind-dial {
-  width: 42px;
-  height: 42px;
+  width: 38px;
+  height: 38px;
 }
 
 :root[data-input='touch'] .wind-info b {
@@ -1591,16 +1582,16 @@ kbd {
 }
 
 :root[data-input='touch'] .hole-map {
-  left: max(16px, env(safe-area-inset-left));
-  right: auto;
-  top: max(92px, calc(env(safe-area-inset-top) + 76px), calc(var(--hud-bottom, 0px) + 8px));
-  width: 78px;
-  height: 143px;
+  left: auto;
+  right: max(10px, env(safe-area-inset-right));
+  top: 50%;
+  translate: 0 -50%;
+  width: 72px;
+  height: 132px;
 }
 
 :root[data-input='touch'] .golf-hud {
   max-width: calc(100vw - 84px);
-  padding: 6px 10px 6px 8px;
 }
 
 /* 狭い画面では、長い行（「6 打でカップイン · ピンまで 0 m · 通算 +23」）を折り返して枠の中に収める。 */
@@ -1668,16 +1659,18 @@ kbd {
   position: absolute;
   left: max(24px, env(safe-area-inset-left));
   bottom: max(24px, env(safe-area-inset-bottom));
-  width: min(360px, calc(100vw - 48px));
+  width: min(420px, calc(100vw - 48px));
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 16px 18px 15px;
-  border-radius: 20px;
+  gap: 6px;
+  padding: 14px 16px 13px;
+  color: var(--ink);
   background: var(--glass);
   border: 1px solid var(--edge);
+  border-radius: 20px;
   backdrop-filter: blur(10px);
   box-shadow: 0 10px 40px rgba(4, 10, 14, 0.25);
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.85), 0 0 14px rgba(0, 0, 0, 0.5);
   pointer-events: auto;
 }
 
@@ -1725,8 +1718,8 @@ kbd {
 .course-id {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
+  justify-content: flex-start;
+  gap: 16px;
 }
 
 /* コース ID は押すと入れ直せる（右の小さな印が目印）。 */
@@ -1779,8 +1772,8 @@ kbd {
   height: 34px;
   padding: 0;
   color: var(--muted);
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(4, 10, 14, 0.18);
+  border: 1px solid transparent;
 }
 
 .icon-btn .icon {
@@ -1798,12 +1791,12 @@ kbd {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 7px 13px 7px 11px;
+  padding: 7px 4px;
   font-size: 12.5px;
   white-space: nowrap;
   color: var(--muted);
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: transparent;
+  border: 1px solid transparent;
 }
 
 .course-id .seed-dice .icon {
@@ -1813,7 +1806,7 @@ kbd {
 
 .course-id .seed-dice:hover {
   color: var(--ink);
-  border-color: rgba(255, 255, 255, 0.4);
+  border-color: transparent;
 }
 
 .course-id .seed-dice:active .icon {
@@ -1828,10 +1821,18 @@ kbd {
   font-variant-numeric: tabular-nums;
 }
 
-.course-panel .lead {
+.play-panel .lead {
   margin: 0;
-  font-size: 12.5px;
-  color: var(--ink);
+  padding: 6px 9px;
+  border-radius: 8px;
+  font-size: 11.5px;
+  line-height: 1.5;
+  text-align: center;
+  color: rgba(255, 255, 255, 0.82);
+  background: var(--glass);
+  border: 1px solid var(--edge);
+  backdrop-filter: blur(10px);
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.85), 0 0 12px rgba(0, 0, 0, 0.55);
 }
 
 .music-credit {
@@ -2233,7 +2234,7 @@ kbd {
 
 /* ---- COM と対戦 ---- */
 
-/* 順位（回り終えたホールの通算）。PC は左上の打数の表示の下、タッチは右の風のメーターの下。 */
+/* 順位（回り終えたホールの通算）。ホール情報の下へ置き、右側の地図と分ける。 */
 .standings {
   position: absolute;
   left: max(16px, env(safe-area-inset-left));
@@ -2290,9 +2291,9 @@ kbd {
 }
 
 :root[data-input='touch'] .standings {
-  left: auto;
-  right: max(16px, env(safe-area-inset-right));
-  top: calc(max(120px, calc(env(safe-area-inset-top) + 104px), calc(var(--hud-bottom, 0px) + 8px)) + 64px);
+  left: max(16px, env(safe-area-inset-left));
+  right: auto;
+  top: calc(var(--hud-bottom, 64px) + 68px);
   padding: 5px 8px;
   font-size: 11px;
 }
@@ -2302,11 +2303,15 @@ kbd {
   gap: 4px;
 }
 
-/* 横向きの電話: 風の下では打つボタンに重なる（4 人並ぶと届く）。空いている右上、休憩ボタンの左へ。 */
+/* 横向きの電話では上端へ寄せる。 */
 @media (max-height: 520px) {
+  :root[data-input='touch'] .wind-meter {
+    top: max(16px, env(safe-area-inset-top));
+  }
+
   :root[data-input='touch'] .standings {
     top: max(16px, env(safe-area-inset-top));
-    right: calc(max(16px, env(safe-area-inset-right)) + 56px);
+    left: calc(max(16px, env(safe-area-inset-left)) + 150px);
   }
 }
 

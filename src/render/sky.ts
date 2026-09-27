@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { RENDER_ORDER } from './order';
+import { CLOUD_PERIOD, createCloudTexture } from './cloudTexture';
 
 /** 水平面への投影が急になる地平付近は、雲を朝もやへ溶かし切る。 */
 export const CLOUD_HORIZON_FADE_START = 0.075;
@@ -20,6 +21,7 @@ const frag = /* glsl */ `
   uniform vec3 uSunColor;
   uniform vec3 uSunDir;
   uniform vec2 uCloudSeed;
+  uniform sampler2D uCloudNoise;
   uniform float uCloudTime;
   uniform float uCloudAmount;
   uniform float uCloudLow;
@@ -28,42 +30,6 @@ const frag = /* glsl */ `
   uniform float uCloudPeak;
   uniform float uCloudShade;
   varying vec3 vDir;
-
-  // 値ノイズ。テクスチャを使わずに雲を作るため。
-  //
-  // 大きな座標へ 100 以上の定数を掛けて fract を取る方式は使わない。
-  // スマホ GPU の mediump では値が丸まるか上限を越え、雲に亀裂や段階的な動きが出る。
-  // 座標を小さい周期へ収め、小数の範囲で完結するハッシュにする。
-  float hash21(vec2 p) {
-    p = mod(p, 71.0);
-    vec3 p3 = fract(
-      vec3(p.xyx) * vec3(0.1031, 0.1030, 0.0973)
-      + vec3(uCloudSeed, uCloudSeed.x)
-    );
-    p3 += dot(p3, p3.yzx + 33.33);
-    return fract((p3.x + p3.y) * p3.z);
-  }
-  float vnoise(vec2 p) {
-    vec2 i = floor(p);
-    vec2 f = fract(p);
-    f = f * f * (3.0 - 2.0 * f);
-    float a = hash21(i);
-    float b = hash21(i + vec2(1.0, 0.0));
-    float c = hash21(i + vec2(0.0, 1.0));
-    float d = hash21(i + vec2(1.0, 1.0));
-    return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
-  }
-  float cloudFbm(vec2 p) {
-    float s = 0.0;
-    float a = 0.5;
-    for (int i = 0; i < 5; i++) {
-      s += vnoise(p) * a;
-      // 拡大しながら少し回して、格子に沿った縞が出ないようにする。
-      p = mat2(0.86, -0.51, 0.51, 0.86) * p * 2.03 + 1.7;
-      a *= 0.5;
-    }
-    return s;
-  }
 
   void main() {
     vec3 d = normalize(vDir);
@@ -90,7 +56,8 @@ const frag = /* glsl */ `
     if (horizonFade > 0.001) {
       vec2 cp = (d.xz / d.y) * uCloudScale
               + vec2(uCloudTime, uCloudTime * 0.35);
-      float n = cloudFbm(cp);
+      // 5 段のノイズは起動時にテクスチャへ焼いてある。全画素で計算し直さない。
+      float n = texture2D(uCloudNoise, cp / ${CLOUD_PERIOD.toFixed(1)} + uCloudSeed).r;
       float thick = smoothstep(uCloudLow, uCloudHigh, n);
       // **縁は白（1.0）より明るく振る。** トーンマッピングは 0.8 付近を潰すので、
       // 白止まりだと明るい空に埋もれて雲が見えない（一度これで見えなかった）。
@@ -320,6 +287,7 @@ export class Sky {
           (cloudSeed & 0xffff) / 0xffff,
           ((cloudSeed >>> 16) & 0xffff) / 0xffff,
         ) },
+        uCloudNoise: { value: createCloudTexture() },
         uCloudTime: { value: 0 },
         uCloudAmount: { value: preset.cloudAmount },
         uCloudLow: { value: preset.cloudLow },

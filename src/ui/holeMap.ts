@@ -21,6 +21,7 @@ export class HoleMap {
   private readonly ctx: CanvasRenderingContext2D;
   private base: HTMLCanvasElement | null = null;
   private hole: Hole | null = null;
+  private drawKey = '';
   /** 地図の向き: 原点（ティー）、上向きの単位ベクトル（ティー → ピン）、右向き、縮尺（px/m）と中心のずれ。 */
   private ox = 0;
   private oz = 0;
@@ -40,6 +41,7 @@ export class HoleMap {
   setHole(hole: Hole, field: CourseField | null): void {
     if (this.hole === hole) return;
     this.hole = hole;
+    this.drawKey = '';
     const w = this.canvas.width;
     const h = this.canvas.height;
     // 上向き = ティーからピン。
@@ -131,6 +133,17 @@ export class HoleMap {
     pin: { x: number; z: number },
     others: readonly { x: number; z: number; color: number }[] = [],
   ): void {
+    const key = [
+      ball.x,
+      ball.z,
+      aim?.x ?? '',
+      aim?.z ?? '',
+      pin.x,
+      pin.z,
+      ...others.flatMap((o) => [o.x, o.z, o.color]),
+    ].join(',');
+    if (key === this.drawKey) return;
+    this.drawKey = key;
     const g = this.ctx;
     const { width: w, height: h } = this.canvas;
     g.clearRect(0, 0, w, h);

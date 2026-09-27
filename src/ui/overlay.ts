@@ -1,7 +1,6 @@
 import { isRoomId } from '../../shared/room';
 import { PERFECT } from '../golf/aim';
 import { LIE_NAMES, toPar, type GolfStatus } from '../golf/game';
-import { KIND_NAMES } from '../golf/course';
 import type { IslandParams } from '../island/params';
 
 /**
@@ -271,10 +270,10 @@ export class Overlay {
             </div>
           </div>
           <p class="status"></p>
-          <p class="lead">${DEFAULT_LEAD}</p>
           <p class="music-credit">BGM: <a href="https://musmus.main.jp" target="_blank" rel="noreferrer">MusMus</a></p>
         </section>
         <section class="play-panel">
+          <p class="lead">${DEFAULT_LEAD}</p>
           <div class="mode-switch" role="radiogroup" aria-label="遊び方">
             <button type="button" class="mode-btn" data-mode="solo" role="radio">ひとりで</button>
             <button type="button" class="mode-btn" data-mode="com" role="radio">COM と対戦</button>
@@ -363,7 +362,6 @@ export class Overlay {
           <span class="shot-lie"></span>
           <span class="shot-dist"></span>
         </div>
-        <span class="golf-hint"></span>
       </div>
       <div class="timing" aria-hidden="true">
         <div class="t-track"><i class="t-sweet"></i><i class="t-needle"></i></div>
@@ -442,7 +440,6 @@ export class Overlay {
     this.golfHud.addEventListener('click', () => {
       this.scorecardPinned = !this.scorecardPinned;
     });
-    this.golfHint = this.root.querySelector('.golf-hint')!;
     this.golfTouch = this.root.querySelector('.golf-touch')!;
     this.flagLayer = this.root.querySelector('.flag-markers')!;
     this.rivalLayer = this.root.querySelector('.rival-markers')!;
@@ -491,7 +488,6 @@ export class Overlay {
   private scorecardKey = '';
   /** 打数の表示を押して、スコアカードを出したままにしているか（タッチ）。 */
   scorecardPinned = false;
-  private readonly golfHint: HTMLElement;
   private readonly golfTouch: HTMLElement;
   private readonly flagLayer: HTMLElement;
   private readonly courseLabel: HTMLElement;
@@ -525,17 +521,17 @@ export class Overlay {
     if (!status) return;
     const { target } = status;
     const total = status.total > 0 ? ` · 通算 ${toPar(status.total, status.totalPar)}` : '';
-    const holeText = `${KIND_NAMES[target.kind]} · パー ${target.par} · ${Math.round(target.length)} m`;
+    const holeText = `パー ${target.par} · ${Math.round(target.length)} m`;
     const shot = status.phase === 'holed' ? `${status.strokes} 打でカップイン` : `${status.strokes + 1} 打目`;
-    const line = `${shot} · ピンまで ${Math.round(status.toPin)} m${total}`;
+    const remaining = status.phase === 'holed' ? '' : ` · 残り ${Math.round(status.toPin)} m`;
+    const line = `${shot}${remaining}${total}`;
     const putt = status.club.loft === 0;
-    // 狙いの距離: パットは小数 1 桁まで。
-    const dist = putt ? status.aimDistance.toFixed(1) : String(Math.round(status.aimDistance));
-    const reach = putt ? '' : ` / ${Math.round(status.reach)}`;
+    // 狙いの距離は落とし所に直接出す。ここはクラブで届く最大距離だけにして重複を避ける。
+    const reach = putt ? status.aimDistance.toFixed(1) : String(Math.round(status.reach));
     // ライと、狙いの高低差（1m 以上のときだけ）。
     const elev = Math.abs(status.elevation) >= 1 ? ` · ${status.elevation > 0 ? '↑' : '↓'} ${Math.round(Math.abs(status.elevation))} m` : '';
     const lie = `${LIE_NAMES[status.lie]}${elev}`;
-    const text = holeText + line + status.club.name + status.phase + dist + reach + lie;
+    const text = holeText + line + status.club.name + status.phase + reach + lie;
     if (text !== this.golfText) {
       this.golfText = text;
       this.holeNo.textContent = String(target.number);
@@ -545,16 +541,7 @@ export class Overlay {
       this.shotLie.textContent = lie;
       this.shotShort.textContent = status.club.short;
       this.shotName.textContent = status.club.name;
-      // 狙いまでの距離と、このクラブ・ライで届く一番遠い距離。
-      this.shotDist.innerHTML = `<b>${dist}</b> m<small>${reach}</small>`;
-      this.golfHint.textContent =
-        status.phase === 'swing'
-          ? this.touch
-            ? '針が真ん中に来たら、もう一度 ◯'
-            : '針が真ん中に来たら、もう一度押す（Esc か右クリックで戻る）'
-          : this.touch
-            ? ''
-            : 'マウスで狙う · クリックか Space で構える';
+      this.shotDist.innerHTML = `${putt ? '狙い' : '最大'} <b>${reach}</b> m`;
     }
     // 風のメーター: 針は狙う向きを上にした風の向き。数字は大きく。
     const calm = status.windSpeed < 0.3;

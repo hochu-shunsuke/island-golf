@@ -54,6 +54,10 @@ const FOG_ATTRACT = FOG_FLY * 0.5;
 /** 画素数の上限。端末名で分けず、画面の大きさと入力方式で決める（stroll と同じ）。 */
 const MOBILE_PIXEL_BUDGET = 1_400_000;
 const DESKTOP_PIXEL_BUDGET = 8_000_000;
+/** スマホはまず高精細で描き、フレームが続けて遅い端末だけ 0.1 ずつ下げる。CSS 1px 未満にはしない。 */
+const MOBILE_DPR_MAX = 1.5;
+const MOBILE_DPR_MIN = 1;
+let mobileDprCap = MOBILE_DPR_MAX;
 /** 見渡すときの視野（度）。飛ぶときは stroll と同じく 68°〜82°＋速さ。 */
 const MAKE_FOV = 55;
 /** 球を打つときの視野（度）。 */
@@ -138,7 +142,7 @@ function resizeRenderer(): void {
   const height = Math.max(1, innerHeight);
   const budget = inputMode === 'touch' ? MOBILE_PIXEL_BUDGET : DESKTOP_PIXEL_BUDGET;
   const budgetRatio = Math.sqrt(budget / (width * height));
-  const deviceCap = inputMode === 'touch' ? 1.5 : 2;
+  const deviceCap = inputMode === 'touch' ? mobileDprCap : 2;
   renderer.setPixelRatio(Math.max(0.75, Math.min(devicePixelRatio, deviceCap, budgetRatio)));
   renderer.setSize(width, height);
   camera.aspect = width / height;
@@ -1659,10 +1663,63 @@ function placeAimLabel(game: GolfGame): void {
 
 const timer = new THREE.Timer();
 let elapsed = 0;
+let mobileFrameSum = 0;
+let mobileFrameCount = 0;
+let mobileFrameWindow = 0;
+let mobileFastWindows = 0;
+
+/**
+ * スマホの実測フレーム時間にだけ反応する動的解像度。
+ * 一時的なチャンク生成や暗転は数えず、2.5 秒続けて遅いときだけ少し下げる。
+ * 余裕が戻った場合は 2 区間確認してから上げ、頻繁な往復とリサイズの引っ掛かりを防ぐ。
+ */
+function updateMobileRenderScale(dt: number): void {
+  const stable =
+    inputMode === 'touch' &&
+    !document.hidden &&
+    sceneReady &&
+    !holeFade &&
+    (chunks?.settled ?? true);
+  if (!stable) {
+    mobileFrameSum = 0;
+    mobileFrameCount = 0;
+    mobileFrameWindow = 0;
+    mobileFastWindows = 0;
+    return;
+  }
+  mobileFrameSum += dt;
+  mobileFrameCount++;
+  mobileFrameWindow += dt;
+  if (mobileFrameWindow < 2.5 || mobileFrameCount === 0) return;
+
+  const average = mobileFrameSum / mobileFrameCount;
+  const before = renderer.getPixelRatio();
+  if (average > 0.022 && mobileDprCap > MOBILE_DPR_MIN) {
+    mobileDprCap = Math.max(MOBILE_DPR_MIN, mobileDprCap - 0.1);
+    mobileFastWindows = 0;
+  } else if (average < 0.018 && mobileDprCap < MOBILE_DPR_MAX) {
+    mobileFastWindows++;
+    if (mobileFastWindows >= 2) {
+      mobileDprCap = Math.min(MOBILE_DPR_MAX, mobileDprCap + 0.1);
+      mobileFastWindows = 0;
+    }
+  } else {
+    mobileFastWindows = 0;
+  }
+  mobileFrameSum = 0;
+  mobileFrameCount = 0;
+  mobileFrameWindow = 0;
+  // 画面や画素数の上限で実際の倍率が変わらない場合は、描画面を作り直さない。
+  const budgetRatio = Math.sqrt(MOBILE_PIXEL_BUDGET / (Math.max(1, innerWidth) * Math.max(1, innerHeight)));
+  const after = Math.max(0.75, Math.min(devicePixelRatio, mobileDprCap, budgetRatio));
+  if (Math.abs(after - before) > 0.01) resizeRenderer();
+}
+
 renderer.setAnimationLoop(() => {
   timer.update();
   const dt = Math.min(timer.getDelta(), 0.1);
   elapsed += dt;
+  updateMobileRenderScale(dt);
   if (playing && scout && player) {
     player.update(dt, camera, reducedMotion);
     touchControls?.update();
