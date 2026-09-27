@@ -31,6 +31,9 @@ export const COVERAGE_SIZE = Math.ceil(ISLAND_SIZE / CHUNK_SIZE) + 2;
 /** 世界のチャンク番号 → テクスチャの番号。島の中心（0,0）が真ん中に来る。 */
 export const COVERAGE_OFFSET = COVERAGE_SIZE / 2;
 
+/** 暗転している間に、1 コマでチャンクを組み立ててよい時間（ms）。見えないので長めに取り、ページが固まらない程度で切る。 */
+const DARK_BUDGET_MS = 40;
+
 /** 本物の木を置くチャンクの粗さの上限（vegetationSpecs.ts の maxLod のうち木のもの）。 */
 const TREE_LOD = 1;
 /** 球が当たる木を探す升目（m）と、チャンクの 1 辺の升目の数。 */
@@ -80,7 +83,7 @@ export class ChunkManager {
   private workers: Worker[] = [];
   private freeWorkers: Worker[] = [];
   /** Worker から届き、次の描画フレームで GPU の形へ組み立てるチャンク。 */
-  private completed: { worker: Worker; data: BuiltChunk }[] = [];
+  private completed: BuiltChunk[] = [];
   private nextId = 1;
   private lastChunkX = Number.NaN;
   private lastChunkZ = Number.NaN;
@@ -220,17 +223,21 @@ export class ChunkManager {
     return -1;
   }
 
-  /** (x, z) はカメラの位置。範囲を決めてある間は、作る順（近い所から）にだけ使う。 */
-  update(x: number, z: number): void {
+  /**
+   * (x, z) はカメラの位置。範囲を決めてある間は、作る順（近い所から）にだけ使う。
+   * dark は画面が暗転している間（ホールの切り替え・空撮のカットの間）。そのときは届いたチャンクをまとめて組み立てる。
+   */
+  update(x: number, z: number, dark = false): void {
     const pcx = Math.floor(x / CHUNK_SIZE);
     const pcz = Math.floor(z / CHUNK_SIZE);
     const moved = pcx !== this.lastChunkX || pcz !== this.lastChunkZ;
     this.lastChunkX = pcx;
     this.lastChunkZ = pcz;
 
-    // 複数の Worker が同時に返っても、BufferGeometry・木の当たり判定・GPU への登録を
-    // 1 フレームにまとめない。特にスマホでは、この山が操作の引っ掛かりになっていた。
-    this.integrateCompleted();
+    // 複数の Worker が同時に返っても、見えている間は BufferGeometry・木の当たり判定・GPU への登録を
+    // 1 フレームにまとめない（1 コマに 1 つ）。特にスマホでは、この山が操作の引っ掛かりになっていた。
+    // 暗転している間は見えないので、まとめて組み立てる（1 つずつにしたら、プレイを押した後の暗い時間が 0.6〜0.75 秒延びた）。
+    this.integrateCompleted(dark ? DARK_BUDGET_MS : 0);
 
     // 範囲が替わった時と、カメラの周りを読むときにカメラが別のチャンクへ移った時だけ、差分を洗い直す。
     if (this.dirty || (!this.focus && moved)) {
@@ -297,14 +304,18 @@ export class ChunkManager {
 
   private onCompleted(worker: Worker, data: BuiltChunk): void {
     this.inFlight.delete(data.id);
-    this.completed.push({ worker, data });
+    // Worker はすぐ次を作れる（組み立てを待たせると、その間 Worker が遊んでいた）。
+    this.freeWorkers.push(worker);
+    this.completed.push(data);
   }
 
-  private integrateCompleted(): void {
-    const done = this.completed.shift();
-    if (!done) return;
-    this.freeWorkers.push(done.worker);
-    this.integrateBuilt(done.data);
+  /** 届いたチャンクを組み立てる。1 つは必ず、あとは budgetMs の間だけ。 */
+  private integrateCompleted(budgetMs: number): void {
+    const start = performance.now();
+    while (this.completed.length > 0) {
+      this.integrateBuilt(this.completed.shift()!);
+      if (performance.now() - start >= budgetMs) break;
+    }
   }
 
   private integrateBuilt(data: BuiltChunk): void {

@@ -1792,7 +1792,8 @@ renderer.setAnimationLoop(() => {
       // 結果の窓のボタンを押せるように、マウスを放す（ロックが外れても休憩にはしない）。
       if (document.pointerLockElement === canvas) document.exitPointerLock();
     }
-    chunks?.update(camera.position.x, camera.position.z);
+    // ホールの切り替えで暗い間（暗くなる・読み込む）は、チャンクをまとめて組み立てる。
+    chunks?.update(camera.position.x, camera.position.z, holeFade !== null && holeFade.phase !== 'in');
     sounds?.update(dt, lastStatus?.windSpeed ?? 0, 1, 0);
     // 最後のホールの後、COM の相手が打ち終えたら結果へ。
     if (finalePending && golf.rivalsSettled) {
@@ -1847,7 +1848,7 @@ renderer.setAnimationLoop(() => {
   } else if (flyover && sceneReady) {
     // 開始画面・休憩中: コース紹介の空撮。カットの範囲を読み込み、揃うまでは暗いまま待つ（flyover.ts）。
     chunks?.setFocus(flyover.area);
-    chunks?.update(camera.position.x, camera.position.z);
+    chunks?.update(camera.position.x, camera.position.z, flyover.fade > 0.98);
     flyover.update(dt, camera, chunks?.settled ?? true);
     // 霧は空撮の間ずっと同じ濃さ（高さで変えると、カットが替わるたびに遠くの山がじわっと出たり消えたりする）。
     fog.density = FOG_ATTRACT * flyover.fogScale;
