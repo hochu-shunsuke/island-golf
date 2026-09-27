@@ -481,12 +481,17 @@ kbd {
   color: rgba(255, 255, 255, 0.7);
 }
 
-/* タッチのゴルフ用ボタン。見た目は stroll のタッチボタンと揃える。 */
+/* タッチのゴルフ用ボタン。スマホの FPS の配置に倣う: 右下の親指の位置に大きな丸い打つボタン、
+   その斜め上に小さな丸いボタン（空から・構えをやめる）。字は書かず絵で示し、左手側は空けて
+   画面をなぞる（輪を動かす）のに使う。 */
 .golf-touch {
   position: absolute;
   inset: 0;
   pointer-events: none;
   display: none;
+  --shot-size: 84px;
+  --shot-right: max(22px, calc(env(safe-area-inset-right) + 10px));
+  --shot-bottom: max(30px, calc(env(safe-area-inset-bottom) + 18px));
 }
 
 .golf-touch.on {
@@ -498,66 +503,139 @@ kbd {
   pointer-events: auto;
   display: grid;
   place-items: center;
-  color: var(--ink);
+  padding: 0;
+  color: #fff;
   font-size: 12px;
-  letter-spacing: 0.08em;
-  background: rgba(14, 22, 28, 0.42);
-  border: 1.5px solid rgba(255, 255, 255, 0.24);
-  backdrop-filter: blur(2px);
+  letter-spacing: 0.06em;
+  background: rgba(8, 14, 18, 0.34);
+  border: 2px solid rgba(255, 255, 255, 0.5);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.25), inset 0 0 0 1px rgba(0, 0, 0, 0.12);
+  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: blur(3px);
   touch-action: none;
 }
 
 .g-btn:active {
-  background: rgba(255, 255, 255, 0.28);
+  transform: scale(0.92);
+  background: rgba(255, 255, 255, 0.24);
 }
 
+.g-btn .icon {
+  width: 22px;
+  height: 22px;
+  stroke-width: 2.2;
+}
+
+/* 打つ: 二重の輪。内側の円は少し明るく、押すと沈む。 */
 .g-shot {
-  right: max(24px, env(safe-area-inset-right));
-  bottom: max(96px, calc(env(safe-area-inset-bottom) + 80px));
-  width: 86px;
-  height: 86px;
-  font-size: 15px;
+  right: var(--shot-right);
+  bottom: var(--shot-bottom);
+  width: var(--shot-size);
+  height: var(--shot-size);
+  border-width: 2.5px;
+  border-color: rgba(255, 255, 255, 0.78);
+  background: radial-gradient(circle, rgba(255, 255, 255, 0.16) 0 58%, rgba(8, 14, 18, 0.34) 60%);
 }
 
-.g-prev,
-.g-next {
-  bottom: max(104px, calc(env(safe-area-inset-bottom) + 88px));
-  width: 48px;
-  height: 48px;
-  font-size: 22px;
+.g-shot::before {
+  content: '';
+  position: absolute;
+  inset: 7px;
+  border-radius: 50%;
+  border: 1.5px solid rgba(255, 255, 255, 0.28);
 }
 
-.g-prev {
-  left: max(20px, env(safe-area-inset-left));
+.g-shot-icon {
+  width: 44px;
+  height: 44px;
+  overflow: visible;
+  fill: none;
+  stroke: #fff;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.35));
 }
 
-.g-next {
-  left: calc(max(20px, env(safe-area-inset-left)) + 58px);
+.g-shot-arc {
+  stroke-width: 2.6;
+  stroke-dasharray: 3.5 4.5;
 }
 
-.g-scout {
-  right: max(24px, env(safe-area-inset-right));
-  bottom: max(196px, calc(env(safe-area-inset-bottom) + 180px));
-  width: 64px;
-  height: 36px;
-  font-size: 11px;
+.g-shot-ball {
+  fill: #fff;
+  stroke: none;
+}
+
+.g-shot-tee {
+  stroke-width: 2.6;
+}
+
+/* 構えている間: 打つボタンが緑に光って脈打つ（針の緑で止める、と同じ色）。 */
+.golf-touch.swinging .g-shot {
+  border-color: rgba(150, 240, 160, 0.95);
+  background: radial-gradient(circle, rgba(150, 240, 160, 0.3) 0 58%, rgba(8, 14, 18, 0.34) 60%);
+  box-shadow: 0 0 0 0 rgba(150, 240, 160, 0.55), 0 2px 10px rgba(0, 0, 0, 0.25);
+  animation: shot-pulse 0.9s ease-out infinite;
+}
+
+.golf-touch.swinging .g-shot-arc {
+  stroke-dasharray: none;
+}
+
+@keyframes shot-pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(150, 240, 160, 0.55), 0 2px 10px rgba(0, 0, 0, 0.25);
+  }
+  100% {
+    box-shadow: 0 0 0 16px rgba(150, 240, 160, 0), 0 2px 10px rgba(0, 0, 0, 0.25);
+  }
+}
+
+/* 小さな丸いボタンは、打つボタンの左上の同じ場所に 1 つだけ出す（普段は空から、構えている間はやめる）。 */
+.g-scout,
+.g-cancel {
+  width: 50px;
+  height: 50px;
+  right: calc(var(--shot-right) + var(--shot-size) - 14px);
+  bottom: calc(var(--shot-bottom) + var(--shot-size) - 10px);
+}
+
+.g-cancel {
+  display: none;
+}
+
+.golf-touch.swinging .g-cancel {
+  display: grid;
+}
+
+.golf-touch.swinging .g-scout {
+  display: none;
+}
+
+.g-label:empty {
+  display: none;
 }
 
 /* 空から見ている間は「球へ戻る」だけを、休憩ボタンの下に出す（飛ぶ操作のボタンと重ねない）。 */
-.golf-touch.scouting .g-btn:not(.g-scout) {
+.golf-touch.scouting .g-btn:not(.g-scout):not(.g-pause) {
   display: none;
 }
 
 .golf-touch.scouting .g-scout {
-  bottom: auto;
+  top: max(68px, calc(env(safe-area-inset-top) + 52px));
   right: max(16px, env(safe-area-inset-right));
-  width: 84px;
-  height: 36px;
-  font-size: 11px;
+  bottom: auto;
+  width: auto;
+  height: 40px;
+  padding: 0 14px 0 11px;
+  display: flex;
+  gap: 6px;
+  align-items: center;
 }
 
-.golf-touch.scouting .g-scout {
-  top: max(68px, calc(env(safe-area-inset-top) + 52px));
+.golf-touch.scouting .g-scout .icon {
+  width: 17px;
+  height: 17px;
 }
 
 .g-pause {
@@ -565,15 +643,16 @@ kbd {
   top: max(16px, env(safe-area-inset-top));
   width: 42px;
   height: 42px;
+  border-width: 1.5px;
 }
 
 .g-pause::before,
 .g-pause::after {
   content: '';
-  width: 2.5px;
-  height: 13px;
+  width: 3px;
+  height: 14px;
   border-radius: 2px;
-  background: var(--ink);
+  background: #fff;
   grid-area: 1 / 1;
 }
 
@@ -585,9 +664,74 @@ kbd {
   transform: translateX(4px);
 }
 
-/* タッチでは力のメーターを打つボタンの上に寄せない（中央下のまま）。 */
+/* クラブの名前。PC では字のまま（Q・E で替える）。タッチでは押すと次のクラブへ。 */
+.shot-club {
+  padding: 0;
+  color: inherit;
+  background: none;
+  border: none;
+  text-shadow: inherit;
+  pointer-events: none;
+}
+
+.shot-swap {
+  display: none;
+}
+
+:root[data-input='touch'] .shot-club {
+  pointer-events: auto;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px 3px 11px;
+  border-radius: 10px;
+  background: rgba(8, 14, 18, 0.34);
+  border: 1.5px solid rgba(255, 255, 255, 0.35);
+}
+
+:root[data-input='touch'] .shot-club:active {
+  background: rgba(255, 255, 255, 0.24);
+}
+
+:root[data-input='touch'] .shot-short {
+  font-size: 19px;
+}
+
+/* 替えられることを示す小さな上下の矢印。 */
+:root[data-input='touch'] .shot-swap {
+  display: block;
+  width: 7px;
+  height: 12px;
+  background:
+    linear-gradient(to bottom right, transparent 50%, rgba(255, 255, 255, 0.8) 50%) 0 0 / 7px 4px no-repeat,
+    linear-gradient(to top right, transparent 50%, rgba(255, 255, 255, 0.8) 50%) 0 100% / 7px 4px no-repeat;
+  clip-path: polygon(50% 0, 100% 35%, 0 35%, 0 65%, 100% 65%, 50% 100%);
+  opacity: 0.8;
+}
+
+/* タッチでは、打つ所の表示を打つボタンの左に寄せる（下の真ん中は親指と重なる）。 */
 :root[data-input='touch'] .golf-power {
-  bottom: max(28px, calc(env(safe-area-inset-bottom) + 14px));
+  left: max(16px, env(safe-area-inset-left));
+  right: calc(max(22px, calc(env(safe-area-inset-right) + 10px)) + 84px + 14px);
+  bottom: max(34px, calc(env(safe-area-inset-bottom) + 22px));
+  width: auto;
+  transform: translateY(8px);
+  align-items: stretch;
+}
+
+:root[data-input='touch'] .golf-power.on {
+  transform: none;
+}
+
+:root[data-input='touch'] .golf-meter {
+  height: 14px;
+}
+
+:root[data-input='touch'] .shot-lie {
+  display: none;
+}
+
+:root[data-input='touch'] .golf-hint {
+  text-align: center;
 }
 
 /* 風: 矢印は狙う向きを上にした向き。 */
@@ -1492,25 +1636,6 @@ kbd {
 
 :root[data-input='touch'] .shot-feedback {
   font-size: 30px;
-}
-
-/* 構えている間は、クラブのボタンの代わりに「やめる」。 */
-.g-cancel {
-  display: none;
-  left: max(20px, env(safe-area-inset-left));
-  bottom: max(104px, calc(env(safe-area-inset-bottom) + 88px));
-  width: 106px;
-  height: 48px;
-  font-size: 13px;
-}
-
-.golf-touch.swinging .g-cancel {
-  display: grid;
-}
-
-.golf-touch.swinging .g-prev,
-.golf-touch.swinging .g-next {
-  display: none;
 }
 
 /* ---- 開始・休憩の画面（モノクロのガラス。色は使わず、明るさの差だけで押す順を示す） ---- */
