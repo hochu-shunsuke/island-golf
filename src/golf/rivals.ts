@@ -5,6 +5,7 @@ import { BALL_RADIUS, BALL_STEP, Ball, type GolfGround, rollSpeed } from './ball
 import { CLUBS, PUTTER } from './clubs';
 import type { Hole } from './course';
 import type { OpponentState, Opponents } from './opponents';
+import { TrailFade } from './trail';
 
 /**
  * COM の相手。プレイヤーが打つたびに、全員が同時に 1 打ずつ打つ（Golf Clash と同じ。順番を待たない）。
@@ -114,6 +115,7 @@ class Rival {
   private readonly lastSpot = { x: 0, z: 0 };
   readonly mesh: THREE.Mesh;
   readonly trail: THREE.Line;
+  readonly trailFade: TrailFade;
   private readonly trailPoints: Point3[] = [];
 
   constructor(
@@ -128,10 +130,9 @@ class Rival {
       new THREE.SphereGeometry(BALL_RADIUS, 14, 10),
       new THREE.MeshLambertMaterial({ color: spec.color, emissive: spec.color, emissiveIntensity: 0.25 }),
     );
-    this.trail = new THREE.Line(
-      new THREE.BufferGeometry(),
-      new THREE.LineBasicMaterial({ color: spec.color, transparent: true, opacity: 0.6 }),
-    );
+    const trailMaterial = new THREE.LineBasicMaterial({ color: spec.color, transparent: true, opacity: 0.6 });
+    this.trail = new THREE.Line(new THREE.BufferGeometry(), trailMaterial);
+    this.trailFade = new TrailFade(this.trail, trailMaterial, 0.6);
   }
 
   get moving(): boolean {
@@ -168,6 +169,7 @@ class Rival {
     this.groundTime = club.loft > 0.5 ? null : 0;
     this.trailPoints.length = 0;
     this.trailPoints.push({ ...this.ball.pos });
+    this.trailFade.show();
   }
 
   /**
@@ -193,6 +195,7 @@ class Rival {
       }
     }
     if (this.moving) return false;
+    this.trailFade.settle();
     if (this.ball.state === 'holed') {
       this.holed = true;
       this.scores[hole.number - 1] = this.strokes;
@@ -297,6 +300,7 @@ export class Rivals implements Opponents {
   update(dt: number, hole: Hole): void {
     let changed = false;
     for (const r of this.list) {
+      r.trailFade.update(dt);
       if (r.advance(dt, hole)) changed = true;
       r.syncMesh();
     }

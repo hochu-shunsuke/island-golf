@@ -4,6 +4,7 @@ import type { Point3 } from './aim';
 import { BALL_RADIUS, BALL_STEP, Ball, type GolfGround, type Surface, rollSpeed } from './ball';
 import type { Hole } from './course';
 import type { OpponentState, Opponents } from './opponents';
+import { TrailFade } from './trail';
 
 /**
  * 友達（同じ部屋の人）。それぞれ自分の画面で自分の球を打ち、打った一打（ShotInfo）と止まった所（RestInfo）が
@@ -28,6 +29,7 @@ class Peer {
   readonly ball: Ball;
   readonly mesh: THREE.Mesh;
   readonly trail: THREE.Line;
+  readonly trailFade: TrailFade;
   private readonly trailPoints: Point3[] = [];
   name = '';
   color: number;
@@ -63,10 +65,9 @@ class Peer {
       new THREE.SphereGeometry(BALL_RADIUS, 14, 10),
       new THREE.MeshLambertMaterial({ color: this.color, emissive: this.color, emissiveIntensity: 0.25 }),
     );
-    this.trail = new THREE.Line(
-      new THREE.BufferGeometry(),
-      new THREE.LineBasicMaterial({ color: this.color, transparent: true, opacity: 0.6 }),
-    );
+    const trailMaterial = new THREE.LineBasicMaterial({ color: this.color, transparent: true, opacity: 0.6 });
+    this.trail = new THREE.Line(new THREE.BufferGeometry(), trailMaterial);
+    this.trailFade = new TrailFade(this.trail, trailMaterial, 0.6);
   }
 
   /** ホールのティーに立たせる（もう打っていれば、最後に止まった所へ）。 */
@@ -103,6 +104,7 @@ class Peer {
     this.trailPoints.length = 0;
     this.trailPoints.push({ ...this.ball.pos });
     this.setTrail();
+    this.trailFade.show();
   }
 
   /** 止まった所の知らせ。飛ばしている途中なら、飛び終わってから合わせる。 */
@@ -141,6 +143,7 @@ class Peer {
     this.sync();
     if (this.ball.state === 'flight' || this.ball.state === 'roll') return false;
     this.flying = false;
+    this.trailFade.settle();
     if (this.pending) this.applyRest(this.pending);
     return true;
   }
@@ -241,7 +244,10 @@ export class Peers implements Opponents {
 
   update(dt: number): void {
     let changed = false;
-    for (const peer of this.list.values()) if (peer.advance(dt)) changed = true;
+    for (const peer of this.list.values()) {
+      peer.trailFade.update(dt);
+      if (peer.advance(dt)) changed = true;
+    }
     if (changed) this.onChange?.();
   }
 

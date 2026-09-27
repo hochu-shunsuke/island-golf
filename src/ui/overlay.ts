@@ -326,7 +326,7 @@ export class Overlay {
       <div class="flight-hud"></div>
       <div class="golf-hud">
         <div class="hole-num"><b class="hole-no"></b><small class="hole-of"></small></div>
-        <div class="hole-meta"><div class="golf-hole"></div><div class="golf-line"></div></div>
+        <div class="hole-meta"><div class="golf-hole"></div><div class="golf-line"><span class="gl-shot"></span><span class="gl-total"></span></div></div>
       </div>
       <div class="wind-meter">
         <div class="wind-dial"><i class="wind-needle"></i></div>
@@ -336,6 +336,7 @@ export class Overlay {
       <div class="shot-feedback"></div>
       <div class="flag-markers" aria-hidden="true"></div>
       <div class="rival-markers" aria-hidden="true"></div>
+      <button type="button" class="score-chip" aria-label="順位を開く"></button>
       <div class="standings" aria-label="順位"></div>
       <div class="aim-label" aria-hidden="true"></div>
       <div class="celebrate" aria-live="polite"></div>
@@ -407,7 +408,15 @@ export class Overlay {
 
     this.golfHud = this.root.querySelector('.golf-hud')!;
     this.golfHole = this.root.querySelector('.golf-hole')!;
-    this.golfLine = this.root.querySelector('.golf-line')!;
+    this.golfShot = this.root.querySelector('.gl-shot')!;
+    this.golfTotal = this.root.querySelector('.gl-total')!;
+    this.scoreChip = this.root.querySelector('.score-chip')!;
+    // スマホ: 通算と順位の札を押すと、順位表を開く・しまう。
+    this.scoreChip.addEventListener('click', () => {
+      if (!this.standingsShown) return;
+      this.standings.classList.toggle('open');
+      this.scoreChip.classList.toggle('open', this.standings.classList.contains('open'));
+    });
     this.golfPower = this.root.querySelector('.golf-power')!;
     this.shotShort = this.root.querySelector('.shot-short')!;
     this.shotName = this.root.querySelector('.shot-name')!;
@@ -457,7 +466,13 @@ export class Overlay {
 
   private readonly golfHud: HTMLElement;
   private readonly golfHole: HTMLElement;
-  private readonly golfLine: HTMLElement;
+  private readonly golfShot: HTMLElement;
+  private readonly golfTotal: HTMLElement;
+  /** スマホの、通算と順位の小さな札（押すと順位表が開く）。 */
+  private readonly scoreChip: HTMLElement;
+  private chipTotal = '';
+  private chipRank: { rank: number; of: number } | null = null;
+  private standingsShown = false;
   private readonly golfPower: HTMLElement;
   private readonly shotShort: HTMLElement;
   private readonly shotName: HTMLElement;
@@ -514,17 +529,19 @@ export class Overlay {
     this.windMeter.classList.toggle('on', on);
     this.holeMapCanvas.classList.toggle('on', on);
     this.root.classList.toggle('golfing', on);
+    this.scoreChip.classList.toggle('on', on && this.scoreChip.innerHTML !== '');
     // カップインの後は画面のタップで進めるので、下の打つ表示はしまう。
     this.golfPower.classList.toggle('on', on && status.phase !== 'moving' && status.phase !== 'holed');
     this.golfTouch.classList.toggle('swinging', on && status.phase === 'swing');
     this.golfTouch.classList.toggle('holed', on && status.phase === 'holed');
     if (!status) return;
     const { target } = status;
-    const total = status.total > 0 ? ` · 通算 ${toPar(status.total, status.totalPar)}` : '';
+    const totalPar = status.total > 0 ? toPar(status.total, status.totalPar) : '';
+    const total = totalPar ? ` · 通算 ${totalPar}` : '';
     const holeText = `パー ${target.par} · ${Math.round(target.length)} m`;
     const shot = status.phase === 'holed' ? `${status.strokes} 打でカップイン` : `${status.strokes + 1} 打目`;
     const remaining = status.phase === 'holed' ? '' : ` · 残り ${Math.round(status.toPin)} m`;
-    const line = `${shot}${remaining}${total}`;
+    const line = `${shot}${remaining}`;
     const putt = status.club.loft === 0;
     // 狙いの距離は落とし所に直接出す。ここはクラブで届く最大距離だけにして重複を避ける。
     const reach = putt ? status.aimDistance.toFixed(1) : String(Math.round(status.reach));
@@ -537,7 +554,8 @@ export class Overlay {
       this.holeNo.textContent = String(target.number);
       this.holeOf.textContent = `/${status.holeCount}`;
       this.golfHole.textContent = holeText;
-      this.golfLine.textContent = line;
+      this.golfShot.textContent = line;
+      this.golfTotal.textContent = total;
       this.shotLie.textContent = lie;
       this.shotShort.textContent = status.club.short;
       this.shotName.textContent = status.club.name;
@@ -552,6 +570,20 @@ export class Overlay {
     const num = calm ? '0' : status.windSpeed.toFixed(1);
     if (this.windNum.textContent !== num) this.windNum.textContent = num;
     if (this.windKind.textContent !== kind) this.windKind.textContent = kind;
+    if (totalPar !== this.chipTotal) {
+      this.chipTotal = totalPar;
+      this.renderChip();
+    }
+  }
+
+  /** 通算と順位の札（スマホ）。順位があれば「1 位 · −1」、ひとりなら「通算 −1」。どちらも無ければ隠す。 */
+  private renderChip(): void {
+    const r = this.chipRank;
+    const total = this.chipTotal || '±0';
+    const text = r ? `${r.rank} 位 <small>/ ${r.of}</small> · ${total}` : this.chipTotal ? `通算 ${total}` : '';
+    this.scoreChip.innerHTML = text ? `${text}${r ? '<i class="chip-caret"></i>' : ''}` : '';
+    this.scoreChip.classList.toggle('on', text !== '' && this.golfHud.classList.contains('on'));
+    this.scoreChip.classList.toggle('has-rank', r !== null);
   }
 
   /** 打った一打のでき（ナイスショット・フック・スライス）を画面の真ん中に大きく。 */
@@ -726,7 +758,19 @@ export class Overlay {
 
   /** 順位の表示（COM や友達と回っている間）。null で隠す。 */
   setStandings(rows: readonly StandingRow[] | null): void {
-    this.standings.classList.toggle('on', rows !== null && rows.length > 0);
+    const shown = rows !== null && rows.length > 0;
+    this.standings.classList.toggle('on', shown);
+    const you = rows?.find((r) => r.you);
+    const rank = shown && you ? { rank: you.rank, of: rows!.length } : null;
+    if (shown !== this.standingsShown || rank?.rank !== this.chipRank?.rank || rank?.of !== this.chipRank?.of) {
+      this.standingsShown = shown;
+      this.chipRank = rank;
+      if (!shown) {
+        this.standings.classList.remove('open');
+        this.scoreChip.classList.remove('open');
+      }
+      this.renderChip();
+    }
     if (!rows) return;
     const key = rows.map((r) => `${r.rank}${r.name}${r.total}${r.now}`).join('|');
     if (key === this.standingsKey) return;
@@ -744,7 +788,10 @@ export class Overlay {
       .join('');
   }
 
-  /** COM の球の上の名前。画面の位置（px）で。 */
+  /**
+   * COM と友達の球の上の目印。画面の位置（px）で。色の点だけにする（名前は順位表にある。名前の札を出していた頃は、
+   * 旗や狙いの距離の札に重なって画面が散らかった）。
+   */
   setRivalMarkers(items: readonly { x: number; y: number; text: string; color: number }[]): void {
     while (this.rivalEls.length < items.length) {
       const el = document.createElement('div');
@@ -758,7 +805,8 @@ export class Overlay {
       if (!item) return;
       if (item.text !== m.text) {
         m.text = item.text;
-        m.el.innerHTML = `<i style="background:${hex(item.color)}"></i>${escapeHtml(item.text)}`;
+        m.el.innerHTML = `<i style="background:${hex(item.color)}"></i>`;
+        m.el.setAttribute('aria-label', item.text);
       }
       m.el.style.transform = `translate(${item.x.toFixed(1)}px, ${item.y.toFixed(1)}px)`;
     });

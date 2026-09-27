@@ -6,6 +6,7 @@ import { BALL_RADIUS, Ball, type GolfGround, type Surface, rollSpeed } from './b
 import { CLUBS, type Club, PUTTER } from './clubs';
 import { type Hole, holeIntro } from './course';
 import type { OpponentState, Opponents } from './opponents';
+import { TrailFade } from './trail';
 import type { RestInfo, ShotInfo } from '../../shared/room';
 
 /**
@@ -179,6 +180,7 @@ export class GolfGame {
   private readonly roll: THREE.Line;
   private readonly landing: THREE.Mesh;
   private readonly trail: THREE.Line;
+  private readonly trailFade: TrailFade;
   /** カップインの紙吹雪。 */
   private confetti: { points: THREE.Points; vel: Float32Array; age: number } | null = null;
   /** パットのときの傾斜の矢印（下る向き・長さと色が急さ）。 */
@@ -256,11 +258,10 @@ export class GolfGame {
         polygonOffsetFactor: -4,
       }),
     );
-    // 打った球の軌跡。次に打つまで残す（どう飛んだかを見返して、次の狙いに生かす）。
-    this.trail = new THREE.Line(
-      new THREE.BufferGeometry(),
-      new THREE.LineBasicMaterial({ color: 0xffe98a, transparent: true, opacity: 0.85 }),
-    );
+    // 打った球の軌跡。止まってから少し見せて消す（golf/trail.ts）。
+    const trailMaterial = new THREE.LineBasicMaterial({ color: 0xffe98a, transparent: true, opacity: 0.85 });
+    this.trail = new THREE.Line(new THREE.BufferGeometry(), trailMaterial);
+    this.trailFade = new TrailFade(this.trail, trailMaterial, 0.85);
     this.slopes = new THREE.LineSegments(
       new THREE.BufferGeometry(),
       new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.9 }),
@@ -444,6 +445,7 @@ export class GolfGame {
    */
   private readyToAim(): void {
     this.phase = 'aim';
+    this.trailFade.settle();
     this.needle = -1;
     this.clubLocked = false;
     const b = this.ball.pos;
@@ -569,6 +571,7 @@ export class GolfGame {
       perfect: perfect && !putt,
     });
     setLine(this.trail, []);
+    this.trailFade.show();
     this.strokes++;
     if (putt) {
       const st = this.stats[this.target.number - 1];
@@ -593,6 +596,7 @@ export class GolfGame {
   update(dt: number): void {
     this.intro = Math.max(0, this.intro - dt);
     this.updateConfetti(dt);
+    this.trailFade.update(dt);
     if (this.phase === 'aim') {
       if (this.aimInput !== 0) this.rotateAim(this.aimInput * AIM_KEY_SPEED * dt);
       if (this.distInput !== 0) this.pushAim(this.distInput * Math.max(3, this.aimDistance * DIST_KEY_SPEED) * dt);
@@ -632,6 +636,7 @@ export class GolfGame {
     const h = this.target;
     if (this.ball.state === 'holed') {
       this.phase = 'holed';
+      this.trailFade.settle();
       this.holedViewYaw = this.aimYaw;
       this.holedViewPitch = 0.42;
       this.scores[h.number - 1] = this.strokes;

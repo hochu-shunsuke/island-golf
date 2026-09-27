@@ -1581,6 +1581,8 @@ function placeFlagMarkers(game: GolfGame, from: { x: number; z: number }): void 
   camera.updateMatrixWorld();
   for (const h of game.course) {
     const target = h === game.target;
+    // 打つ間は、今のホールの旗だけ（ほかのホールの番号が遠くに浮いて散らかっていた）。空から見る間は全部。
+    if (!target && !scout) continue;
     const d = Math.hypot(h.pin.x - from.x, h.pin.z - from.z);
     if (target && !scout && d < 25) continue;
     game.pinTop(h, pinScreen).project(camera);
@@ -1599,7 +1601,7 @@ function placeFlagMarkers(game: GolfGame, from: { x: number; z: number }): void 
 
 const rivalScreen = new THREE.Vector3();
 const rivalMarkers: { x: number; y: number; text: string; color: number }[] = [];
-/** COM の相手の球の上に名前を出す（画面に映っている球だけ）。カメラの行列は placeFlagMarkers が更新してある。 */
+/** COM と友達の球の上に色の点を出す（画面に映っている球だけ）。カメラの行列は placeFlagMarkers が更新してある。 */
 function placeRivalMarkers(rivals: readonly OpponentState[]): void {
   rivalMarkers.length = 0;
   for (const r of rivals) {

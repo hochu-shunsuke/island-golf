@@ -2482,3 +2482,179 @@ kbd {
 .room-status {
   text-align: center;
 }
+
+/* ---- スマホの遊ぶ画面: 上の帯 1 本と下の段 1 本。景色の真ん中は空ける ----
+   以前はホール・風・順位・地図・クラブ・合言葉が別々の札で散らばり、狭い画面で見るものが乱立していた
+   （利用者の判断）。上の帯にホールと風、帯の下に通算と順位の小さな札（押すと順位表）、右の列に休憩・空から・地図、
+   下の段にクラブと打つボタン。すりガラスは帯と札とボタンだけにする。 */
+:root[data-input='touch'] {
+  --strip-top: max(16px, env(safe-area-inset-top));
+  /* 右の列（休憩・空から見る、幅 44px）の左まで。 */
+  --strip-right: calc(max(16px, env(safe-area-inset-right)) + 52px);
+  --strip-h: 56px;
+  /* 横向きやタブレットで横いっぱいに伸ばさない（真ん中の旗の札に重なった）。 */
+  --strip-w: min(calc(100vw - max(16px, env(safe-area-inset-left)) - var(--strip-right)), 380px);
+  --touch-bottom: max(20px, calc(env(safe-area-inset-bottom) + 10px));
+}
+
+:root[data-input='touch'] .golf-hud {
+  left: max(16px, env(safe-area-inset-left));
+  right: auto;
+  width: var(--strip-w);
+  top: var(--strip-top);
+  height: var(--strip-h);
+  box-sizing: border-box;
+  max-width: none;
+  align-items: center;
+  gap: 10px;
+  padding: 0 116px 0 12px;
+}
+
+:root[data-input='touch'] .hole-meta {
+  padding-top: 0;
+}
+
+:root[data-input='touch'] .golf-line {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 通算は帯の下の札に出す。 */
+:root[data-input='touch'] .gl-total {
+  display: none;
+}
+
+/* 風は帯の右の端に入れる（札を分けない）。 */
+:root[data-input='touch'] .wind-meter {
+  left: calc(max(16px, env(safe-area-inset-left)) + var(--strip-w));
+  right: auto;
+  translate: -100% 0;
+  top: var(--strip-top);
+  height: var(--strip-h);
+  box-sizing: border-box;
+  gap: 6px;
+  padding: 0 10px;
+  background: none;
+  border: none;
+  border-left: 1px solid var(--edge);
+  border-radius: 0;
+  box-shadow: none;
+  backdrop-filter: none;
+}
+
+:root[data-input='touch'] .wind-dial {
+  width: 32px;
+  height: 32px;
+}
+
+:root[data-input='touch'] .wind-info b {
+  font-size: 20px;
+}
+
+/* 通算と順位の札。順位があるときだけ押せて、順位表を開く。 */
+.score-chip {
+  display: none;
+}
+
+:root[data-input='touch'] .score-chip.on {
+  position: absolute;
+  left: max(16px, env(safe-area-inset-left));
+  top: calc(var(--strip-top) + var(--strip-h) + 8px);
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 30px;
+  padding: 0 12px;
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--ink);
+  background: var(--glass);
+  border: 1px solid var(--edge);
+  border-radius: 15px;
+  backdrop-filter: blur(10px);
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.6);
+  pointer-events: none;
+}
+
+:root[data-input='touch'] .score-chip.on.has-rank {
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+.score-chip small {
+  font-weight: 400;
+  color: var(--faint);
+}
+
+.chip-caret {
+  width: 6px;
+  height: 6px;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  rotate: 45deg;
+  translate: 0 -2px;
+  opacity: 0.7;
+  transition: rotate 200ms ease, translate 200ms ease;
+}
+
+.score-chip.open .chip-caret {
+  rotate: -135deg;
+  translate: 0 2px;
+}
+
+/* 順位表は札を押したときだけ、札の下に開く。 */
+:root[data-input='touch'] .standings,
+:root[data-input='touch'] .standings.on {
+  display: none;
+  left: max(16px, env(safe-area-inset-left));
+  top: calc(var(--strip-top) + var(--strip-h) + 44px);
+}
+
+:root[data-input='touch'] .standings.on.open {
+  display: flex;
+}
+
+/* 地図は右の列、空から見るボタンの下（列の真ん中にそろえる）。 */
+:root[data-input='touch'] .hole-map {
+  top: calc(max(68px, calc(env(safe-area-inset-top) + 52px)) + 52px);
+  right: calc(max(16px, env(safe-area-inset-right)) - 6px);
+  translate: none;
+  width: 56px;
+  height: 102px;
+}
+
+/* 下の段: クラブと打つボタンの高さの真ん中をそろえる。 */
+:root[data-input='touch'] .g-shot {
+  right: max(16px, env(safe-area-inset-right));
+  bottom: var(--touch-bottom);
+  width: 72px;
+  height: 72px;
+}
+
+:root[data-input='touch'] .golf-power {
+  left: max(16px, env(safe-area-inset-left));
+  bottom: calc(var(--touch-bottom) + 8px);
+}
+
+/* 合言葉は休憩の画面に出ている。遊んでいる間は隠す。 */
+.golfing .hud {
+  opacity: 0;
+}
+
+/* COM と友達の球の上は、色の点だけ（名前の札は順位表に任せる）。 */
+.rival-marker {
+  padding: 0;
+  background: none;
+  border: none;
+}
+
+.rival-marker i {
+  width: 9px;
+  height: 9px;
+  border: none;
+  box-shadow: 0 0 0 1.5px rgba(8, 14, 18, 0.55), 0 1px 4px rgba(0, 0, 0, 0.4);
+}
