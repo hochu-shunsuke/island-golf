@@ -1875,8 +1875,9 @@ renderer.setAnimationLoop(() => {
     sky.update(camera, elapsed);
     updateIslandLight(dt);
     water.update(camera, elapsed);
-    // 遠景の島は、チャンクに覆われた升目と画面の外の升目を描かない（overviewMesh.ts）。
+    // 遠景の島は、チャンクに覆われた升目と画面の外の升目を描かない（overviewMesh.ts）。遠くの林は画面に入る木だけ。
     overview.update(camera);
+    farForest.update(camera, elapsed);
     renderer.render(scene, camera);
     renderWarmupNeeded = false;
   }

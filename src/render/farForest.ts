@@ -26,7 +26,31 @@ import { paint } from './treeGeometry';
  * 近づいて本物に切り替わっても大きさが変わらないようにする。
  *
  * 飛んでいる間は、本物の木を描いているチャンクの所では描かない（coverage が 0.75 を越える所）。
+ *
+ * **画面に入る木だけを GPU に渡す。** 種類ごとに島全体を 1 つにまとめているので、three の画面外の判定が効かず、
+ * カメラの後ろの木まで毎回全部描いていた（画面に入るのは 1〜2 割）。カメラが少し動くか向きを変えたときだけ、
+ * 画面より少し広い範囲に入る木（本物の木のチャンクの下は除く）を選び直し、その本数だけを描く。
  */
+
+/** 選び直す目安: カメラの移動（m）と向きの変化（度）、最短の間隔（秒）。 */
+const REPICK_MOVE = 40;
+const REPICK_TURN = 12;
+const REPICK_MIN_S = 0.2;
+/** これより大きく動いた・向きを変えたら、間を待たずに選び直す（空撮のカットの切り替えで、木が欠けないように）。 */
+const REPICK_JUMP = 300;
+const REPICK_JUMP_TURN = 40;
+/** 選ぶときの画面の広げ方（度）。選び直すまでに向きが変わっても、画面の端に木が欠けないように。 */
+const PICK_MARGIN = 14;
+/** 木 1 本の大きさ（m）。幹の根元の点ではなく、この半径の球で画面に入るかを見る。 */
+const TREE_RADIUS = 12;
+
+interface FarBatch {
+  mesh: THREE.InstancedMesh;
+  /** 全部の木の姿勢と色（ここから画面に入る木を選んで mesh へ写す）。 */
+  matrices: Float32Array;
+  colors: Float32Array;
+  total: number;
+}
 
 const BARK = 0x6b5744;
 
@@ -92,6 +116,18 @@ export class FarForest {
   };
   private readonly material: THREE.MeshLambertMaterial;
   private readonly geometries = new Map<number, THREE.BufferGeometry | null>();
+  private batches: FarBatch[] = [];
+  private readonly pickCamera = new THREE.PerspectiveCamera();
+  private readonly frustum = new THREE.Frustum();
+  private readonly viewProj = new THREE.Matrix4();
+  private readonly sphere = new THREE.Sphere(new THREE.Vector3(), TREE_RADIUS);
+  private readonly lastPos = new THREE.Vector3(Infinity, 0, 0);
+  private readonly lastDir = new THREE.Vector3();
+  private readonly dir = new THREE.Vector3();
+  private lastFov = 0;
+  private lastAspect = 0;
+  private lastPick = -Infinity;
+  private coverageVersion = -1;
 
   constructor() {
     this.material = new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true });
@@ -140,10 +176,92 @@ export class FarForest {
       if (!geo) continue;
       const count = b.matrices.length / 16;
       const mesh = new THREE.InstancedMesh(geo, this.material, count);
-      mesh.instanceMatrix = new THREE.InstancedBufferAttribute(b.matrices, 16);
-      mesh.instanceColor = new THREE.InstancedBufferAttribute(b.colors, 3);
-      mesh.computeBoundingSphere();
+      // 中身は update で画面に入る木だけを写す。three の画面外の判定は島全体の球になるので使わない。
+      mesh.instanceMatrix = new THREE.InstancedBufferAttribute(new Float32Array(b.matrices), 16);
+      mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+      mesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(b.colors), 3);
+      mesh.instanceColor.setUsage(THREE.DynamicDrawUsage);
+      mesh.frustumCulled = false;
       this.group.add(mesh);
+      this.batches.push({ mesh, matrices: b.matrices, colors: b.colors, total: count });
+    }
+    this.lastPos.set(Infinity, 0, 0);
+  }
+
+  /** 描く前に毎コマ呼ぶ。カメラが少し動くか向きを変えたときだけ、画面に入る木を選び直す。 */
+  update(camera: THREE.PerspectiveCamera, now: number): void {
+    if (this.batches.length === 0) return;
+    const tex = this.uniforms.uCoverage.value as THREE.DataTexture | null;
+    const covOn = this.uniforms.uCoverageOn.value > 0.5 && tex !== null;
+    const version = covOn ? tex!.version : -2;
+    camera.getWorldDirection(this.dir);
+    const dist = camera.position.distanceTo(this.lastPos);
+    const dot = this.dir.dot(this.lastDir);
+    const moved = dist > REPICK_MOVE;
+    const turned = dot < Math.cos(THREE.MathUtils.degToRad(REPICK_TURN));
+    const lens = camera.fov !== this.lastFov || camera.aspect !== this.lastAspect;
+    const covChanged = version !== this.coverageVersion;
+    if (!moved && !turned && !lens && !covChanged) return;
+    // 初め・覆いが変わった・カメラが飛んだ（空撮のカットの切り替え）ときはすぐ。少し動いただけなら間を空ける。
+    const jumped = dist > REPICK_JUMP || dot < Math.cos(THREE.MathUtils.degToRad(REPICK_JUMP_TURN));
+    if (!covChanged && !lens && !jumped && now - this.lastPick < REPICK_MIN_S) return;
+    this.lastPick = now;
+    this.lastPos.copy(camera.position);
+    this.lastDir.copy(this.dir);
+    this.lastFov = camera.fov;
+    this.lastAspect = camera.aspect;
+    this.coverageVersion = version;
+
+    // 画面より上下左右に PICK_MARGIN 度ずつ広いカメラで選ぶ。
+    const halfV = THREE.MathUtils.degToRad(camera.fov / 2);
+    const halfH = Math.atan(Math.tan(halfV) * camera.aspect);
+    const m = THREE.MathUtils.degToRad(PICK_MARGIN);
+    const wideV = Math.min(halfV + m, THREE.MathUtils.degToRad(85));
+    const wideH = Math.min(halfH + m, THREE.MathUtils.degToRad(85));
+    const pc = this.pickCamera;
+    pc.fov = THREE.MathUtils.radToDeg(wideV * 2);
+    pc.aspect = Math.tan(wideH) / Math.tan(wideV);
+    pc.near = camera.near;
+    pc.far = camera.far;
+    pc.position.copy(camera.position);
+    pc.quaternion.copy(camera.quaternion);
+    pc.updateProjectionMatrix();
+    pc.updateMatrixWorld();
+    this.viewProj.multiplyMatrices(pc.projectionMatrix, pc.matrixWorldInverse);
+    this.frustum.setFromProjectionMatrix(this.viewProj);
+
+    const data = covOn ? (tex!.image.data as Uint8Array) : null;
+    const covered = (x: number, z: number) => {
+      if (!data) return false;
+      const i = Math.floor(x / CHUNK_SIZE) + COVERAGE_OFFSET;
+      const j = Math.floor(z / CHUNK_SIZE) + COVERAGE_OFFSET;
+      if (i < 0 || j < 0 || i >= COVERAGE_SIZE || j >= COVERAGE_SIZE) return false;
+      // シェーダーの閾値（0.75）と同じ。本物の木を置いたチャンクだけ。
+      return data[j * COVERAGE_SIZE + i] > 191;
+    };
+    const c = this.sphere.center;
+    for (const b of this.batches) {
+      const outM = b.mesh.instanceMatrix.array as Float32Array;
+      const outC = b.mesh.instanceColor!.array as Float32Array;
+      let n = 0;
+      for (let k = 0; k < b.total; k++) {
+        const o = k * 16;
+        const x = b.matrices[o + 12];
+        const z = b.matrices[o + 14];
+        c.set(x, b.matrices[o + 13] + TREE_RADIUS * 0.5, z);
+        if (!this.frustum.intersectsSphere(this.sphere) || covered(x, z)) continue;
+        outM.set(b.matrices.subarray(o, o + 16), n * 16);
+        outC.set(b.colors.subarray(k * 3, k * 3 + 3), n * 3);
+        n++;
+      }
+      b.mesh.count = n;
+      b.mesh.visible = n > 0;
+      b.mesh.instanceMatrix.clearUpdateRanges();
+      b.mesh.instanceMatrix.addUpdateRange(0, n * 16);
+      b.mesh.instanceMatrix.needsUpdate = true;
+      b.mesh.instanceColor!.clearUpdateRanges();
+      b.mesh.instanceColor!.addUpdateRange(0, n * 3);
+      b.mesh.instanceColor!.needsUpdate = true;
     }
   }
 
@@ -158,5 +276,6 @@ export class FarForest {
       this.group.remove(child);
       if (child instanceof THREE.InstancedMesh) child.dispose();
     }
+    this.batches = [];
   }
 }
