@@ -4,6 +4,7 @@ import { LIE_POWER, type Point3, clubFor, needleEffect, reachOf, solvePower, tri
 import { BALL_RADIUS, BALL_STEP, Ball, type GolfGround } from './ball';
 import { CLUBS, PUTTER } from './clubs';
 import type { Hole } from './course';
+import type { OpponentState, Opponents } from './opponents';
 
 /**
  * COM の相手。プレイヤーが打つたびに、全員が同時に 1 打ずつ打つ（Golf Clash と同じ。順番を待たない）。
@@ -96,18 +97,6 @@ interface Plan {
   yaw: number;
   power: number;
   curve: number;
-}
-
-/** 画面に出すための、1 人の今の様子。 */
-export interface RivalState {
-  spec: RivalSpec;
-  /** ホールごとの打数（回り終えた所だけ）。 */
-  scores: readonly (number | undefined)[];
-  /** 今のホールの打数と、入れたか。 */
-  strokes: number;
-  holed: boolean;
-  /** 球の位置（入れたら null）。 */
-  ball: Point3 | null;
 }
 
 class Rival {
@@ -239,7 +228,7 @@ function gauss(rand: () => number): number {
   return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
 }
 
-export class Rivals {
+export class Rivals implements Opponents {
   readonly group = new THREE.Group();
   private readonly list: Rival[];
   /** プレイヤーが先に入れた後、残りを打ち切っている間。 */
@@ -332,9 +321,11 @@ export class Rivals {
   }
 
   /** 画面に出す様子。 */
-  states(): RivalState[] {
+  states(): OpponentState[] {
     return this.list.map((r) => ({
-      spec: r.spec,
+      id: r.spec.id,
+      name: r.spec.name,
+      color: r.spec.color,
       scores: r.scores,
       strokes: r.strokes,
       holed: r.holed,

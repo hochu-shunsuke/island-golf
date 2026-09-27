@@ -1714,12 +1714,58 @@ kbd {
   gap: 12px;
 }
 
+/* コース ID は押すと入れ直せる（右の小さな印が目印）。 */
 .course-seed {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0;
   font-size: 24px;
   font-weight: 600;
   letter-spacing: 0.12em;
   color: var(--ink);
+  background: none;
+  border: none;
+  border-radius: 8px;
   font-variant-numeric: tabular-nums;
+}
+
+.course-seed .icon {
+  width: 15px;
+  height: 15px;
+  color: var(--faint);
+}
+
+.course-seed:hover .icon {
+  color: var(--ink);
+}
+
+.course-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* 小さな丸いアイコンのボタン（コースの共有）。 */
+.icon-btn {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+}
+
+.icon-btn .icon {
+  width: 15px;
+  height: 15px;
+}
+
+.icon-btn:hover {
+  color: var(--ink);
+  border-color: rgba(255, 255, 255, 0.4);
 }
 
 .course-id .seed-dice {
@@ -1840,7 +1886,7 @@ kbd {
 /* 遊び方（COM と対戦・ひとりで）。選んでいる方だけ明るく。 */
 .mode-switch {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(3, 1fr);
   gap: 4px;
   padding: 4px;
   border-radius: 999px;
@@ -1850,9 +1896,10 @@ kbd {
 }
 
 .mode-btn {
-  padding: 8px 10px;
-  font-size: 13px;
-  letter-spacing: 0.08em;
+  padding: 8px 4px;
+  font-size: 12.5px;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
   color: var(--muted);
   background: transparent;
   border: 1px solid transparent;
@@ -1868,14 +1915,9 @@ kbd {
   border-color: rgba(255, 255, 255, 0.22);
 }
 
-.sub-btns {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 10px;
-}
-
-.sub-btns button {
-  display: inline-flex;
+/* 友達とのときだけ出す「部屋に入る」（部屋を作るのは上のプレイのボタン）。 */
+.join-room {
+  display: none;
   align-items: center;
   justify-content: center;
   gap: 8px;
@@ -1888,15 +1930,15 @@ kbd {
   backdrop-filter: blur(10px);
 }
 
-.sub-btns button:hover {
+.play-panel.friends .join-room:not(.none) {
+  display: inline-flex;
+}
+
+.join-room:hover {
   border-color: rgba(255, 255, 255, 0.4);
 }
 
-.sub-btns button:active {
-  transform: translateY(1px);
-}
-
-/* 「IDで入る」「このコースを共有」の窓。 */
+/* 「コース ID を入れる」「部屋に入る」「このコースを共有」の窓。 */
 .modal {
   position: absolute;
   inset: 0;
@@ -1914,6 +1956,9 @@ kbd {
 
 .modal-card {
   width: min(420px, calc(100vw - 32px));
+  /* 横向きの電話でも、下のボタンまでスクロールで届く。 */
+  max-height: calc(100dvh - 24px);
+  overflow-y: auto;
   padding: 8px 0 20px;
   border-radius: 22px;
   background: rgba(18, 27, 33, 0.9);
@@ -2046,11 +2091,22 @@ kbd {
     text-indent: 0.12em;
   }
 
-  .course-panel {
-    left: 16px;
-    right: 16px;
+  /* コースの札と、遊び方・プレイを、画面の下から積む（友達とのときは「部屋に入る」の分だけ札が上がる）。 */
+  .panel {
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    gap: 10px;
+    padding: 0 16px max(16px, env(safe-area-inset-bottom));
+  }
+
+  .course-panel,
+  .play-panel {
+    position: static;
     width: auto;
-    bottom: calc(max(16px, env(safe-area-inset-bottom)) + 184px);
+  }
+
+  .course-panel {
     padding: 13px 15px 12px;
   }
 
@@ -2066,20 +2122,9 @@ kbd {
     font-size: 12px;
   }
 
-  .play-panel {
-    left: 16px;
-    right: 16px;
-    width: auto;
-    bottom: max(16px, env(safe-area-inset-bottom));
-  }
-
   .play-panel .start {
     padding: 16px;
     font-size: 18px;
-  }
-
-  .sub-btns button {
-    padding: 12px 8px;
   }
 }
 
@@ -2176,6 +2221,14 @@ kbd {
   display: flex;
 }
 
+/* 友達と: 順位の上に部屋の番号（後から友達に聞かれても伝えられるように）。 */
+.st-title {
+  margin-bottom: 3px;
+  font-size: 10.5px;
+  letter-spacing: 0.16em;
+  color: var(--faint);
+}
+
 .st-row {
   display: grid;
   grid-template-columns: 12px 9px 48px 58px 30px;
@@ -2220,6 +2273,14 @@ kbd {
 :root[data-input='touch'] .st-row {
   grid-template-columns: 10px 8px 40px 46px 26px;
   gap: 4px;
+}
+
+/* 横向きの電話: 風の下では打つボタンに重なる（4 人並ぶと届く）。空いている右上、休憩ボタンの左へ。 */
+@media (max-height: 520px) {
+  :root[data-input='touch'] .standings {
+    top: max(16px, env(safe-area-inset-top));
+    right: calc(max(16px, env(safe-area-inset-right)) + 56px);
+  }
 }
 
 /* COM の球の上の名前（色の点つき）。 */
@@ -2280,4 +2341,112 @@ kbd {
 .scorecard tr.score + tr.score td,
 .rr-table tr.score + tr.score td {
   padding-top: 2px;
+}
+
+/* ---- 友達と（部屋の窓） ---- */
+
+.room-status {
+  margin: 4px 22px 0;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--muted);
+}
+
+.room-players {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 12px 22px 0;
+  padding: 0;
+  list-style: none;
+}
+
+.room-players li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: 12px;
+  font-size: 14px;
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.room-players li.away {
+  opacity: 0.5;
+}
+
+.room-players i {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 1px solid rgba(0, 0, 0, 0.35);
+}
+
+.room-players small {
+  margin-left: auto;
+  padding: 1px 8px;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 999px;
+}
+
+.room-actions {
+  display: grid;
+  grid-template-columns: 1fr 1.4fr;
+  gap: 10px;
+  margin: 18px 22px 0;
+}
+
+.room-actions button {
+  padding: 12px 10px;
+  font-size: 14px;
+  letter-spacing: 0.08em;
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+}
+
+.room-actions .room-action {
+  font-weight: 600;
+  color: #10201f;
+  background: #eef2f3;
+  border-color: transparent;
+}
+
+.room-actions .room-action:disabled {
+  cursor: default;
+  font-weight: 400;
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.12);
+}
+
+/* 部屋の番号（読み上げて伝えられるよう大きく）。 */
+.room-code {
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: 12px;
+  margin: 8px 22px 0;
+}
+
+.room-code span {
+  font-size: 11px;
+  letter-spacing: 0.2em;
+  color: var(--faint);
+}
+
+.room-id {
+  font-size: 34px;
+  font-weight: 600;
+  letter-spacing: 0.22em;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+
+.room-status {
+  text-align: center;
 }

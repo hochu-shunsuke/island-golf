@@ -8,14 +8,17 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
+    "typecheck:server": "tsc --noEmit -p server/tsconfig.json",
     "test": "node test/ball.test.mjs && node test/course.test.mjs",
-    "ci": "npm run typecheck && npm run build && npm test",
+    "ci": "npm run typecheck && npm run typecheck:server && npm run build && npm test",
+    "relay": "wrangler dev --port 8787",
     "deploy": "npm run build && wrangler deploy"
   },
   "dependencies": {
     "three": "^0.185.1"
   },
   "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260927.1",
     "@types/three": "^0.185.1",
     "typescript": "^7.0.2",
     "vite": "^8.1.5",

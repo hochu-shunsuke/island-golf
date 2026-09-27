@@ -17,7 +17,12 @@ import { OverviewMesh } from './render/overviewMesh';
 import { MORNING, Sky } from './render/sky';
 import { Water } from './render/water';
 import { type PlayMode, type RoundResult, type ScoreRow, type StandingRow, Overlay } from './ui/overlay';
-import { RIVALS } from './golf/rivals';
+import { RIVALS, Rivals } from './golf/rivals';
+import { Peers, peerColor } from './golf/peers';
+import type { Opponents } from './golf/opponents';
+import { RoomClient, type RoomStatus } from './net/room';
+import { type RoomView, cleanName, isRoomId, newRoomId } from '../shared/room';
+import type { OpponentState } from './golf/opponents';
 import { type TouchControls, createTouchControls, hasTouchInput, isTouchDevice } from './ui/touch';
 import { Flyover } from './view/flyover';
 import { FinaleCamera } from './view/finale';
@@ -71,9 +76,13 @@ let inputMode: 'touch' | 'keys' = preferredTouch ? 'touch' : 'keys';
 // 判定はここ 1 か所だけ。CSS もこの結果を見る。
 document.documentElement.dataset.input = inputMode;
 
-let params: IslandParams = courseParams(location.hash);
+/** アドレスの # は「合言葉」か、友達を部屋に呼ぶ「合言葉@部屋の番号」。 */
+const [hashCourse = '', hashRoom = ''] = location.hash.replace(/^#/, '').split('@');
+let params: IslandParams = courseParams(`#${hashCourse}`);
 // `#` 無しで開いたら今日のコース（同じ日なら誰でも同じコース。スコアを見せ合える）。
-if (!cleanSeed(location.hash.replace(/^#/, '').split('.')[0] ?? '')) params = { ...params, seed: dailySeed(dayIndex()) };
+if (!cleanSeed(hashCourse.split('.')[0] ?? '')) params = { ...params, seed: dailySeed(dayIndex()) };
+/** ピンと風の日。ふだんは今日、友達の部屋では部屋を作った人の日に合わせる（夜中の 0 時をまたいでも同じピン）。 */
+let courseDay = dayIndex();
 
 /** 今日のコースを回っているか。 */
 function isDaily(): boolean {
@@ -129,11 +138,19 @@ resizeRenderer();
 
 // ── 画面 ───────────────────────────────────────────────
 const overlay = new Overlay(document.getElementById('ui')!, params, inputMode === 'touch', touchCapable, {
-  onStart: (pointerType) => handleStart(pointerType),
+  // 友達と: 回っている途中でなければ、部屋の窓を開く（無ければ部屋を作る）。
+  onStart: (pointerType) => {
+    if (playMode === 'friends' && !party?.inRound) {
+      openRoom();
+      return;
+    }
+    handleStart(pointerType);
+  },
   // 「IDで入る」: 友達から聞いたコースの合言葉へ。
   onSeed: (seed) => {
     const clean = cleanSeed(seed);
     if (!clean || clean === params.seed) return;
+    leaveRoom();
     params = { ...params, seed: clean };
     overlay.setParams(params);
     commit();
@@ -143,6 +160,14 @@ const overlay = new Overlay(document.getElementById('ui')!, params, inputMode ==
   // ラウンドの終わり: 1 番のティーへ（暗転して読み込み直す）。PC はこの押下でマウスを取り直す。
   onAgain: () => {
     if (!golf) return;
+    // 友達と: 部屋の窓へ戻る（もう一度はホストが始める）。
+    if (playMode === 'friends') {
+      leaveFinale();
+      stopPlaying();
+      overlay.show();
+      openRoom();
+      return;
+    }
     leaveFinale();
     goNextHole();
     if (inputMode === 'keys' && document.pointerLockElement !== canvas) void requestMouseLock();
@@ -150,6 +175,8 @@ const overlay = new Overlay(document.getElementById('ui')!, params, inputMode ==
   // 今日のコースへ戻る。
   onToday: () => {
     if (isDaily()) return;
+    leaveRoom();
+    courseDay = dayIndex();
     params = { ...params, seed: dailySeed(dayIndex()) };
     overlay.setParams(params);
     commit();
@@ -162,7 +189,25 @@ const overlay = new Overlay(document.getElementById('ui')!, params, inputMode ==
     } catch {
       // 覚えられない環境では、この画面の間だけ。
     }
+    // 友達と以外にしたら、部屋から出る。
+    if (mode !== 'friends') leaveRoom();
     applyRivals();
+    updatePartyLabel();
+  },
+  onJoinRoom: (id) => joinRoom(id),
+  // 友達との 2 つ目のボタン: 部屋に入っていなければ「部屋に入る」（番号を入れる）、入っていれば「友達を呼ぶ」。
+  onFriendsSecondary: () => (party ? openRoom() : overlay.openJoinRoom()),
+  onRoomAction: (pointerType) => roomAction(pointerType),
+  onRoomLeave: () => leaveRoom(),
+  onRoomName: (name) => {
+    playerName = cleanName(name) || 'ゲスト';
+    try {
+      localStorage.setItem(NAME_KEY, playerName);
+    } catch {
+      // 覚えられない環境では、この画面の間だけ。
+    }
+    party?.client.send({ t: 'name', name: playerName });
+    overlay.setRoomName(playerName);
   },
   // ラウンドの終わり: 開始画面へ戻って、別のコースを引く。
   onNewCourse: () => {
@@ -173,26 +218,271 @@ const overlay = new Overlay(document.getElementById('ui')!, params, inputMode ==
   },
 });
 
-// ── 遊び方（COM と対戦・ひとりで） ────────────────────────
+// ── 遊び方（ひとりで・COM と対戦・友達と） ────────────────────────
 /** 遊び方はこの端末に覚えておく。初めてはひとりで（利用者が決めた）。 */
 const MODE_KEY = 'hole-in-isle:mode';
 let playMode: PlayMode = (() => {
   try {
-    return localStorage.getItem(MODE_KEY) === 'com' ? 'com' : 'solo';
+    const saved = localStorage.getItem(MODE_KEY);
+    return saved === 'com' || saved === 'friends' ? saved : 'solo';
   } catch {
     return 'solo';
   }
 })();
+// 部屋に呼ぶリンクで開いたら、友達と。
+if (isRoomId(hashRoom)) playMode = 'friends';
 overlay.setMode(playMode);
 
-/** 遊び方に合わせて COM の相手を置き直し、1 番のティーから回り直す（回っている途中なら、続きは捨てる）。 */
+/**
+ * 遊び方に合わせた相手。COM の乱数の元は合言葉と日付（同じコース・同じ日なら COM も同じ打ち方をする）。
+ * 友達とは、入っている部屋の人（部屋に入っていなければ、まだひとり）。
+ */
+function makeOpponents(game: GolfGame): Opponents | null {
+  if (playMode === 'friends') {
+    if (!party) return null;
+    party.peers = new Peers(game.ground);
+    if (party.view) party.peers.setRoom(party.view, party.me);
+    return party.peers;
+  }
+  return playMode === 'com' ? new Rivals(RIVALS, game.ground, `${params.seed}:${dayIndex()}`) : null;
+}
+
+// ── 友達と（部屋） ────────────────────────────────────
+/** 入っている部屋。 */
+interface Party {
+  id: string;
+  client: RoomClient;
+  /** 部屋での自分の番号（入れるまで空）。 */
+  me: string;
+  view: RoomView | null;
+  peers: Peers | null;
+  status: RoomStatus;
+  /** 今の回りに自分も加わっているか（「はじめる」「n 番から入る」を押した）。回りが終わると外れる。 */
+  inRound: boolean;
+  /** 「はじめる」を送って、部屋が始まったと返すのを待っている（その間に届いた前の様子で inRound を外さない）。 */
+  starting: boolean;
+}
+/** 入っている部屋（入っていなければ null）。 */
+let party: Party | null = null;
+
+/** 部屋で見せる名前（この端末に覚えておく）。 */
+const NAME_KEY = 'hole-in-isle:name';
+let playerName = (() => {
+  try {
+    return cleanName(localStorage.getItem(NAME_KEY)) || 'ゲスト';
+  } catch {
+    return 'ゲスト';
+  }
+})();
+
+/** 部屋の窓を開く（入っていなければ、新しい部屋を作る）。 */
+function openRoom(): void {
+  if (party) {
+    renderRoom();
+    overlay.showRoom(true);
+    return;
+  }
+  joinRoom(newRoomId());
+}
+
+/**
+ * 部屋に入る（無ければ、この番号で作られる。作る人のコースと日が部屋のコースになる）。
+ * 部屋の窓を開き、アドレスを「合言葉@部屋の番号」にする（読み直しても同じ部屋へ戻る）。
+ */
+function joinRoom(id: string): void {
+  if (party?.id === id) {
+    openRoom();
+    return;
+  }
+  leaveRoom();
+  const client = new RoomClient(
+    id,
+    () => ({ name: playerName, seed: params.seed, day: courseDay, pars: course.map((h) => h.par) }),
+    {
+      onWelcome: (me, view) => {
+        if (!party) return;
+        party.me = me;
+        onRoomView(view);
+      },
+      onRoom: (view) => onRoomView(view),
+      onShot: (who, hole, shot) => party?.peers?.onShot(who, hole, shot),
+      onRest: (who, hole, rest) => party?.peers?.onRest(who, hole, rest),
+      onStatus: (status) => {
+        if (!party) return;
+        party.status = status;
+        if (status === 'full') {
+          overlay.flash('この部屋は満員です（4 人まで）。');
+          leaveRoom();
+          return;
+        }
+        renderRoom();
+      },
+    },
+  );
+  party = { id, client, me: '', view: null, peers: null, status: 'connecting', inRound: false, starting: false };
+  if (playMode !== 'friends') {
+    playMode = 'friends';
+    overlay.setMode('friends');
+  }
+  applyRivals();
+  history.replaceState(null, '', addressHash());
+  renderRoom();
+  overlay.showRoom(true);
+  updatePartyLabel();
+}
+
+/** 部屋を出る。 */
+function leaveRoom(): void {
+  if (!party) return;
+  party.client.close();
+  party = null;
+  overlay.showRoom(false);
+  history.replaceState(null, '', addressHash());
+  if (golf) golf.setOpponents(makeOpponents(golf));
+  updatePartyLabel();
+}
+
+/** 部屋の様子が届いた。 */
+function onRoomView(view: RoomView): void {
+  if (!party) return;
+  party.view = view;
+  if (view.phase === 'play') party.starting = false;
+  else if (!party.starting) party.inRound = false;
+  // 部屋のコースに合わせる（リンクの合言葉や日と違えば作り直す）。
+  if (view.seed !== params.seed || view.day !== courseDay) {
+    params = { ...params, seed: view.seed };
+    courseDay = view.day;
+    overlay.setParams(params);
+    commit();
+  }
+  party.peers?.setRoom(view, party.me);
+  // 部屋が次のホールへ進めた（待ち時間が過ぎた）のに、まだ入れていなければ、部屋が付けた打数（ダブルパー）で打ち切る。
+  if (golf && entered && view.phase !== 'lobby' && golf.phase !== 'holed') {
+    const behind = view.phase === 'done' || view.hole > golf.target.number;
+    const given = view.players.find((p) => p.id === party!.me)?.scores[golf.target.number - 1];
+    if (behind && given != null) {
+      golf.concede(given);
+      overlay.flash('時間切れ。このホールはダブルパーで次へ。');
+      holedCardAt = performance.now();
+      if (golf.target.number === golf.course.length) {
+        const t = sumScores(golf.roundScores, golf.course.map((h) => h.par));
+        finalePending = { total: t.total, totalPar: t.par };
+      }
+    }
+  }
+  renderRoom();
+  updatePartyLabel();
+}
+
+/** 部屋の窓の中身を描き直す。 */
+function renderRoom(): void {
+  if (!party) return;
+  const v = party.view;
+  const me = party.me;
+  const status =
+    party.status !== 'open' || !v
+      ? 'つないでいます…'
+      : v.phase === 'play'
+        ? party.inRound
+          ? `${v.hole} 番を回っています。友達は途中からでも入れます。`
+          : `みんなが ${v.hole} 番を回っています。途中から入れます。`
+        : v.phase === 'done'
+          ? '1 ラウンド終わりました。もう一度回れます。'
+          : '番号を伝えるかリンクを送ると、友達が入れます。先に始めても、友達はあとから入れます。';
+  let action: { label: string; enabled: boolean } | null = null;
+  if (v && party.status === 'open') {
+    if (v.phase !== 'play') action = { label: v.phase === 'done' ? 'もう一度はじめる' : 'はじめる', enabled: sceneReady };
+    else action = { label: party.inRound ? '続きへ' : `${v.hole} 番から入る`, enabled: sceneReady };
+  }
+  overlay.setRoom({
+    id: party.id,
+    link: `${location.origin}${location.pathname}#${params.seed}@${party.id}`,
+    status,
+    players: (v?.players ?? []).map((p) => ({
+      name: p.name,
+      color: p.id === me ? null : peerColor(p.slot),
+      you: p.id === me,
+      online: p.online,
+      note: !p.online ? '離席中' : v?.phase === 'play' ? (p.playing ? 'プレイ中' : '準備中') : null,
+    })),
+    action,
+  });
+  // 部屋での名前（同じ名前の人がいれば、部屋が番号を付けている）。
+  overlay.setRoomName(v?.players.find((p) => p.id === me)?.name ?? playerName);
+}
+
+/**
+ * 部屋の窓の大きなボタン。始まっていなければ「はじめる」（誰が押してもよい）、始まっていれば途中から加わる
+ * （もう加わっていれば続きへ）。押した本人はそのまま回り始める。
+ */
+function roomAction(pointerType: string): void {
+  const v = party?.view;
+  if (!party || !v || !ground) return;
+  if (v.phase !== 'play') {
+    party.client.send({ t: 'start' });
+    party.starting = true;
+    beginPartyRound(1, null, pointerType);
+    return;
+  }
+  if (party.inRound) {
+    overlay.showRoom(false);
+    handleStart(pointerType);
+    return;
+  }
+  // 途中から: 部屋が覚えている自分の打数（読み直した人）を戻して、今のホールから。
+  party.client.send({ t: 'start' });
+  const mine = v.players.find((p) => p.id === party!.me);
+  beginPartyRound(v.hole, mine?.scores ?? null, pointerType);
+}
+
+/** 友達とのラウンドを始める（Pointer Lock は押した操作の中でしか取れないので、ボタンから直接呼ぶ）。 */
+function beginPartyRound(hole: number, scores: readonly (number | null)[] | null, pointerType: string): void {
+  if (!ensureGolf() || !golf || !party) return;
+  party.inRound = true;
+  overlay.showRoom(false);
+  leaveFinale();
+  holedCardAt = 0;
+  golf.setOpponents(makeOpponents(golf));
+  if (hole > 1) golf.resumeRound(scores ?? [], golf.course[hole - 1]);
+  handleStart(pointerType);
+  updatePartyLabel();
+}
+
+/**
+ * 友達とのときのボタン（その時にできることを 1 つずつ）:
+ * 部屋に入っていない → 「部屋を作る」「部屋に入る」。部屋にいてまだ回っていない → 「部屋を開く」だけ。
+ * 回っている途中（休憩中） → 「続きから」「友達を呼ぶ」。
+ */
+function updatePartyLabel(): void {
+  if (playMode !== 'friends') {
+    overlay.setStartLabel(null);
+    return;
+  }
+  if (!party) {
+    overlay.setStartLabel('部屋を作る');
+    overlay.setFriendsSecondary('部屋に入る');
+  } else if (party.inRound) {
+    overlay.setStartLabel(null);
+    overlay.setFriendsSecondary('友達を呼ぶ');
+  } else {
+    overlay.setStartLabel('部屋を開く');
+    overlay.setFriendsSecondary(null);
+  }
+}
+
+/** 今のアドレスの #（部屋に入っていれば「合言葉@部屋の番号」、今日のコースなら無し）。 */
+function addressHash(): string {
+  if (party) return `#${params.seed}@${party.id}`;
+  return isDaily() ? location.pathname : `#${params.seed}`;
+}
+
+/** 遊び方に合わせて相手を置き直し、1 番のティーから回り直す（回っている途中なら、続きは捨てる）。 */
 function applyRivals(): void {
   if (!golf) return;
   leaveFinale();
   holedCardAt = 0;
   finalePending = null;
-  // 乱数の元は合言葉と日付（同じコース・同じ日なら COM も同じ打ち方をする）。
-  golf.setRivals(playMode === 'com' ? RIVALS : [], `${params.seed}:${dayIndex()}`);
+  golf.setOpponents(makeOpponents(golf));
   if (entered) {
     entered = false;
     overlay.resetEntered();
@@ -203,26 +493,26 @@ function applyRivals(): void {
 function scoreRows(status: GolfStatus): ScoreRow[] {
   return [
     { label: 'あなた', scores: status.scores, you: true },
-    ...status.rivals.map((r) => ({ label: r.spec.name, scores: r.scores, color: r.spec.color })),
+    ...status.rivals.map((r) => ({ label: r.name, scores: r.scores, color: r.color })),
   ];
 }
 
 /** 回り終えたホールの打数の合計と、そのパーの合計。 */
-function sumScores(scores: readonly (number | undefined)[], pars: readonly number[]): { total: number; par: number } {
+function sumScores(scores: readonly (number | null | undefined)[], pars: readonly number[]): { total: number; par: number } {
   let total = 0;
   let par = 0;
   pars.forEach((p, k) => {
     const s = scores[k];
-    if (s === undefined) return;
+    if (s == null) return;
     total += s;
     par += p;
   });
   return { total, par };
 }
 
-/** 順位（回り終えたホールの通算で。同じなら同じ順位）。COM がいなければ null。 */
+/** 順位（回り終えたホールのパーとの差で。同じなら同じ順位）。COM も部屋もなければ null。 */
 function standingsOf(status: GolfStatus, pars: readonly number[]): StandingRow[] | null {
-  if (status.rivals.length === 0) return null;
+  if (status.rivals.length === 0 && !party) return null;
   const me = sumScores(status.scores, pars);
   const rows = [
     {
@@ -237,13 +527,13 @@ function standingsOf(status: GolfStatus, pars: readonly number[]): StandingRow[]
     ...status.rivals.map((r) => {
       const t = sumScores(r.scores, pars);
       return {
-        name: r.spec.name,
-        color: r.spec.color,
+        name: r.name,
+        color: r.color,
         you: false,
         diff: t.total - t.par,
         total: t.total,
         par: t.par,
-        now: r.holed ? '✓' : r.strokes === 0 ? 'ティー' : `${r.strokes} 打`,
+        now: r.away ? '離席中' : r.idle ? '準備中' : r.holed ? '✓' : r.strokes === 0 ? 'ティー' : `${r.strokes} 打`,
       };
     }),
   ].sort((a, b) => a.diff - b.diff);
@@ -257,8 +547,10 @@ function standingsOf(status: GolfStatus, pars: readonly number[]): StandingRow[]
   }));
 }
 
-/** 合言葉を振り直して、別のコースを引く。 */
+/** 合言葉を振り直して、別のコースを引く（部屋にいれば出る。部屋のコースは部屋を作った人のもの）。 */
 function newCourse(): void {
+  leaveRoom();
+  courseDay = dayIndex();
   params = { ...params, seed: randomSeed() };
   overlay.setParams(params);
   commit();
@@ -304,7 +596,7 @@ function request(): void {
     erosionN: EROSION_RES,
     sun: [sun.x, sun.y, sun.z],
     // ピン位置は日ごとに替わる（同じ URL なら、同じ日は誰でも同じピン）。
-    day: dayIndex(),
+    day: courseDay,
   };
   lastRequested = req.id;
   sceneReady = false;
@@ -336,6 +628,7 @@ function show(msg: GenerateResult): void {
     scout = false;
     entered = false;
     overlay.resetEntered();
+    updatePartyLabel();
   }
   const field = courseField ? new CourseField(courseField) : null;
   courseSampler = field;
@@ -381,6 +674,8 @@ worker.onmessage = (ev: MessageEvent<WorkerResult>) => {
     if (msg.id === drawnId && msg.id === lastRequested) {
       sceneReady = true;
       overlay.setReady(true);
+      // 部屋の窓の「はじめる」「スタート」も押せるように。
+      renderRoom();
     }
     // Worker は光まで計算し終えたので、次の島を頼める。
     busy = false;
@@ -406,7 +701,7 @@ worker.onmessage = (ev: MessageEvent<WorkerResult>) => {
 
 function commit(): void {
   // 今日のコースは `#` を付けない（読み直しても、次の日に開いても、その日の今日のコースになる）。
-  history.replaceState(null, '', isDaily() ? location.pathname : `#${params.seed}`);
+  history.replaceState(null, '', addressHash());
   overlay.setDaily(isDaily() ? dayLabel() : null);
   request();
 }
@@ -469,8 +764,15 @@ function ensureGolf(): GolfGame | null {
     if (last) finalePending = { total, totalPar };
     else holedCardAt = performance.now() + HOLED_CARD_DELAY;
   };
-  // 遊び方に合わせて COM の相手を置く（初めは 1 番のティーから）。
-  golf.setRivals(playMode === 'com' ? RIVALS : [], `${params.seed}:${dayIndex()}`);
+  // 遊び方に合わせて相手を置く（初めは 1 番のティーから）。
+  golf.setOpponents(makeOpponents(golf));
+  // 友達と: 自分の一打と止まった所を部屋へ（友達の画面で同じように飛ぶ）。
+  golf.onPlayerShot = (hole, shot) => {
+    if (playMode === 'friends') party?.client.send({ t: 'shot', hole, shot });
+  };
+  golf.onPlayerRest = (hole, rest) => {
+    if (playMode === 'friends') party?.client.send({ t: 'rest', hole, rest });
+  };
   // 開始画面の空撮の間は、打つための目印を出さない（遊び始めたら出す）。
   golf.aids.visible = playing;
   scene.add(golf.group);
@@ -557,20 +859,21 @@ function startFinale(total: number, totalPar: number): void {
   const dateLabel = dayLabel();
   const daily = isDaily();
   const marks = pars.map((p, k) => scoreEmoji(scores[k], p)).join('');
-  // COM と回ったときの順位（合計の少ない順。同じなら同じ順位）。
+  // COM や友達と回ったときの順位（同じなら同じ順位）。
   const rivals = golf.rivalStates;
   const entries = [
     { name: 'あなた', total, par: totalPar, you: true, color: null as number | null },
     ...rivals.map((r) => {
       const t = sumScores(r.scores, pars);
-      return { name: r.spec.name, total: t.total, par: t.par, you: false, color: r.spec.color as number | null };
+      return { name: r.name, total: t.total, par: t.par, you: false, color: r.color as number | null };
     }),
-  ].sort((a, b) => a.total - b.total);
+  ].sort((a, b) => a.total - a.par - (b.total - b.par));
+  // 回ったホールのパーとの差で比べる（友達と: 途中から入った人は回ったホールが少ない）。
   const ranking =
     rivals.length === 0
       ? []
       : entries.map((e) => ({
-          rank: 1 + entries.filter((x) => x.total < e.total).length,
+          rank: 1 + entries.filter((x) => x.total - x.par < e.total - e.par).length,
           name: e.name,
           total: e.total,
           toPar: toPar(e.total, e.par),
@@ -592,12 +895,12 @@ function startFinale(total: number, totalPar: number): void {
     fairway: stats.filter((st) => st?.fairway === true).length,
     fairwayOf: stats.filter((st) => st && st.fairway !== null).length,
     putts: stats.reduce((a, st) => a + (st?.putts ?? 0), 0),
-    birdies: pars.filter((p, k) => scores[k] !== undefined && scores[k]! < p).length,
+    birdies: pars.filter((p, k) => scores[k] != null && scores[k]! < p).length,
     ranking,
-    rivalRows: rivals.map((r) => ({ label: r.spec.name, scores: [...r.scores], color: r.spec.color })),
+    rivalRows: rivals.map((r) => ({ label: r.name, scores: [...r.scores], color: r.color })),
     shareText: [
       daily ? `Hole in Isle 今日のコース（${dateLabel}）` : `Hole in Isle ${seed}（${dateLabel} のピン）`,
-      `${total} 打（${toPar(total, totalPar)}）${myRank ? ` · COM と ${ranking.length} 人で ${myRank} 位` : ''}`,
+      `${total} 打（${toPar(total, totalPar)}）${myRank ? ` · ${playMode === 'friends' ? '友達' : 'COM'} と ${ranking.length} 人で ${myRank} 位` : ''}`,
       marks,
       // 今日のコースは、`#` 無しのアドレスを送る（開いた人がその日の今日のコースを回れる。Wordle と同じ）。
       daily ? `${location.origin}${location.pathname}` : `${location.origin}${location.pathname}#${seed}`,
@@ -652,9 +955,18 @@ function holedCard(game: GolfGame): { head: string; foot: string } {
   const how = inputMode === 'touch' ? 'タップ' : 'クリックかどれかのキー';
   const ranks = lastStatus ? standingsOf(lastStatus, game.course.map((c) => c.par)) : null;
   const rank = ranks?.find((r) => r.you)?.rank;
+  // 友達と: みんなが終えるまでは待つ（部屋が次のホールへ進めたら進める）。
+  const v = party?.view;
+  const waiting = playMode === 'friends' && !game.rivalsSettled && v;
+  const doneCount = v ? v.players.filter((p) => p.online && p.playing && p.scores[h.number - 1] != null).length : 0;
+  const online = v ? v.players.filter((p) => p.online && p.playing).length : 0;
   return {
     head: `<b>${h.number} 番</b> ${strokes} 打 · ${scoreName(strokes, h.par)}<span>通算 ${toPar(total, par)}${rank ? ` · ${rank} 位` : ''}</span>`,
-    foot: `${how}で ${next.number} 番のティーへ ▸`,
+    foot: waiting
+      ? `みんなを待っています（${doneCount}/${online}）`
+      : h.number === game.course.length
+        ? `${how}で結果へ ▸`
+        : `${how}で ${next.number} 番のティーへ ▸`,
   };
 }
 
@@ -826,6 +1138,7 @@ function startPlaying(): void {
   if (!entered) {
     entered = true;
     overlay.setEntered();
+    updatePartyLabel();
   }
   // 近くのチャンク（足元 2m 格子・木）は、本番の島が届いたときに作ってある（prepareCourseView）。
   controls.enabled = false;
@@ -1212,7 +1525,7 @@ function placeFlagMarkers(game: GolfGame, from: { x: number; z: number }): void 
 const rivalScreen = new THREE.Vector3();
 const rivalMarkers: { x: number; y: number; text: string; color: number }[] = [];
 /** COM の相手の球の上に名前を出す（画面に映っている球だけ）。カメラの行列は placeFlagMarkers が更新してある。 */
-function placeRivalMarkers(rivals: readonly import('./golf/rivals').RivalState[]): void {
+function placeRivalMarkers(rivals: readonly OpponentState[]): void {
   rivalMarkers.length = 0;
   for (const r of rivals) {
     if (!r.ball) continue;
@@ -1221,8 +1534,8 @@ function placeRivalMarkers(rivals: readonly import('./golf/rivals').RivalState[]
     rivalMarkers.push({
       x: ((rivalScreen.x + 1) / 2) * innerWidth,
       y: ((1 - rivalScreen.y) / 2) * innerHeight,
-      text: r.spec.name,
-      color: r.spec.color,
+      text: r.name,
+      color: r.color,
     });
   }
   overlay.setRivalMarkers(rivalMarkers);
@@ -1316,13 +1629,18 @@ renderer.setAnimationLoop(() => {
       golf.ball.pos,
       golf.phase === 'aim' || golf.phase === 'swing' ? golf.aimPoint : null,
       golf.target.pin,
-      rivals.flatMap((r) => (r.ball ? [{ x: r.ball.x, z: r.ball.z, color: r.spec.color }] : [])),
+      rivals.flatMap((r) => (r.ball ? [{ x: r.ball.x, z: r.ball.z, color: r.color }] : [])),
     );
     if (lastStatus) {
       const pars = golf.course.map((h) => h.par);
       // カップインの後のスコアカードは、COM の相手が打ち終えてから（全員の打数を並べて出す）。
+      // 友達とは、みんなを待っている間も出す（足の案内が「待っています」になる）。
       const card =
-        holedCardAt > 0 && performance.now() >= holedCardAt && golf.phase === 'holed' && !holeFade && golf.rivalsSettled;
+        holedCardAt > 0 &&
+        performance.now() >= holedCardAt &&
+        golf.phase === 'holed' &&
+        !holeFade &&
+        (golf.rivalsSettled || playMode === 'friends');
       overlay.setScorecard(
         pars,
         scoreRows(lastStatus),
@@ -1331,7 +1649,7 @@ renderer.setAnimationLoop(() => {
         card ? holedCard(golf) : null,
       );
       // スコアカードを出している間は順位をしまう（カードに全員の打数が並ぶ。スマホでは重なって見えた）。
-      overlay.setStandings(finaleCam || card ? null : standingsOf(lastStatus, pars));
+      overlay.setStandings(finaleCam || card ? null : standingsOf(lastStatus, pars), party ? `部屋 ${party.id}` : null);
     }
     if (!finaleCam) {
       placeFlagMarkers(golf, golf.ball.pos);
@@ -1398,4 +1716,7 @@ if (import.meta.env.DEV) {
 }
 // 開いたら、暗い画面に作っている段階を出し、島・木・光が揃ってから空撮を始める。
 overlay.setFade(1);
+// 部屋に呼ぶリンク（#合言葉@部屋の番号）で開いたら、その部屋へ。
+if (isRoomId(hashRoom)) joinRoom(hashRoom);
+updatePartyLabel();
 commit();

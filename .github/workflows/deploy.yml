@@ -50,7 +50,7 @@ jobs:
           node-version: '22'
           cache: npm
       - run: npm ci
-      # 静的ファイルだけを配る Worker。dist/ を組んでから出す（先に組まないと古い画面が出る）。
+      # 画面（dist/）と友達との中継（server/）を 1 つの Worker で出す。dist/ を組んでから出す（先に組まないと古い画面が出る）。
       - run: npm run build
       - name: Deploy to Cloudflare
         run: npx wrangler deploy

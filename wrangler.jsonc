@@ -1,10 +1,18 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  // Hole in Isle（コード名 island-golf）。サーバの処理は無く、ビルドした静的ファイルを配るだけ。
-  // コースは URL の # に載るので、サーバはコースを知らない。
+  // Hole in Isle（コード名 island-golf）。ビルドしたゲームの静的ファイルと、友達と対戦する部屋の中継を 1 つの Worker で配る。
   // 名前がそのまま無料の公開先になる: https://hole-in-isle.hochu.workers.dev
   // （2026-09-27 まで island-golf。古い island-golf の Worker は、こちらへ転送するだけの物に置き換えてある）
   "name": "hole-in-isle",
-  "compatibility_date": "2026-09-01",
-  "assets": { "directory": "./dist" }
+  "main": "server/index.ts",
+  "compatibility_date": "2026-07-29",
+  // 静的ファイルは Worker より先に配信側が返す。binding は打ち間違いのパスにゲームを返すため。
+  "assets": { "directory": "./dist", "binding": "ASSETS" },
+  "durable_objects": {
+    "bindings": [{ "name": "ROOMS", "class_name": "GolfRoom" }]
+  },
+  "migrations": [
+    // 無料プランで Durable Objects を使うには SQLite の保存方式にする（new_classes だと有料プランを求められる）。
+    { "tag": "v1", "new_sqlite_classes": ["GolfRoom"] }
+  ]
 }

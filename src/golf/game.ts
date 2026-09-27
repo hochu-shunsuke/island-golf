@@ -5,7 +5,8 @@ import { LIE_POWER, type Point3, type Trial, clubAllowed, clubFor, needleEffect,
 import { BALL_RADIUS, Ball, type GolfGround, type Surface } from './ball';
 import { CLUBS, type Club, PUTTER } from './clubs';
 import { type Hole, holeIntro } from './course';
-import { type RivalSpec, type RivalState, Rivals } from './rivals';
+import type { OpponentState, Opponents } from './opponents';
+import type { RestInfo, ShotInfo } from '../../shared/room';
 
 /**
  * コースを回る。**落とし所の輪を置いて狙い、正確さの針を 1 回止めて打つ**。
@@ -60,8 +61,8 @@ export interface GolfStatus {
   scores: readonly (number | undefined)[];
   /** カップに入った後に進む先（最後のホールの後は 1 番）。 */
   next: Hole;
-  /** COM の相手の様子（ひとりで回るときは空）。 */
-  rivals: readonly RivalState[];
+  /** 一緒に回る相手（COM か友達）の様子（ひとりで回るときは空）。 */
+  rivals: readonly OpponentState[];
 }
 
 /** 音を鳴らすための知らせ（audio/golfSounds.ts）。 */
@@ -136,8 +137,11 @@ export class GolfGame {
   /** 打つための目印（軌道の予告・落とし所の輪・軌跡・傾きの矢印）。開始画面の空撮では隠す。旗と球は残す。 */
   readonly aids = new THREE.Group();
   readonly ball: Ball;
-  /** COM の相手（ひとりで回るときは null）。 */
-  private rivals: Rivals | null = null;
+  /** 一緒に回る相手（COM か友達。ひとりで回るときは null）。 */
+  private rivals: Opponents | null = null;
+  /** 自分が打った一打と、止まった所（友達と対戦するとき、部屋へ送る）。 */
+  onPlayerShot: ((hole: number, shot: ShotInfo) => void) | null = null;
+  onPlayerRest: ((hole: number, rest: RestInfo) => void) | null = null;
   phase: GolfPhase = 'aim';
   strokes = 0;
   clubIndex = 0;
@@ -276,13 +280,15 @@ export class GolfGame {
     return out.set(this.aimPoint.x, this.golfGround.height(this.aimPoint.x, this.aimPoint.z) + 1.2, this.aimPoint.z);
   }
 
-  /**
-   * COM の相手を替える（空ならひとりで）。seedKey は乱数の元（合言葉と日付。同じコース・同じ日なら同じ結果）。
-   * 1 番のティーから回り直す。
-   */
-  setRivals(specs: readonly RivalSpec[], seedKey: string): void {
+  /** 球の地面（COM と友達の球も同じ地面を転がる）。 */
+  get ground(): GolfGround {
+    return this.golfGround;
+  }
+
+  /** 一緒に回る相手を替える（null ならひとりで）。1 番のティーから回り直す。 */
+  setOpponents(opponents: Opponents | null): void {
     if (this.rivals) this.aids.remove(this.rivals.group);
-    this.rivals = specs.length > 0 ? new Rivals(specs, this.golfGround, seedKey) : null;
+    this.rivals = opponents;
     if (this.rivals) {
       this.rivals.onChange = () => this.emit();
       // 打つための目印と同じく、開始画面の空撮では隠す。
@@ -291,8 +297,8 @@ export class GolfGame {
     this.teeOff(this.course[0]);
   }
 
-  /** COM の相手の今の様子（球の位置は毎フレーム変わる。ひとりなら空）。 */
-  get rivalStates(): RivalState[] {
+  /** 一緒に回る相手の今の様子（球の位置は毎フレーム変わる。ひとりなら空）。 */
+  get rivalStates(): OpponentState[] {
     return this.rivals?.states() ?? [];
   }
 
@@ -338,6 +344,42 @@ export class GolfGame {
     const lie = this.ball.lie;
     if (this.strokes === 1 && s.fairway !== null) s.fairway = holed || lie === 'fairway' || lie === 'green';
     if ((holed || lie === 'green') && this.strokes <= this.target.par - 2) s.gir = true;
+  }
+
+  /** 止まった所を友達へ（本人の画面の結果に、友達の画面を合わせる）。 */
+  private reportRest(holed: boolean): void {
+    const p = this.ball.pos;
+    this.onPlayerRest?.(this.target.number, { x: p.x, y: p.y, z: p.z, lie: this.ball.lie, strokes: this.strokes, holed });
+  }
+
+  /**
+   * このホールを打ち切る（友達と対戦で、待ち時間が過ぎて部屋が次のホールへ進めたとき。打数はダブルパー）。
+   * 球が転がっていても止め、カップインの後と同じく次のティーへ進める状態にする。
+   */
+  concede(strokes: number): void {
+    if (this.phase === 'holed') return;
+    this.ball.place(this.ball.pos.x, this.ball.pos.z);
+    this.strokes = strokes;
+    this.scores[this.target.number - 1] = strokes;
+    this.phase = 'holed';
+    this.arc.visible = false;
+    this.roll.visible = false;
+    this.landing.visible = false;
+    this.slopes.visible = false;
+    this.emit();
+  }
+
+  /**
+   * 回っている途中から戻る（友達と対戦の途中で読み直したとき）。scores は部屋が覚えていた自分の打数。
+   * hole のティーから、次の一打を打てる状態にする。
+   */
+  resumeRound(scores: readonly (number | null)[], hole: Hole): void {
+    this.teeOff(hole);
+    this.scores.length = 0;
+    scores.forEach((s, k) => {
+      if (s !== null) this.scores[k] = s;
+    });
+    this.emit();
   }
 
   /** カップに入った後に、次のホールのティーへ。 */
@@ -485,6 +527,18 @@ export class GolfGame {
     const power = this.power * effect.power;
     const lieLoss = putt ? 1 : LIE_POWER[this.ball.lie];
     this.ball.hit(yaw, club.loft, club.speed * power * lieLoss, club.spin, club.bite, effect.curve);
+    // 友達には、同じ物理でもう一度飛ばせるよう、打った一打をそのまま送る。
+    this.onPlayerShot?.(this.target.number, {
+      x: this.lastSpot.x,
+      z: this.lastSpot.z,
+      lie: this.ball.lie,
+      yaw,
+      loft: club.loft,
+      speed: club.speed * power * lieLoss,
+      spin: club.spin,
+      bite: club.bite,
+      curve: effect.curve,
+    });
     // COM の相手も同時に 1 打ずつ打つ。
     this.rivals?.shoot(this.target);
     const c = this.clubIndex;
@@ -567,6 +621,7 @@ export class GolfGame {
       const under = this.strokes < h.par || this.strokes === 1;
       this.celebrate(this.strokes === 1 || this.strokes <= h.par - 2 ? 260 : under ? 140 : 50);
       if (under) this.onSound({ type: 'cheer', big: this.strokes === 1 || this.strokes <= h.par - 2 });
+      this.reportRest(true);
       // COM の相手の残りは打ち切る（スコアカードと結果は rivalsSettled を待って出す）。
       this.rivals?.finish();
       // 打数と通算は、画面の真ん中のスコアカード（ラウンドの終わりは結果の窓）が出す。
@@ -580,6 +635,7 @@ export class GolfGame {
       this.strokes++;
       this.onMessage('水に入りました。1 打罰で打ち直し。');
       this.ball.place(this.lastSpot.x, this.lastSpot.z);
+      this.reportRest(false);
       this.readyToAim();
       return;
     }
@@ -588,6 +644,7 @@ export class GolfGame {
       this.restTimer += dt;
       if (this.restTimer > 0.7) {
         this.noteRest(false);
+        this.reportRest(false);
         this.readyToAim();
       }
     }

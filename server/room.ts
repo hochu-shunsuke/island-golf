@@ -1,0 +1,411 @@
+import {
+  HOLE_WAIT_MS,
+  MAX_NAME_LENGTH,
+  MAX_ROOM_PLAYERS,
+  type RestInfo,
+  type RoomPlayer,
+  type RoomView,
+  type ServerMessage,
+  type ShotInfo,
+  cleanName,
+} from '../shared/room';
+
+/**
+ * 友達と対戦する部屋（部屋の番号ごとに 1 つの Durable Object）。
+ *
+ * - 全員が同じホールを同時に、自分の球を自分の速さで打つ（Golf With Your Friends のオンラインと同じ）。
+ *   全員が入れたら、そろって次のホールへ。誰かが入れてから HOLE_WAIT_MS 待っても終わらない人はダブルパーで打ち切る
+ * - 中継するのは打った一打と止まった所だけ。コースは各自のブラウザが合言葉から同じものを作る
+ * - 休眠する WebSocket で受ける（全員が黙っている間は課金されない）。部屋の様子は storage に置き、休眠から覚めても残す
+ * - いつでも入れる。回っている途中に来た人は、そのとき回っているホールから加わる（順位は回ったホールのパーとの差で比べる）。
+ *   以前は途中から入れず、先に始めると友達が締め出された
+ * - 始めるのは誰でもよい（そろうのを待たずに始めてよい）。ホストは置かない（以前は置いていて、ホストが別のアプリへ
+ *   行くと次の人へ移り、「後から来た人がホストになった」ように見えた）
+ * - 「部屋を出る」を押した人は一覧から消す。切れただけの人は残す（別のアプリから戻れば続きから）。
+ *   満員のときは、つながっていない人の枠を空けて新しい人を入れる
+ */
+
+interface Member {
+  /** ブラウザが持つ固定の番号（つなぎ直しても同じ）。他の人には見せない。 */
+  cid: string;
+  /** 他の人に見せる番号。 */
+  id: string;
+  slot: number;
+  name: string;
+  scores: (number | null)[];
+  done: boolean;
+  /** 今の回りに加わっているか（shared/room.ts の RoomPlayer.playing）。 */
+  playing: boolean;
+}
+
+interface RoomState {
+  seed: string;
+  day: number;
+  pars: number[];
+  phase: RoomView['phase'];
+  hole: number;
+  members: Member[];
+  /** 今のホールで最初に入れた時刻（ms）。まだなら null。 */
+  firstDoneAt: number | null;
+}
+
+/** WebSocket に付けておく情報（休眠から覚めても残る）。 */
+interface Attachment {
+  cid: string;
+}
+
+/** 誰もいなくなってから部屋を片付けるまで（ms）。 */
+const CLEANUP_MS = 30 * 60_000;
+
+function cleanCid(raw: unknown): string {
+  return typeof raw === 'string' ? raw.replace(/[^a-z0-9]/gi, '').slice(0, 32) : '';
+}
+
+/** 同じ名前の人がいれば番号を付ける（「ゲスト」が 2 人並ぶと、どちらがどちらか分からない）。 */
+function uniqueName(room: RoomState, name: string, cid: string): string {
+  const taken = new Set(room.members.filter((m) => m.cid !== cid).map((m) => m.name));
+  if (!taken.has(name)) return name;
+  for (let n = 2; ; n++) {
+    const next = `${name.slice(0, MAX_NAME_LENGTH - String(n).length)}${n}`;
+    if (!taken.has(next)) return next;
+  }
+}
+
+function cleanSeed(raw: unknown): string {
+  return typeof raw === 'string' ? raw.toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 16) : '';
+}
+
+/** 受け取った数をそのまま信じない（NaN や巨大な値で他の人の画面を壊さないように）。 */
+function num(v: unknown, limit = 1e6): number | null {
+  if (typeof v !== 'number' || !Number.isFinite(v)) return null;
+  return Math.max(-limit, Math.min(limit, v));
+}
+
+function cleanShot(raw: unknown): ShotInfo | null {
+  if (typeof raw !== 'object' || raw === null) return null;
+  const s = raw as Record<string, unknown>;
+  const keys = ['x', 'z', 'yaw', 'loft', 'speed', 'spin', 'bite', 'curve'] as const;
+  const out: Partial<ShotInfo> = { lie: typeof s.lie === 'string' ? s.lie.slice(0, 12) : 'fairway' };
+  for (const k of keys) {
+    const v = num(s[k]);
+    if (v === null) return null;
+    out[k] = v;
+  }
+  return out as ShotInfo;
+}
+
+function cleanRest(raw: unknown): RestInfo | null {
+  if (typeof raw !== 'object' || raw === null) return null;
+  const s = raw as Record<string, unknown>;
+  const x = num(s.x);
+  const y = num(s.y);
+  const z = num(s.z);
+  const strokes = num(s.strokes, 99);
+  if (x === null || y === null || z === null || strokes === null) return null;
+  return {
+    x,
+    y,
+    z,
+    lie: typeof s.lie === 'string' ? s.lie.slice(0, 12) : 'fairway',
+    strokes: Math.max(0, Math.round(strokes)),
+    holed: s.holed === true,
+  };
+}
+
+export class GolfRoom {
+  private room: RoomState | null = null;
+
+  constructor(private readonly state: DurableObjectState) {
+    // 休眠したまま ping に pong を返す（立ち止まって考えている間に切られないように。DO は起きない）。
+    state.setWebSocketAutoResponse(new WebSocketRequestResponsePair('ping', 'pong'));
+    void state.blockConcurrencyWhile(async () => {
+      this.room = (await state.storage.get<RoomState>('room')) ?? null;
+      // playing を持つ前に作られた部屋は、全員が回っている扱い。
+      for (const m of this.room?.members ?? []) m.playing ??= this.room!.phase === 'play';
+    });
+  }
+
+  async fetch(request: Request): Promise<Response> {
+    if (request.headers.get('Upgrade') !== 'websocket') return new Response('expected websocket', { status: 426 });
+    const pair = new WebSocketPair();
+    this.state.acceptWebSocket(pair[1]);
+    pair[1].serializeAttachment({ cid: '' } satisfies Attachment);
+    return new Response(null, { status: 101, webSocket: pair[0] });
+  }
+
+  async webSocketMessage(ws: WebSocket, raw: string | ArrayBuffer): Promise<void> {
+    if (typeof raw !== 'string' || raw.length > 2048) return;
+    let msg: Record<string, unknown>;
+    try {
+      msg = JSON.parse(raw);
+    } catch {
+      return;
+    }
+    const me = ws.deserializeAttachment() as Attachment | null;
+    if (!me) return;
+
+    if (msg.t === 'hello') {
+      await this.hello(ws, msg);
+      return;
+    }
+    const room = this.room;
+    const member = room?.members.find((m) => m.cid === me.cid);
+    if (!room || !member) return;
+
+    if (msg.t === 'name') {
+      member.name = uniqueName(room, cleanName(msg.name) || member.name, member.cid);
+      await this.save();
+      this.broadcastRoom();
+    } else if (msg.t === 'start') {
+      if (room.phase === 'play') {
+        // 途中から加わる（今のホールから）。もう誰かが入れていれば、待ち時間を数え直す（来たばかりの人が打てるように）。
+        if (member.playing) return;
+        member.playing = true;
+        member.done = false;
+        if (room.firstDoneAt !== null) {
+          room.firstDoneAt = Date.now();
+          await this.state.storage.setAlarm(room.firstDoneAt + HOLE_WAIT_MS);
+        }
+      } else {
+        // 誰が押しても始まる（ホストを待たなくてよい）。ほかの人は、それぞれ押したときに加わる。
+        room.phase = 'play';
+        room.hole = 1;
+        room.firstDoneAt = null;
+        for (const m of room.members) {
+          m.scores = room.pars.map(() => null);
+          m.done = false;
+          m.playing = m === member;
+        }
+      }
+      await this.save();
+      this.broadcastRoom();
+    } else if (msg.t === 'leave') {
+      room.members = room.members.filter((m) => m !== member);
+      ws.serializeAttachment({ cid: '' } satisfies Attachment);
+      await this.left(ws);
+      try {
+        ws.close(1000, 'leave');
+      } catch {
+        // 閉じかけていれば放っておく。
+      }
+    } else if (msg.t === 'shot') {
+      const shot = cleanShot(msg.shot);
+      const hole = num(msg.hole, 99);
+      if (!shot || hole === null) return;
+      this.broadcast(ws, { t: 'shot', id: member.id, hole, shot });
+    } else if (msg.t === 'rest') {
+      const rest = cleanRest(msg.rest);
+      const hole = num(msg.hole, 99);
+      if (!rest || hole === null) return;
+      this.broadcast(ws, { t: 'rest', id: member.id, hole, rest });
+      if (room.phase !== 'play' || !member.playing || hole !== room.hole || !rest.holed || member.done) return;
+      member.scores[room.hole - 1] = rest.strokes;
+      member.done = true;
+      if (room.firstDoneAt === null) {
+        room.firstDoneAt = Date.now();
+        await this.state.storage.setAlarm(room.firstDoneAt + HOLE_WAIT_MS);
+      }
+      this.advanceIfAllDone();
+      await this.save();
+      this.broadcastRoom();
+    }
+  }
+
+  /** 入る（初めての人は部屋に加え、つなぎ直しの人は古い接続を閉じる）。 */
+  private async hello(ws: WebSocket, msg: Record<string, unknown>): Promise<void> {
+    const cid = cleanCid(msg.cid);
+    if (!cid) return;
+    const name = cleanName(msg.name) || 'ゲスト';
+    let room = this.room;
+    // 空の部屋: 作る人のコースで始める。
+    if (!room || room.members.length === 0) {
+      const pars = Array.isArray(msg.pars)
+        ? msg.pars.slice(0, 18).map((p) => Math.max(2, Math.min(7, Math.round(Number(p) || 4))))
+        : [];
+      room = this.room = {
+        seed: cleanSeed(msg.seed) || 'hakoniwa',
+        day: Math.round(num(msg.day, 1e6) ?? 0),
+        pars: pars.length > 0 ? pars : [4, 4, 4, 3, 5, 3, 5, 4, 4],
+        phase: 'lobby',
+        hole: 1,
+        members: [],
+        firstDoneAt: null,
+      };
+    }
+    let member = room.members.find((m) => m.cid === cid);
+    if (!member) {
+      // 満員なら、つながっていない人（タブを閉じた人など）の枠を空ける。
+      if (room.members.length >= MAX_ROOM_PLAYERS) {
+        const online = this.onlineCids(ws);
+        room.members = room.members.filter((m) => online.has(m.cid));
+      }
+      if (room.members.length >= MAX_ROOM_PLAYERS) {
+        ws.send(JSON.stringify({ t: 'refused', reason: 'full' } satisfies ServerMessage));
+        ws.close(1000, 'full');
+        return;
+      }
+      const used = new Set(room.members.map((m) => m.slot));
+      let slot = 0;
+      while (used.has(slot)) slot++;
+      member = {
+        cid,
+        id: crypto.randomUUID().slice(0, 8),
+        slot,
+        name: uniqueName(room, name, cid),
+        scores: room.pars.map(() => null),
+        done: false,
+        playing: false,
+      };
+      room.members.push(member);
+    } else {
+      member.name = uniqueName(room, name, cid);
+      // 同じ人の古い接続は閉じる（つなぎ直しの後に、古い方が残って二重にならないように）。
+      for (const other of this.state.getWebSockets()) {
+        if (other === ws) continue;
+        const a = other.deserializeAttachment() as Attachment | null;
+        if (a?.cid === cid) {
+          try {
+            other.close(1000, 'replaced');
+          } catch {
+            // 閉じかけていれば放っておく。
+          }
+        }
+      }
+    }
+    ws.serializeAttachment({ cid } satisfies Attachment);
+    // 誰かが戻ってきたら、片付けの予定は取り消す（ホールの待ち時間の予定はそのまま）。
+    if (room.firstDoneAt === null) await this.state.storage.deleteAlarm();
+    await this.save();
+    ws.send(JSON.stringify({ t: 'welcome', you: member.id, room: this.view() } satisfies ServerMessage));
+    this.broadcastRoom({ skip: ws });
+  }
+
+  async webSocketClose(ws: WebSocket): Promise<void> {
+    await this.left(ws);
+  }
+
+  async webSocketError(ws: WebSocket): Promise<void> {
+    await this.left(ws);
+  }
+
+  /** 切れた・出た: 残りが全員入れていれば次のホールへ。誰もいなければ片付けの予定。 */
+  private async left(ws: WebSocket): Promise<void> {
+    const room = this.room;
+    if (!room) return;
+    const online = this.onlineCids(ws);
+    if (online.size === 0) {
+      await this.state.storage.setAlarm(Date.now() + CLEANUP_MS);
+    } else {
+      this.advanceIfAllDone(online);
+    }
+    await this.save();
+    this.broadcastRoom({ gone: ws });
+  }
+
+  /** 待ち時間が過ぎた・誰もいなくなってしばらくたった。 */
+  async alarm(): Promise<void> {
+    const room = this.room;
+    if (!room) return;
+    const online = this.onlineCids();
+    if (online.size === 0) {
+      await this.state.storage.deleteAll();
+      this.room = null;
+      return;
+    }
+    if (room.phase === 'play' && room.firstDoneAt !== null && Date.now() >= room.firstDoneAt + HOLE_WAIT_MS - 1000) {
+      this.advance();
+      await this.save();
+      this.broadcastRoom();
+    }
+  }
+
+  /** つながっていて回っている人が全員このホールを終えたら、次のホールへ（見ているだけの人は待たない）。 */
+  private advanceIfAllDone(online = this.onlineCids()): void {
+    const room = this.room;
+    if (!room || room.phase !== 'play') return;
+    const playing = room.members.filter((m) => m.playing && online.has(m.cid));
+    if (playing.length > 0 && playing.every((m) => m.done)) this.advance();
+  }
+
+  /** 次のホールへ（回っていて終えていない人はダブルパー）。最後のホールの後は終わり。 */
+  private advance(): void {
+    const room = this.room;
+    if (!room) return;
+    const par = room.pars[room.hole - 1] ?? 4;
+    for (const m of room.members) {
+      if (m.playing && !m.done) m.scores[room.hole - 1] = par * 2;
+      m.done = false;
+    }
+    room.firstDoneAt = null;
+    void this.state.storage.deleteAlarm();
+    if (room.hole >= room.pars.length) room.phase = 'done';
+    else room.hole++;
+  }
+
+  private onlineCids(except?: WebSocket): Set<string> {
+    const set = new Set<string>();
+    for (const ws of this.state.getWebSockets()) {
+      if (ws === except) continue;
+      const a = ws.deserializeAttachment() as Attachment | null;
+      if (a?.cid) set.add(a.cid);
+    }
+    return set;
+  }
+
+  private view(except?: WebSocket): RoomView {
+    const room = this.room!;
+    const online = this.onlineCids(except);
+    return {
+      seed: room.seed,
+      day: room.day,
+      phase: room.phase,
+      hole: room.hole,
+      pars: room.pars,
+      players: room.members.map(
+        (m): RoomPlayer => ({
+          slot: m.slot,
+          id: m.id,
+          name: m.name,
+          scores: m.scores,
+          done: m.done,
+          playing: m.playing === true,
+          online: online.has(m.cid),
+        }),
+      ),
+    };
+  }
+
+  private async save(): Promise<void> {
+    if (this.room) await this.state.storage.put('room', this.room);
+  }
+
+  /**
+   * 部屋の様子を全員へ。skip には送らない（入ったばかりの人。welcome で送ってある）。
+   * gone は閉じかけの接続（つながっている数に入れず、送りもしない）。
+   */
+  private broadcastRoom(opts: { skip?: WebSocket; gone?: WebSocket } = {}): void {
+    if (!this.room) return;
+    const text = JSON.stringify({ t: 'room', room: this.view(opts.gone) } satisfies ServerMessage);
+    for (const ws of this.state.getWebSockets()) {
+      if (ws === opts.skip || ws === opts.gone) continue;
+      try {
+        ws.send(text);
+      } catch {
+        // 切れかけの接続は放っておく（close で片付く）。
+      }
+    }
+  }
+
+  /** 送った本人以外へ（送るのは課金されないので、人数分そのまま配る）。 */
+  private broadcast(from: WebSocket, payload: ServerMessage): void {
+    const text = JSON.stringify(payload);
+    for (const ws of this.state.getWebSockets()) {
+      if (ws === from) continue;
+      try {
+        ws.send(text);
+      } catch {
+        // 同上。
+      }
+    }
+  }
+}

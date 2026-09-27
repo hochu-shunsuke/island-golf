@@ -1,3 +1,4 @@
+import { isRoomId } from '../../shared/room';
 import { PERFECT } from '../golf/aim';
 import { LIE_NAMES, toPar, type GolfStatus } from '../golf/game';
 import { KIND_NAMES } from '../golf/course';
@@ -25,15 +26,39 @@ export interface OverlayHandlers {
   onMode: (mode: PlayMode) => void;
   /** 「今日のコースへ」（別のコースを回っているとき）。 */
   onToday: () => void;
+  /** 「部屋に入る」で部屋の番号（数字 6 桁）を入れた。 */
+  onJoinRoom: (id: string) => void;
+  /** 友達とのときの 2 つ目のボタン（部屋に入る・友達を呼ぶ）。 */
+  onFriendsSecondary: () => void;
+  /** 部屋の窓の下の大きなボタン（はじめる・スタート）。pointerType は押した入力。 */
+  onRoomAction: (pointerType: string) => void;
+  /** 部屋を出る。 */
+  onRoomLeave: () => void;
+  /** 名前を替えた。 */
+  onRoomName: (name: string) => void;
 }
 
 /** 遊び方。 */
-export type PlayMode = 'com' | 'solo';
+export type PlayMode = 'solo' | 'com' | 'friends';
+
+/** 部屋の窓に出す様子。 */
+export interface RoomPanel {
+  id: string;
+  /** 友達を呼ぶリンク。 */
+  link: string;
+  /** 上の一文（つないでいます・友達を待っています・始まりました など）。 */
+  status: string;
+  /** note は名前の右の小さな札（プレイ中・準備中・離席中）。 */
+  players: { name: string; color: number | null; you: boolean; online: boolean; note: string | null }[];
+  /** 下の大きなボタン（はじめる・スタート など）。null なら出さない。 */
+  action: { label: string; enabled: boolean } | null;
+}
 
 /** スコアカードの 1 行（プレイヤーか COM の 1 人）。 */
 export interface ScoreRow {
   label: string;
-  scores: readonly (number | undefined)[];
+  /** ホールごとの打数（回っていないホールは null か undefined）。 */
+  scores: readonly (number | null | undefined)[];
   /** 自分の行（強調する）。 */
   you?: boolean;
   /** COM の色（名前の前の点）。 */
@@ -58,7 +83,7 @@ export interface RoundResult {
   seed: string;
   dateLabel: string;
   pars: readonly number[];
-  scores: readonly (number | undefined)[];
+  scores: readonly (number | null | undefined)[];
   total: number;
   totalPar: number;
   /** このラウンドの前までの自己ベスト（初めてなら null）と、更新したか。 */
@@ -90,6 +115,8 @@ const ICON = {
   close: svg('M6 6l12 12M18 6L6 18'),
   /** 空から見る（目）。 */
   eye: svg('M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12zM12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z'),
+  /** 書き替える（コース ID を入れる）。 */
+  edit: svg('M4 20h4L19 9l-4-4L4 16v4zM14 6l4 4'),
   /** 球へ戻る（戻る矢印）。 */
   back: svg('M9 14 4 9l5-5M4 9h10.5a5.5 5.5 0 0 1 0 11H11'),
 };
@@ -103,10 +130,15 @@ const BALL_ICON = `<svg class="ball-icon" viewBox="0 0 24 24" aria-hidden="true"
 </svg>`;
 
 /** 打数とパーの差から、スコアカードの印（丸・四角）の種類。 */
-function scoreMark(s: number | undefined, p: number): string {
-  if (s === undefined) return '';
+function scoreMark(s: number | null | undefined, p: number): string {
+  if (s == null) return '';
   const d = s - p;
   return d <= -2 ? 'eagle' : d === -1 ? 'birdie' : d === 0 ? 'par' : d === 1 ? 'bogey' : 'double';
+}
+
+/** 名前などを HTML に埋めるとき、タグとして読まれないように。 */
+function escapeHtml(text: string): string {
+  return text.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 }
 
 /** 0xrrggbb → CSS の色。 */
@@ -135,7 +167,7 @@ function scoreTable(
       let par = 0;
       pars.forEach((p, k) => {
         const s = row.scores[k];
-        if (s === undefined) return;
+        if (s == null) return;
         total += s;
         par += p;
       });
@@ -148,7 +180,7 @@ function scoreTable(
         })
         .join('');
       const dot = row.color !== undefined ? `<i class="sc-dot" style="background:${hex(row.color)}"></i>` : '';
-      const label = many ? `${dot}${row.label}` : '打数';
+      const label = many ? `${dot}${escapeHtml(row.label)}` : '打数';
       return `<tr class="score${row.you && many ? ' you' : ''}"><th>${label}</th>${cells}<td>${total || ''}<small>${par === 0 ? '' : toPar(total, par)}</small></td></tr>`;
     })
     .join('');
@@ -198,6 +230,8 @@ export class Overlay {
   private touch: boolean;
   private readonly touchCapable: boolean;
   private ready = false;
+  /** プレイのボタンの字の差し替え（null なら「プレイ」「続きから」）。 */
+  private startLabel: string | null = null;
   /** 押せない間のボタンの字（作っている段階）。 */
   private loadingText = 'コースを作っています…';
   private entered = false;
@@ -231,8 +265,11 @@ export class Overlay {
             <button type="button" class="today-btn">今日のコースへ</button>
           </div>
           <div class="course-id">
-            <b class="course-seed"></b>
-            <button type="button" class="seed-dice" title="ランダムに新しいコースを作る">${ICON.refresh}新しいコース</button>
+            <button type="button" class="course-seed" title="別のコース ID を入れる"></button>
+            <div class="course-actions">
+              <button type="button" class="icon-btn course-share" aria-label="このコースを共有" title="このコースを共有">${ICON.link}</button>
+              <button type="button" class="seed-dice" title="ランダムに新しいコースを作る">${ICON.refresh}新しいコース</button>
+            </div>
           </div>
           <p class="status"></p>
           <p class="lead">${DEFAULT_LEAD}</p>
@@ -241,23 +278,21 @@ export class Overlay {
           <div class="mode-switch" role="radiogroup" aria-label="遊び方">
             <button type="button" class="mode-btn" data-mode="solo" role="radio">ひとりで</button>
             <button type="button" class="mode-btn" data-mode="com" role="radio">COM と対戦</button>
+            <button type="button" class="mode-btn" data-mode="friends" role="radio">友達と</button>
           </div>
           <button class="start" disabled>コースを作っています…</button>
-          <div class="sub-btns">
-            <button type="button" class="join-open">${ICON.enter}IDで入る</button>
-            <button type="button" class="share">${ICON.link}共有</button>
-          </div>
+          <button type="button" class="join-room">${ICON.enter}部屋に入る</button>
         </section>
       </aside>
-      <div class="modal join-modal" role="dialog" aria-label="IDで入る">
+      <div class="modal join-modal" role="dialog">
         <div class="modal-card">
-          <header class="modal-head">IDで入る<button type="button" class="modal-close" aria-label="閉じる">${ICON.close}</button></header>
-          <label class="modal-label" for="join-id">コース ID</label>
+          <header class="modal-head"><span class="join-title"></span><button type="button" class="modal-close" aria-label="閉じる">${ICON.close}</button></header>
+          <label class="modal-label join-label" for="join-id"></label>
           <div class="modal-row">
-            <input id="join-id" class="join-input" type="text" maxlength="16" autocapitalize="off" autocomplete="off" spellcheck="false" placeholder="例: k7p2mq9x" />
+            <input id="join-id" class="join-input" type="text" maxlength="16" autocapitalize="off" autocomplete="off" spellcheck="false" />
             <button type="button" class="modal-go join-go">入る</button>
           </div>
-          <p class="modal-note">友達から聞いた ID を入れると、同じコースで遊べます。</p>
+          <p class="modal-note join-note"></p>
         </div>
       </div>
       <div class="modal share-modal" role="dialog" aria-label="このコースを共有">
@@ -268,6 +303,23 @@ export class Overlay {
           <label class="modal-label">コース ID</label>
           <div class="modal-row"><input class="share-id" type="text" readonly /><button type="button" class="modal-go copy-id">コピー</button></div>
           <p class="modal-note">リンクを送るか ID を伝えると、同じコース・同じピンと風で遊べます。</p>
+        </div>
+      </div>
+      <div class="modal room-modal" role="dialog" aria-label="部屋">
+        <div class="modal-card">
+          <header class="modal-head">友達と回る<button type="button" class="modal-close room-close" aria-label="閉じる">${ICON.close}</button></header>
+          <div class="room-code"><span>部屋の番号</span><b class="room-id"></b></div>
+          <p class="room-status"></p>
+          <ul class="room-players"></ul>
+          <label class="modal-label" for="room-name">あなたの名前</label>
+          <div class="modal-row"><input id="room-name" class="room-name" type="text" maxlength="12" autocomplete="off" spellcheck="false" /></div>
+          <label class="modal-label">友達を呼ぶ</label>
+          <div class="modal-row"><input class="room-link" type="text" readonly /><button type="button" class="modal-go room-copy">${touch ? '送る' : 'コピー'}</button></div>
+          <p class="modal-note">友達はこのリンクを開くか、「友達と」→「部屋に入る」でこの番号を入れると入れます。</p>
+          <div class="room-actions">
+            <button type="button" class="room-leave">部屋を出る</button>
+            <button type="button" class="room-action"></button>
+          </div>
         </div>
       </div>
       <div class="attract-caption"></div>
@@ -333,6 +385,8 @@ export class Overlay {
     this.panel = this.root.querySelector('.panel')!;
     this.lead = this.root.querySelector('.lead')!;
     this.courseSeed = this.root.querySelector('.course-seed')!;
+    this.roomModal = this.root.querySelector('.room-modal')!;
+    this.bindRoom();
     this.courseLabel = this.root.querySelector('.course-label')!;
     this.todayBtn = this.root.querySelector('.today-btn')!;
     this.todayBtn.addEventListener('click', () => this.handlers.onToday());
@@ -436,6 +490,9 @@ export class Overlay {
   private readonly golfTouch: HTMLElement;
   private readonly flagLayer: HTMLElement;
   private readonly courseLabel: HTMLElement;
+  /** 部屋の番号を入れる窓を開く（bindModals がつなぐ）。 */
+  openJoinRoom: () => void = () => {};
+  private readonly roomModal: HTMLElement;
   private readonly todayBtn: HTMLElement;
   private readonly rivalLayer: HTMLElement;
   private readonly rivalEls: { el: HTMLElement; text: string }[] = [];
@@ -591,9 +648,50 @@ export class Overlay {
     this.todayBtn.classList.toggle('on', date === null);
   }
 
+  /** 部屋の窓を開く・閉じる。 */
+  showRoom(open: boolean): void {
+    this.roomModal.classList.toggle('on', open);
+  }
+
+  /** 部屋の窓の中身。 */
+  setRoom(panel: RoomPanel): void {
+    const q = (sel: string) => this.roomModal.querySelector(sel) as HTMLElement;
+    q('.room-id').textContent = panel.id;
+    q('.room-status').textContent = panel.status;
+    q('.room-players').innerHTML = panel.players
+      .map(
+        (p) =>
+          `<li class="${p.online ? '' : 'away'}"><i style="background:${p.color === null ? '#ffffff' : hex(p.color)}"></i>` +
+          `<span>${escapeHtml(p.name)}${p.you ? '（あなた）' : ''}</span>` +
+          `${p.note ? `<small>${escapeHtml(p.note)}</small>` : ''}</li>`,
+      )
+      .join('');
+    (q('.room-link') as HTMLInputElement).value = panel.link;
+    const action = q('.room-action') as HTMLButtonElement;
+    action.style.display = panel.action ? '' : 'none';
+    if (panel.action) {
+      action.textContent = panel.action.label;
+      action.disabled = !panel.action.enabled;
+    }
+  }
+
+  /** 名前の欄（入れ直した名前を消さないよう、打っている間は書き換えない）。 */
+  setRoomName(name: string): void {
+    const input = this.roomModal.querySelector('.room-name') as HTMLInputElement;
+    if (document.activeElement !== input) input.value = name;
+  }
+
+  /** 友達とのときの 2 つ目のボタンの字（部屋に入る・友達を呼ぶ）。null で隠す。 */
+  setFriendsSecondary(label: string | null): void {
+    const b = this.root.querySelector('.join-room') as HTMLElement;
+    b.classList.toggle('none', label === null);
+    if (label !== null) b.innerHTML = `${label === '友達を呼ぶ' ? ICON.link : ICON.enter}${label}`;
+  }
+
   /** 遊び方の切り替えの見た目（選んでいる方）。 */
   setMode(mode: PlayMode): void {
     this.mode = mode;
+    this.root.querySelector('.play-panel')!.classList.toggle('friends', mode === 'friends');
     for (const b of this.root.querySelectorAll<HTMLButtonElement>('.mode-btn')) {
       const on = b.dataset.mode === mode;
       b.classList.toggle('on', on);
@@ -601,19 +699,19 @@ export class Overlay {
     }
   }
 
-  /** 順位の表示（COM と回っている間）。null で隠す。 */
-  setStandings(rows: readonly StandingRow[] | null): void {
-    this.standings.classList.toggle('on', rows !== null && rows.length > 1);
+  /** 順位の表示（COM や友達と回っている間）。null で隠す。title は上の小さな見出し（友達と: 部屋の番号）。 */
+  setStandings(rows: readonly StandingRow[] | null, title: string | null = null): void {
+    this.standings.classList.toggle('on', rows !== null && (rows.length > 1 || title !== null));
     if (!rows) return;
-    const key = rows.map((r) => `${r.rank}${r.name}${r.total}${r.now}`).join('|');
+    const key = `${title}|${rows.map((r) => `${r.rank}${r.name}${r.total}${r.now}`).join('|')}`;
     if (key === this.standingsKey) return;
     this.standingsKey = key;
-    this.standings.innerHTML = rows
+    this.standings.innerHTML = (title ? `<div class="st-title">${escapeHtml(title)}</div>` : '') + rows
       .map(
         (r) => `<div class="st-row${r.you ? ' you' : ''}">
           <span class="st-rank">${r.rank}</span>
           <i class="st-dot" style="background:${r.color === null ? '#ffffff' : hex(r.color)}"></i>
-          <span class="st-name">${r.name}</span>
+          <span class="st-name">${escapeHtml(r.name)}</span>
           <span class="st-now">${r.now}</span>
           <b class="st-total">${r.total}</b>
         </div>`,
@@ -635,7 +733,7 @@ export class Overlay {
       if (!item) return;
       if (item.text !== m.text) {
         m.text = item.text;
-        m.el.innerHTML = `<i style="background:${hex(item.color)}"></i>${item.text}`;
+        m.el.innerHTML = `<i style="background:${hex(item.color)}"></i>${escapeHtml(item.text)}`;
       }
       m.el.style.transform = `translate(${item.x.toFixed(1)}px, ${item.y.toFixed(1)}px)`;
     });
@@ -673,7 +771,7 @@ export class Overlay {
       ? `<div class="rr-place">${me.rank === 1 ? '優勝' : `${me.rank} 位`}<small>${r.ranking.length} 人中</small></div>` +
         r.ranking
           .map(
-            (x) => `<div class="rr-rank${x.you ? ' you' : ''}"><span>${x.rank}</span><i style="background:${x.color === null ? '#ffffff' : hex(x.color)}"></i><span>${x.name}</span><b>${x.total}</b><small>${x.toPar}</small></div>`,
+            (x) => `<div class="rr-rank${x.you ? ' you' : ''}"><span>${x.rank}</span><i style="background:${x.color === null ? '#ffffff' : hex(x.color)}"></i><span>${escapeHtml(x.name)}</span><b>${x.total}</b><small>${x.toPar}</small></div>`,
           )
           .join('')
       : '';
@@ -815,7 +913,8 @@ export class Overlay {
   /** 合言葉の表示をコースに合わせる（サイコロや URL から変わったとき）。 */
   setParams(params: IslandParams): void {
     this.params = { ...params };
-    this.courseSeed.textContent = params.seed;
+    // ID を押すと入れ直せる（書き替えの小さな印を添える）。合言葉は英数字だけなのでそのまま埋めてよい。
+    this.courseSeed.innerHTML = `${params.seed}${ICON.edit}`;
     this.hudSeed.textContent = params.seed;
   }
 
@@ -901,10 +1000,18 @@ export class Overlay {
     this.updateStartLabel();
   }
 
+  /** プレイのボタンの字を差し替える（友達と: 部屋を作る・部屋を開く）。null で元に戻す。 */
+  setStartLabel(label: string | null): void {
+    this.startLabel = label;
+    this.updateStartLabel();
+  }
+
   private updateStartLabel(): void {
     this.startBtn.disabled = !this.ready;
     if (!this.ready) {
       this.startBtn.innerHTML = this.loadingText;
+    } else if (this.startLabel) {
+      this.startBtn.textContent = this.startLabel;
     } else if (this.entered) {
       this.startBtn.textContent = '続きから';
     } else {
@@ -961,6 +1068,45 @@ export class Overlay {
     this.hud.classList.remove('dim');
   }
 
+  /** 部屋の窓のボタンと名前の欄をつなぐ。 */
+  private bindRoom(): void {
+    const m = this.roomModal;
+    m.querySelector('.room-close')!.addEventListener('click', () => this.showRoom(false));
+    m.addEventListener('click', (e) => {
+      if (e.target === m) this.showRoom(false);
+    });
+    m.querySelector('.room-leave')!.addEventListener('click', () => this.handlers.onRoomLeave());
+    let lastPointer = 'mouse';
+    const action = m.querySelector('.room-action') as HTMLButtonElement;
+    action.addEventListener('pointerdown', (e) => {
+      lastPointer = e.pointerType || 'mouse';
+    });
+    action.addEventListener('click', () => this.handlers.onRoomAction(lastPointer));
+    const name = m.querySelector('.room-name') as HTMLInputElement;
+    const commit = () => this.handlers.onRoomName(name.value);
+    name.addEventListener('change', commit);
+    name.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') name.blur();
+    });
+    const copyBtn = m.querySelector('.room-copy') as HTMLButtonElement;
+    const link = m.querySelector('.room-link') as HTMLInputElement;
+    copyBtn.addEventListener('click', async () => {
+      // スマホは端末の共有（LINE などへそのまま送れる）、PC はコピー。
+      if (this.touch && typeof navigator.share === 'function') {
+        try {
+          await navigator.share({ text: `Hole in Isle で一緒に回ろう（部屋 ${link.value.split('@')[1] ?? ''}）`, url: link.value });
+        } catch {
+          // 取り消した。
+        }
+        return;
+      }
+      if (await copyText(link.value)) {
+        copyBtn.textContent = 'コピーしました';
+        setTimeout(() => (copyBtn.textContent = 'コピー'), 1600);
+      } else link.select();
+    });
+  }
+
   /**
    * 「IDで入る」と「共有」の窓（Sword Masters などのブラウザゲームの定番: リンクと ID を分けて、
    * それぞれにコピーを付ける）。ID はコースの合言葉そのもの（同じ ID なら同じコース）。
@@ -982,23 +1128,46 @@ export class Overlay {
         if (e.target === m) close();
       });
     }
-    this.root.querySelector('.join-open')!.addEventListener('click', () => {
+    // 入れる窓: コース ID（コースの札の ID を押す）と、部屋の番号（友達と →「部屋に入る」）で中身を替える。
+    let kind: 'course' | 'room' = 'course';
+    const openJoin = (k: 'course' | 'room') => {
+      kind = k;
+      const q = (sel: string) => join.querySelector(sel) as HTMLElement;
+      q('.join-title').textContent = k === 'room' ? '部屋に入る' : 'コース ID を入れる';
+      q('.join-label').textContent = k === 'room' ? '部屋の番号（数字 6 桁）' : 'コース ID';
+      q('.join-note').textContent =
+        k === 'room' ? '友達の「友達と回る」の窓に出ている番号です。' : '友達から聞いたコース ID を入れると、同じコースで遊べます。';
+      joinInput.placeholder = k === 'room' ? '例: 482913' : '例: k7p2mq9x';
+      joinInput.inputMode = k === 'room' ? 'numeric' : 'text';
+      joinInput.maxLength = k === 'room' ? 6 : 16;
       joinInput.value = '';
       open(join);
       joinInput.focus();
-    });
+    };
+    this.root.querySelector('.course-seed')!.addEventListener('click', () => openJoin('course'));
+    this.openJoinRoom = () => openJoin('room');
+    this.root.querySelector('.join-room')!.addEventListener('click', () => this.handlers.onFriendsSecondary());
     const go = () => {
-      const seed = joinInput.value.trim();
-      if (!seed) return;
-      close();
-      this.handlers.onSeed(seed);
+      const value = joinInput.value.trim();
+      if (!value) return;
+      if (kind === 'room') {
+        if (!isRoomId(value)) {
+          (join.querySelector('.join-note') as HTMLElement).textContent = '数字 6 桁で入れてください。';
+          return;
+        }
+        close();
+        this.handlers.onJoinRoom(value);
+      } else {
+        close();
+        this.handlers.onSeed(value);
+      }
     };
     this.root.querySelector('.join-go')!.addEventListener('click', go);
     joinInput.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') go();
       if (e.key === 'Escape') close();
     });
-    this.root.querySelector('.share')!.addEventListener('click', () => {
+    this.root.querySelector('.course-share')!.addEventListener('click', () => {
       shareLink.value = `${location.origin}${location.pathname}#${this.params.seed}`;
       shareId.value = this.params.seed;
       open(share);
