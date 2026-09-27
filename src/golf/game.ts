@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { SEA_LEVEL } from '../world/terrain';
 import type { Terrain } from '../world/terrain';
 import { LIE_POWER, type Point3, type Trial, clubAllowed, clubFor, needleEffect, reachOf, solvePower } from './aim';
-import { BALL_RADIUS, Ball, type GolfGround, type Surface } from './ball';
+import { BALL_RADIUS, Ball, type GolfGround, type Surface, rollSpeed } from './ball';
 import { CLUBS, type Club, PUTTER } from './clubs';
 import { type Hole, holeIntro } from './course';
 import type { OpponentState, Opponents } from './opponents';
@@ -121,9 +121,6 @@ const NEEDLE_SPEED: Record<Surface, number> = {
   snow: 1.5,
 };
 const PUTT_NEEDLE_SPEED = 0.7;
-/** 地面に着いてからこの秒数を過ぎても転がっていれば、FAST_ROLL 倍の速さで進める。 */
-const FAST_ROLL_AFTER = 6;
-const FAST_ROLL = 4;
 /** 狙いを動かしている間に、試し打ちをやり直す間隔（s）。 */
 const SOLVE_EVERY = 0.09;
 
@@ -598,14 +595,9 @@ export class GolfGame {
   }
 
   private updateMoving(dt: number): void {
-    // 地面に着いてから 6 秒たっても転がっていれば、その先は速く進める（長く転がる球を待つのがつらい）。
-    // 急に速くならないよう、0.8 秒かけて 4 倍まで上げる。
-    let speed = 1;
-    if (this.groundTime !== null) {
-      this.groundTime += dt;
-      speed = 1 + (FAST_ROLL - 1) * smoothstep(FAST_ROLL_AFTER, FAST_ROLL_AFTER + 0.8, this.groundTime);
-    }
-    this.ball.update(dt * speed);
+    // 地面に着いてから 6 秒たっても転がっていれば、その先は速く進める（ball.ts の rollSpeed）。
+    if (this.groundTime !== null) this.groundTime += dt;
+    this.ball.update(dt * rollSpeed(this.groundTime));
     const p = this.ball.pos;
     const last = this.trailPoints[this.trailPoints.length - 1];
     if (!last || Math.hypot(last.x - p.x, last.y - p.y, last.z - p.z) > 2) {

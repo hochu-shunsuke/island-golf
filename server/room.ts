@@ -23,6 +23,8 @@ import {
  *   行くと次の人へ移り、「後から来た人がホストになった」ように見えた）
  * - 「部屋を出る」を押した人は一覧から消す。切れただけの人は残す（別のアプリから戻れば続きから）。
  *   満員のときは、つながっていない人の枠を空けて新しい人を入れる
+ * - 切れた人も、ホールの待ち時間までは待つ（LINE を開いて戻っただけでダブルパーにしない）。待ち時間を過ぎても
+ *   戻らなければダブルパーにして、回りから外す（次のホールからは待たない。戻ればゲームが加わり直す）
  */
 
 interface Member {
@@ -47,6 +49,8 @@ interface RoomState {
   members: Member[];
   /** 今のホールで最初に入れた時刻（ms）。まだなら null。 */
   firstDoneAt: number | null;
+  /** 誰もつながっていなくなった時刻（ms）。誰かいれば null。 */
+  emptyAt: number | null;
 }
 
 /** WebSocket に付けておく情報（休眠から覚めても残る）。 */
@@ -56,6 +60,12 @@ interface Attachment {
 
 /** 誰もいなくなってから部屋を片付けるまで（ms）。 */
 const CLEANUP_MS = 30 * 60_000;
+/**
+ * 1 つの接続から受ける言葉の上限（RATE_WINDOW_MS あたり）。普通に遊べば 1 打に 2 つ（打った・止まった）なので
+ * 届かない。大量に送り付けられて、アカウントで共有する無料枠（stroll も同じ）を食い潰されないように。
+ */
+const RATE_LIMIT = 40;
+const RATE_WINDOW_MS = 10_000;
 
 function cleanCid(raw: unknown): string {
   return typeof raw === 'string' ? raw.replace(/[^a-z0-9]/gi, '').slice(0, 32) : '';
@@ -114,6 +124,8 @@ function cleanRest(raw: unknown): RestInfo | null {
 
 export class GolfRoom {
   private room: RoomState | null = null;
+  /** 接続ごとの、今の区切りで受けた言葉の数（休眠で消えてよい）。 */
+  private readonly rate = new WeakMap<WebSocket, { from: number; count: number }>();
 
   constructor(private readonly state: DurableObjectState) {
     // 休眠したまま ping に pong を返す（立ち止まって考えている間に切られないように。DO は起きない）。
@@ -122,6 +134,7 @@ export class GolfRoom {
       this.room = (await state.storage.get<RoomState>('room')) ?? null;
       // playing を持つ前に作られた部屋は、全員が回っている扱い。
       for (const m of this.room?.members ?? []) m.playing ??= this.room!.phase === 'play';
+      if (this.room) this.room.emptyAt ??= null;
     });
   }
 
@@ -135,6 +148,7 @@ export class GolfRoom {
 
   async webSocketMessage(ws: WebSocket, raw: string | ArrayBuffer): Promise<void> {
     if (typeof raw !== 'string' || raw.length > 2048) return;
+    if (!this.allow(ws)) return;
     let msg: Record<string, unknown>;
     try {
       msg = JSON.parse(raw);
@@ -153,7 +167,9 @@ export class GolfRoom {
     if (!room || !member) return;
 
     if (msg.t === 'name') {
-      member.name = uniqueName(room, cleanName(msg.name) || member.name, member.cid);
+      const name = uniqueName(room, cleanName(msg.name) || member.name, member.cid);
+      if (name === member.name) return;
+      member.name = name;
       await this.save();
       this.broadcastRoom();
     } else if (msg.t === 'start') {
@@ -162,10 +178,7 @@ export class GolfRoom {
         if (member.playing) return;
         member.playing = true;
         member.done = false;
-        if (room.firstDoneAt !== null) {
-          room.firstDoneAt = Date.now();
-          await this.state.storage.setAlarm(room.firstDoneAt + HOLE_WAIT_MS);
-        }
+        if (room.firstDoneAt !== null) room.firstDoneAt = Date.now();
       } else {
         // 誰が押しても始まる（ホストを待たなくてよい）。ほかの人は、それぞれ押したときに加わる。
         room.phase = 'play';
@@ -177,6 +190,7 @@ export class GolfRoom {
           m.playing = m === member;
         }
       }
+      await this.scheduleAlarm();
       await this.save();
       this.broadcastRoom();
     } else if (msg.t === 'leave') {
@@ -201,11 +215,9 @@ export class GolfRoom {
       if (room.phase !== 'play' || !member.playing || hole !== room.hole || !rest.holed || member.done) return;
       member.scores[room.hole - 1] = rest.strokes;
       member.done = true;
-      if (room.firstDoneAt === null) {
-        room.firstDoneAt = Date.now();
-        await this.state.storage.setAlarm(room.firstDoneAt + HOLE_WAIT_MS);
-      }
+      room.firstDoneAt ??= Date.now();
       this.advanceIfAllDone();
+      await this.scheduleAlarm();
       await this.save();
       this.broadcastRoom();
     }
@@ -230,6 +242,7 @@ export class GolfRoom {
         hole: 1,
         members: [],
         firstDoneAt: null,
+        emptyAt: null,
       };
     }
     let member = room.members.find((m) => m.cid === cid);
@@ -273,8 +286,9 @@ export class GolfRoom {
       }
     }
     ws.serializeAttachment({ cid } satisfies Attachment);
-    // 誰かが戻ってきたら、片付けの予定は取り消す（ホールの待ち時間の予定はそのまま）。
-    if (room.firstDoneAt === null) await this.state.storage.deleteAlarm();
+    // 誰かが戻ってきたら、片付けの予定は取り消す（ホールの待ち時間があれば、そちらを入れ直す）。
+    room.emptyAt = null;
+    await this.scheduleAlarm();
     await this.save();
     ws.send(JSON.stringify({ t: 'welcome', you: member.id, room: this.view() } satisfies ServerMessage));
     this.broadcastRoom({ skip: ws });
@@ -293,51 +307,96 @@ export class GolfRoom {
     const room = this.room;
     if (!room) return;
     const online = this.onlineCids(ws);
-    if (online.size === 0) {
-      await this.state.storage.setAlarm(Date.now() + CLEANUP_MS);
-    } else {
-      this.advanceIfAllDone(online);
-    }
+    if (online.size === 0) room.emptyAt ??= Date.now();
+    // 出た人（一覧から消えた）を待っていたなら、残りで次へ。切れただけの人は待ち時間まで待つ。
+    else this.advanceIfAllDone();
+    await this.scheduleAlarm();
     await this.save();
     this.broadcastRoom({ gone: ws });
   }
 
-  /** 待ち時間が過ぎた・誰もいなくなってしばらくたった。 */
+  /**
+   * 待ち時間が過ぎた・誰もいなくなってしばらくたった。
+   * 全員が一瞬だけ切れている間（そろって別のアプリへ行った）にホールの待ち時間が来ても、部屋は消さない。
+   * 片付けるのは、誰もいない時間が CLEANUP_MS 続いたときだけ。
+   */
   async alarm(): Promise<void> {
     const room = this.room;
     if (!room) return;
     const online = this.onlineCids();
     if (online.size === 0) {
-      await this.state.storage.deleteAll();
-      this.room = null;
-      return;
+      room.emptyAt ??= Date.now();
+      if (Date.now() >= room.emptyAt + CLEANUP_MS - 1000) {
+        await this.state.storage.deleteAll();
+        this.room = null;
+        return;
+      }
+    } else {
+      room.emptyAt = null;
+      if (room.phase === 'play' && room.firstDoneAt !== null && Date.now() >= room.firstDoneAt + HOLE_WAIT_MS - 1000) {
+        this.advance();
+        this.broadcastRoom();
+      }
     }
-    if (room.phase === 'play' && room.firstDoneAt !== null && Date.now() >= room.firstDoneAt + HOLE_WAIT_MS - 1000) {
-      this.advance();
-      await this.save();
-      this.broadcastRoom();
-    }
+    await this.scheduleAlarm();
+    await this.save();
   }
 
-  /** つながっていて回っている人が全員このホールを終えたら、次のホールへ（見ているだけの人は待たない）。 */
-  private advanceIfAllDone(online = this.onlineCids()): void {
+  /** アラームは 1 つだけ: 誰もいなければ片付け、回っていて誰かが入れていればホールの待ち時間、どちらも無ければ止める。 */
+  private async scheduleAlarm(): Promise<void> {
+    const room = this.room;
+    if (!room) return;
+    if (room.emptyAt !== null) await this.state.storage.setAlarm(room.emptyAt + CLEANUP_MS);
+    else if (room.phase === 'play' && room.firstDoneAt !== null)
+      await this.state.storage.setAlarm(room.firstDoneAt + HOLE_WAIT_MS);
+    else await this.state.storage.deleteAlarm();
+  }
+
+  /** 送り付けすぎる接続は切る（RATE_LIMIT）。 */
+  private allow(ws: WebSocket): boolean {
+    const now = Date.now();
+    let r = this.rate.get(ws);
+    if (!r || now - r.from > RATE_WINDOW_MS) {
+      r = { from: now, count: 0 };
+      this.rate.set(ws, r);
+    }
+    if (++r.count <= RATE_LIMIT) return true;
+    try {
+      ws.close(1008, 'too many messages');
+    } catch {
+      // 閉じかけていれば放っておく。
+    }
+    return false;
+  }
+
+  /**
+   * 回っている人が全員このホールを終えたら、次のホールへ。見ているだけの人は待たない。
+   * 切れている人も待つ（戻ってくるかもしれない。戻らなければ待ち時間で打ち切る）。
+   */
+  private advanceIfAllDone(): void {
     const room = this.room;
     if (!room || room.phase !== 'play') return;
-    const playing = room.members.filter((m) => m.playing && online.has(m.cid));
+    const playing = room.members.filter((m) => m.playing);
     if (playing.length > 0 && playing.every((m) => m.done)) this.advance();
   }
 
-  /** 次のホールへ（回っていて終えていない人はダブルパー）。最後のホールの後は終わり。 */
+  /**
+   * 次のホールへ（回っていて終えていない人はダブルパー）。最後のホールの後は終わり。
+   * そのとき切れている人は回りから外す（次のホールからは待たない）。
+   */
   private advance(): void {
     const room = this.room;
     if (!room) return;
     const par = room.pars[room.hole - 1] ?? 4;
+    const online = this.onlineCids();
     for (const m of room.members) {
-      if (m.playing && !m.done) m.scores[room.hole - 1] = par * 2;
+      if (m.playing && !m.done) {
+        m.scores[room.hole - 1] = par * 2;
+        if (!online.has(m.cid)) m.playing = false;
+      }
       m.done = false;
     }
     room.firstDoneAt = null;
-    void this.state.storage.deleteAlarm();
     if (room.hole >= room.pars.length) room.phase = 'done';
     else room.hole++;
   }

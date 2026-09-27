@@ -214,7 +214,7 @@ export class Overlay {
   private readonly root: HTMLElement;
   private readonly panel: HTMLElement;
   private readonly lead: HTMLElement;
-  private readonly courseSeed: HTMLElement;
+  private readonly courseSeed: HTMLButtonElement;
   private readonly attractCaption: HTMLElement;
   private readonly screenFade: HTMLElement;
   private fadeShown = -1;
@@ -388,6 +388,7 @@ export class Overlay {
     this.roomModal = this.root.querySelector('.room-modal')!;
     this.bindRoom();
     this.courseLabel = this.root.querySelector('.course-label')!;
+    this.coursePanel = this.root.querySelector('.course-panel')!;
     this.todayBtn = this.root.querySelector('.today-btn')!;
     this.todayBtn.addEventListener('click', () => this.handlers.onToday());
     this.attractCaption = this.root.querySelector('.attract-caption')!;
@@ -490,6 +491,9 @@ export class Overlay {
   private readonly golfTouch: HTMLElement;
   private readonly flagLayer: HTMLElement;
   private readonly courseLabel: HTMLElement;
+  private readonly coursePanel: HTMLElement;
+  private dailyDate: string | null = null;
+  private lockedRoom: string | null = null;
   /** 部屋の番号を入れる窓を開く（bindModals がつなぐ）。 */
   openJoinRoom: () => void = () => {};
   private readonly roomModal: HTMLElement;
@@ -643,9 +647,30 @@ export class Overlay {
    * 「今日のコースへ」のボタンを出す。
    */
   setDaily(date: string | null): void {
-    this.courseLabel.textContent = date ? `今日のコース · ${date}` : 'コース ID';
-    this.courseLabel.classList.toggle('daily', date !== null);
-    this.todayBtn.classList.toggle('on', date === null);
+    this.dailyDate = date;
+    this.renderCourseLabel();
+  }
+
+  /**
+   * 友達の部屋にいる間は、コースを部屋のものに固定する（roomId を渡す。null で外す）。
+   * 合言葉の入れ直し・新しいコース・今日のコースへを隠す（押すと黙って部屋を出てしまっていた）。
+   */
+  setCourseLocked(roomId: string | null): void {
+    this.lockedRoom = roomId;
+    this.coursePanel.classList.toggle('locked', roomId !== null);
+    this.courseSeed.disabled = roomId !== null;
+    this.renderCourseLabel();
+  }
+
+  private renderCourseLabel(): void {
+    const date = this.dailyDate;
+    this.courseLabel.textContent = this.lockedRoom
+      ? `部屋 ${this.lockedRoom} のコース`
+      : date
+        ? `今日のコース · ${date}`
+        : 'コース ID';
+    this.courseLabel.classList.toggle('daily', date !== null || this.lockedRoom !== null);
+    this.todayBtn.classList.toggle('on', date === null && this.lockedRoom === null);
   }
 
   /** 部屋の窓を開く・閉じる。 */

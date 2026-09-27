@@ -160,7 +160,7 @@ const overlay = new Overlay(document.getElementById('ui')!, params, inputMode ==
   // ラウンドの終わり: 1 番のティーへ（暗転して読み込み直す）。PC はこの押下でマウスを取り直す。
   onAgain: () => {
     if (!golf) return;
-    // 友達と: 部屋の窓へ戻る（もう一度はホストが始める）。
+    // 友達と: 部屋の窓へ戻る（「もう一度はじめる」は誰が押してもよい）。
     if (playMode === 'friends') {
       leaveFinale();
       stopPlaying();
@@ -190,7 +190,10 @@ const overlay = new Overlay(document.getElementById('ui')!, params, inputMode ==
       // 覚えられない環境では、この画面の間だけ。
     }
     // 友達と以外にしたら、部屋から出る。
-    if (mode !== 'friends') leaveRoom();
+    if (mode !== 'friends' && party) {
+      leaveRoom();
+      overlay.flash('部屋を出ました。');
+    }
     applyRivals();
     updatePartyLabel();
   },
@@ -345,9 +348,19 @@ function leaveRoom(): void {
 /** 部屋の様子が届いた。 */
 function onRoomView(view: RoomView): void {
   if (!party) return;
+  // 入った・出た人を知らせる（先に始めて待っている人が、友達が来たのに気づけるように）。
+  const before = party.view;
+  if (before && party.me) {
+    const others = (v: RoomView) => v.players.filter((p) => p.id !== party!.me);
+    for (const p of others(view)) if (!before.players.some((q) => q.id === p.id)) overlay.flash(`${p.name} が入りました`);
+    for (const p of others(before)) if (!view.players.some((q) => q.id === p.id)) overlay.flash(`${p.name} が部屋を出ました`);
+  }
   party.view = view;
   if (view.phase === 'play') party.starting = false;
   else if (!party.starting) party.inRound = false;
+  // 回っている途中で長く切れていて、部屋が回りから外していたら（待ち時間を過ぎた）、加わり直す。
+  const mine = view.players.find((p) => p.id === party!.me);
+  if (party.inRound && view.phase === 'play' && mine && !mine.playing) party.client.send({ t: 'start' });
   // 部屋のコースに合わせる（リンクの合言葉や日と違えば作り直す）。
   if (view.seed !== params.seed || view.day !== courseDay) {
     params = { ...params, seed: view.seed };
@@ -357,7 +370,7 @@ function onRoomView(view: RoomView): void {
   }
   party.peers?.setRoom(view, party.me);
   // 部屋が次のホールへ進めた（待ち時間が過ぎた）のに、まだ入れていなければ、部屋が付けた打数（ダブルパー）で打ち切る。
-  if (golf && entered && view.phase !== 'lobby' && golf.phase !== 'holed') {
+  if (golf && party.inRound && view.phase !== 'lobby' && golf.phase !== 'holed') {
     const behind = view.phase === 'done' || view.hole > golf.target.number;
     const given = view.players.find((p) => p.id === party!.me)?.scores[golf.target.number - 1];
     if (behind && given != null) {
@@ -454,6 +467,7 @@ function beginPartyRound(hole: number, scores: readonly (number | null)[] | null
  * 回っている途中（休憩中） → 「続きから」「友達を呼ぶ」。
  */
 function updatePartyLabel(): void {
+  overlay.setCourseLocked(playMode === 'friends' && party ? party.id : null);
   if (playMode !== 'friends') {
     overlay.setStartLabel(null);
     return;
@@ -468,6 +482,17 @@ function updatePartyLabel(): void {
     overlay.setStartLabel('部屋を開く');
     overlay.setFriendsSecondary(null);
   }
+}
+
+/**
+ * 友達と: 次のティーへ進んだとき、部屋がもっと先のホールへ進んでいれば（スコアカードを見たまま休んでいる間に、
+ * 待ち時間が過ぎた）、部屋のホールへ飛ぶ。飛ばしたホールの打数は部屋が付けたもの（ダブルパー）。
+ */
+function catchUpToRoom(): void {
+  const v = party?.view;
+  if (!golf || !party?.inRound || v?.phase !== 'play' || v.hole <= golf.target.number) return;
+  const mine = v.players.find((p) => p.id === party!.me);
+  golf.resumeRound(mine?.scores ?? [], golf.course[v.hole - 1]);
 }
 
 /** 今のアドレスの #（部屋に入っていれば「合言葉@部屋の番号」、今日のコースなら無し）。 */
@@ -958,12 +983,13 @@ function holedCard(game: GolfGame): { head: string; foot: string } {
   // 友達と: みんなが終えるまでは待つ（部屋が次のホールへ進めたら進める）。
   const v = party?.view;
   const waiting = playMode === 'friends' && !game.rivalsSettled && v;
-  const doneCount = v ? v.players.filter((p) => p.online && p.playing && p.scores[h.number - 1] != null).length : 0;
-  const online = v ? v.players.filter((p) => p.online && p.playing).length : 0;
+  // 切れている人も数に入れる（部屋は待ち時間まで待つ）。
+  const doneCount = v ? v.players.filter((p) => p.playing && p.scores[h.number - 1] != null).length : 0;
+  const playingCount = v ? v.players.filter((p) => p.playing).length : 0;
   return {
     head: `<b>${h.number} 番</b> ${strokes} 打 · ${scoreName(strokes, h.par)}<span>通算 ${toPar(total, par)}${rank ? ` · ${rank} 位` : ''}</span>`,
     foot: waiting
-      ? `みんなを待っています（${doneCount}/${online}）`
+      ? `みんなを待っています（${doneCount}/${playingCount}）`
       : h.number === game.course.length
         ? `${how}で結果へ ▸`
         : `${how}で ${next.number} 番のティーへ ▸`,
@@ -1094,6 +1120,7 @@ function updateHoleFade(dt: number): boolean {
     if (holeFade.t >= HOLE_FADE_OUT) {
       holedCardAt = 0;
       golf.next();
+      catchUpToRoom();
       loadHole();
     }
     return false;

@@ -1740,6 +1740,16 @@ kbd {
   color: var(--ink);
 }
 
+/* 友達の部屋にいる間: コースは部屋のもの（入れ直し・新しいコースは出さない。共有は残す）。 */
+.course-panel.locked .course-seed {
+  cursor: default;
+}
+
+.course-panel.locked .course-seed .icon,
+.course-panel.locked .seed-dice {
+  display: none;
+}
+
 .course-actions {
   display: flex;
   align-items: center;

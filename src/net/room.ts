@@ -7,6 +7,9 @@ import type { ClientMessage, RestInfo, RoomView, ServerMessage, ShotInfo } from 
  * - 切れたら 3 秒ごとにつなぎ直す。つなぎ直しても同じ人と分かるよう、タブごとの固定の番号（cid）を送る
  *   （sessionStorage に置く。スマホは別のアプリから戻ると読み直すことがあり、メモリだけだと別人になる）
  * - 無通信で切られないよう、25 秒ごとに ping（中継は休眠したまま pong を返す）
+ * - 死んだ接続を待たない。スマホで電波やアプリを切り替えると、接続は「閉じかけ」のまま何分も残り、その間は
+ *   つなぎ直しが始まらない。何も届かないまま HEARD_TIMEOUT_MS たったら張り直し、画面に戻った・電波が戻ったときは
+ *   すぐ確かめる（pong が CHECK_MS 以内に来なければ張り直す）
  */
 
 export type RoomStatus = 'connecting' | 'open' | 'lost' | 'full';
@@ -22,6 +25,8 @@ export interface RoomHandlers {
 
 const RECONNECT_MS = 3000;
 const PING_MS = 25_000;
+const HEARD_TIMEOUT_MS = 60_000;
+const CHECK_MS = 4000;
 const CID_KEY = 'hole-in-isle:cid';
 
 function stableCid(): string {
@@ -42,7 +47,27 @@ export class RoomClient {
   private closed = false;
   private retryTimer = 0;
   private pingTimer = 0;
+  private checkTimer = 0;
+  /** 最後に中継から何か届いた時刻（pong を含む）。 */
+  private lastHeard = 0;
   private readonly cid = stableCid();
+  /** 画面に戻った・電波が戻った: 接続が生きているか確かめる。 */
+  private readonly onWake = () => {
+    if (this.closed || document.visibilityState === 'hidden') return;
+    const ws = this.ws;
+    if (ws?.readyState === WebSocket.CONNECTING) return;
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      if (ws) this.drop(ws);
+      else this.reconnectNow();
+      return;
+    }
+    const asked = Date.now();
+    ws.send('ping');
+    window.clearTimeout(this.checkTimer);
+    this.checkTimer = window.setTimeout(() => {
+      if (this.ws === ws && this.lastHeard < asked) this.drop(ws);
+    }, CHECK_MS);
+  };
 
   constructor(
     readonly roomId: string,
@@ -50,6 +75,8 @@ export class RoomClient {
     private readonly hello: () => { name: string; seed: string; day: number; pars: number[] },
     private readonly handlers: RoomHandlers,
   ) {
+    document.addEventListener('visibilitychange', this.onWake);
+    window.addEventListener('online', this.onWake);
     this.connect();
   }
 
@@ -66,27 +93,54 @@ export class RoomClient {
     }
     this.ws = ws;
     ws.addEventListener('open', () => {
+      if (this.ws !== ws) return;
+      this.lastHeard = Date.now();
       this.send({ t: 'hello', cid: this.cid, ...this.hello() });
       this.handlers.onStatus('open');
       window.clearInterval(this.pingTimer);
       this.pingTimer = window.setInterval(() => {
-        if (ws.readyState === WebSocket.OPEN) ws.send('ping');
+        if (this.ws !== ws) return;
+        if (Date.now() - this.lastHeard > HEARD_TIMEOUT_MS) this.drop(ws);
+        else if (ws.readyState === WebSocket.OPEN) ws.send('ping');
       }, PING_MS);
     });
-    ws.addEventListener('message', (ev) => this.receive(ev.data));
-    ws.addEventListener('close', () => {
-      window.clearInterval(this.pingTimer);
-      if (this.ws === ws) this.ws = null;
-      if (!this.closed) {
-        this.handlers.onStatus('lost');
-        this.scheduleReconnect();
-      }
+    ws.addEventListener('message', (ev) => {
+      if (this.ws !== ws) return;
+      this.lastHeard = Date.now();
+      this.receive(ev.data);
     });
+    // 捨てた接続（drop）の close が後から届いても、何もしない（つなぎ直した接続を二重にしない）。
+    ws.addEventListener('close', () => {
+      if (this.ws === ws) this.drop(ws);
+    });
+  }
+
+  /** この接続を捨てて、つなぎ直す（閉じ終わるのを待たない）。 */
+  private drop(ws: WebSocket): void {
+    if (this.ws !== ws) return;
+    this.ws = null;
+    window.clearInterval(this.pingTimer);
+    window.clearTimeout(this.checkTimer);
+    try {
+      ws.close();
+    } catch {
+      // 閉じかけていれば放っておく。
+    }
+    if (!this.closed) {
+      this.handlers.onStatus('lost');
+      this.scheduleReconnect();
+    }
   }
 
   private scheduleReconnect(): void {
     window.clearTimeout(this.retryTimer);
     this.retryTimer = window.setTimeout(() => this.connect(), RECONNECT_MS);
+  }
+
+  /** つなぎ直しを待たずに、今つなぐ（画面に戻ったとき）。 */
+  private reconnectNow(): void {
+    window.clearTimeout(this.retryTimer);
+    this.connect();
   }
 
   private receive(raw: unknown): void {
@@ -116,7 +170,10 @@ export class RoomClient {
   close(): void {
     this.send({ t: 'leave' });
     this.closed = true;
+    document.removeEventListener('visibilitychange', this.onWake);
+    window.removeEventListener('online', this.onWake);
     window.clearTimeout(this.retryTimer);
+    window.clearTimeout(this.checkTimer);
     window.clearInterval(this.pingTimer);
     this.ws?.close(1000, 'leave');
     this.ws = null;

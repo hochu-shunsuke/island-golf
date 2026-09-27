@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { hashSeed, mulberry32 } from '../core/rng';
 import { LIE_POWER, type Point3, clubFor, needleEffect, reachOf, solvePower, trial } from './aim';
-import { BALL_RADIUS, BALL_STEP, Ball, type GolfGround } from './ball';
+import { BALL_RADIUS, BALL_STEP, Ball, type GolfGround, rollSpeed } from './ball';
 import { CLUBS, PUTTER } from './clubs';
 import type { Hole } from './course';
 import type { OpponentState, Opponents } from './opponents';
@@ -109,6 +109,8 @@ class Rival {
   planning: Generator<void, Plan> | null = null;
   /** 飛んでいる間の、固定刻みの余り（s）。 */
   private acc = 0;
+  /** 地面に着いてからの秒数（プレイヤーの球と同じく、長く転がると速く進める）。 */
+  private groundTime: number | null = null;
   private readonly lastSpot = { x: 0, z: 0 };
   readonly mesh: THREE.Mesh;
   readonly trail: THREE.Line;
@@ -119,6 +121,9 @@ class Rival {
     ground: GolfGround,
   ) {
     this.ball = new Ball(ground);
+    this.ball.onEvent = (e) => {
+      if (e.type === 'land' && this.groundTime === null) this.groundTime = 0;
+    };
     this.mesh = new THREE.Mesh(
       new THREE.SphereGeometry(BALL_RADIUS, 14, 10),
       new THREE.MeshLambertMaterial({ color: spec.color, emissive: spec.color, emissiveIntensity: 0.25 }),
@@ -160,6 +165,7 @@ class Rival {
     this.plan = null;
     this.planning = null;
     this.acc = 0;
+    this.groundTime = club.loft > 0.5 ? null : 0;
     this.trailPoints.length = 0;
     this.trailPoints.push({ ...this.ball.pos });
   }
@@ -173,7 +179,8 @@ class Rival {
     if (instant) {
       for (let t = 0; t < 40 && this.moving; t += BALL_STEP) this.ball.update(BALL_STEP);
     } else {
-      this.acc += dt;
+      if (this.groundTime !== null) this.groundTime += dt;
+      this.acc += dt * rollSpeed(this.groundTime);
       while (this.acc >= BALL_STEP && this.moving) {
         this.ball.update(BALL_STEP);
         this.acc -= BALL_STEP;

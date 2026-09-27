@@ -9,7 +9,7 @@
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "typecheck:server": "tsc --noEmit -p server/tsconfig.json",
-    "test": "node test/ball.test.mjs && node test/course.test.mjs",
+    "test": "node test/ball.test.mjs && node test/course.test.mjs && node test/room.test.mjs",
     "ci": "npm run typecheck && npm run typecheck:server && npm run build && npm test",
     "relay": "wrangler dev --port 8787",
     "deploy": "npm run build && wrangler deploy"

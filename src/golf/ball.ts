@@ -72,6 +72,20 @@ const CURVE = 0.0022;
 const SPIN_DECAY = 6;
 /** 1 回の計算の刻み（s）。速い球でも地面をすり抜けないよう細かく。 */
 export const BALL_STEP = 1 / 240;
+/** 地面に着いてからこの秒数を過ぎても転がっていれば、FAST_ROLL 倍の速さで進める（長く転がる球を待つのがつらい）。 */
+const FAST_ROLL_AFTER = 6;
+const FAST_ROLL = 4;
+
+/**
+ * 球を進める速さの倍率。groundTime は地面に着いてからの秒数（まだなら null）。急に速くならないよう、
+ * 0.8 秒かけて 4 倍まで上げる。自分の球と友達の球（golf/peers.ts）で同じにする（違うと、友達の球だけ
+ * ゆっくり転がり、止まった所の知らせを待たされる）。
+ */
+export function rollSpeed(groundTime: number | null): number {
+  if (groundTime === null) return 1;
+  const t = Math.max(0, Math.min(1, (groundTime - FAST_ROLL_AFTER) / 0.8));
+  return 1 + (FAST_ROLL - 1) * t * t * (3 - 2 * t);
+}
 /** 葉の中で勢いが減る速さ（1/s）。3m の葉を 40m/s で抜けると 7 割ほど減る。 */
 const CANOPY_DRAG = 8;
 /** 幹で跳ね返る強さ。 */

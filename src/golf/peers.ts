@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import type { RestInfo, RoomView, ShotInfo } from '../../shared/room';
 import type { Point3 } from './aim';
-import { BALL_RADIUS, BALL_STEP, Ball, type GolfGround, type Surface } from './ball';
+import { BALL_RADIUS, BALL_STEP, Ball, type GolfGround, type Surface, rollSpeed } from './ball';
 import type { Hole } from './course';
 import type { OpponentState, Opponents } from './opponents';
 
@@ -43,6 +43,8 @@ class Peer {
   /** 飛ばしている間の固定刻みの余りと、飛び終わったら合わせる所。 */
   private acc = 0;
   private flying = false;
+  /** 地面に着いてからの秒数（自分の球と同じく、長く転がると速く進める）。 */
+  private groundTime: number | null = null;
   private pending: RestInfo | null = null;
   /** ホールごとの最後の止まった所（まだ自分がそのホールにいないときの分も覚えておく）。 */
   readonly lastRest = new Map<number, RestInfo>();
@@ -54,6 +56,9 @@ class Peer {
   ) {
     this.color = peerColor(slot);
     this.ball = new Ball(ground);
+    this.ball.onEvent = (e) => {
+      if (e.type === 'land' && this.groundTime === null) this.groundTime = 0;
+    };
     this.mesh = new THREE.Mesh(
       new THREE.SphereGeometry(BALL_RADIUS, 14, 10),
       new THREE.MeshLambertMaterial({ color: this.color, emissive: this.color, emissiveIntensity: 0.25 }),
@@ -92,6 +97,7 @@ class Peer {
     this.flying = true;
     this.pending = null;
     this.acc = 0;
+    this.groundTime = shot.loft > 0.5 ? null : 0;
     this.holed = false;
     this.mesh.visible = true;
     this.trailPoints.length = 0;
@@ -120,7 +126,8 @@ class Peer {
   /** 固定刻みで飛ばす（画面の速さに関係なく同じに飛ぶ）。飛び終わったら、本人の画面の結果に合わせる。 */
   advance(dt: number): boolean {
     if (!this.flying) return false;
-    this.acc += Math.min(dt, 0.25);
+    if (this.groundTime !== null) this.groundTime += dt;
+    this.acc += Math.min(dt, 0.25) * rollSpeed(this.groundTime);
     while (this.acc >= BALL_STEP && (this.ball.state === 'flight' || this.ball.state === 'roll')) {
       this.ball.update(BALL_STEP);
       this.acc -= BALL_STEP;
