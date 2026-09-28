@@ -3,7 +3,7 @@ import { injectIslandLight } from './islandLight';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { hash2 } from '../core/rng';
 import { TREE_CATALOG, buildCatalogGeometry } from './treeCatalog';
-import { paint } from './treeGeometry';
+import { paint, withLite } from './treeGeometry';
 import { KIND_BUSH, KIND_ROCK } from '../world/vegetationKinds';
 
 /**
@@ -41,13 +41,16 @@ function makeBush(): THREE.BufferGeometry {
   ])!;
 }
 
-let cache: { geometries: THREE.BufferGeometry[]; material: THREE.Material } | null = null;
+let cache: { geometries: THREE.BufferGeometry[]; lite: THREE.BufferGeometry[]; material: THREE.Material } | null = null;
 
 export function vegetation() {
   if (!cache) {
     const geometries: THREE.BufferGeometry[] = [];
+    // 遠くの木の軽い形（同じ種で、面の数だけ減らす。treeGeometry.ts の withLite）。
+    const lite: THREE.BufferGeometry[] = [];
     for (const entry of TREE_CATALOG) {
       geometries[entry.kind] = buildCatalogGeometry(entry, 0x9e3779b9 ^ entry.kind);
+      lite[entry.kind] = withLite(() => buildCatalogGeometry(entry, 0x9e3779b9 ^ entry.kind));
     }
     geometries[KIND_ROCK] = makeRock();
     geometries[KIND_BUSH] = makeBush();
@@ -69,7 +72,12 @@ export function vegetation() {
       shader.fragmentShader = shader.fragmentShader.replace('#include <common>', '#include <common>\nvarying vec2 vTreeXZ;');
       injectIslandLight(shader, 'vTreeXZ');
     };
-    cache = { geometries, material };
+    for (const g of lite) {
+      if (!g) continue;
+      g.computeVertexNormals();
+      g.computeBoundingSphere();
+    }
+    cache = { geometries, lite, material };
   }
   return cache;
 }

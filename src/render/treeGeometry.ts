@@ -52,6 +52,23 @@ export interface TreeParams {
   leaves: readonly number[];
 }
 
+/**
+ * 遠くの木のための軽い形を作っている間か（withLite）。枝ぶりと葉の位置は同じ乱数で同じに作り、
+ * 面の数だけ減らす（葉の塊は二十面体 → 八面体、枝は五角柱 3 段 → 三角柱 1 段、針葉樹の円錐は 7 → 4 分割）。
+ */
+let lite = false;
+export function isLite(): boolean {
+  return lite;
+}
+export function withLite<T>(build: () => T): T {
+  lite = true;
+  try {
+    return build();
+  } finally {
+    lite = false;
+  }
+}
+
 /** 1 本の枝を、先細りの角柱として +Y 方向に作る。 */
 export function branchGeometry(
   length: number,
@@ -59,8 +76,8 @@ export function branchGeometry(
   r1: number,
   curve: number,
 ): THREE.BufferGeometry {
-  const SIDES = 5;
-  const SEG = curve === 0 ? 1 : 3;
+  const SIDES = lite ? 3 : 5;
+  const SEG = curve === 0 || lite ? 1 : 3;
   const pos: number[] = [];
   const ring = (t: number) => {
     const r = r0 + (r1 - r0) * t;
@@ -96,7 +113,7 @@ function leafGeometry(
 ): THREE.BufferGeometry {
   // detail=0 の IcosahedronGeometry は最初から非インデックス。
   // 再度 toNonIndexed() を呼ぶと形は変わらないが、木の葉ごとに警告が出る。
-  const g = new THREE.IcosahedronGeometry(size, 0);
+  const g = lite ? new THREE.OctahedronGeometry(size, 0) : new THREE.IcosahedronGeometry(size, 0);
   const p = g.getAttribute('position') as THREE.BufferAttribute;
   for (let i = 0; i < p.count; i++) {
     const x = p.getX(i);

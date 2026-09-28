@@ -18,6 +18,11 @@ const REPICK_JUMP = 300;
 const REPICK_JUMP_TURN = 40;
 /** 選ぶときの画面の広げ方（度）。選び直すまでに向きが変わっても、画面の端で欠けないように。 */
 const PICK_MARGIN = 14;
+/**
+ * これより遠い木は、軽い形（同じ枝ぶりで面を減らしたもの。treeGeometry.ts の withLite）で描く。
+ * 空から見下ろすとコースの周りの木が 2,000 本近く画面に入り、描く重さの半分を占めていた。250m 先の木は数画素。
+ */
+const LITE_DISTANCE = 250;
 
 export interface PickEntry {
   mesh: THREE.InstancedMesh;
@@ -32,6 +37,8 @@ export interface PickEntry {
   /** 1 つの大きさ: 根元から球の中心までの高さと、球の半径（m）。 */
   lift: number;
   radius: number;
+  /** 遠いものを描く軽い形（無ければ全部 mesh で描く）。 */
+  lite: THREE.InstancedMesh | null;
 }
 
 export class InstancePicker {
@@ -45,6 +52,8 @@ export class InstancePicker {
   private readonly lastPos = new THREE.Vector3(Infinity, 0, 0);
   private readonly lastDir = new THREE.Vector3();
   private readonly dir = new THREE.Vector3();
+  /** 最後に選んだときのカメラの位置（軽い形にする距離を測る）。 */
+  private readonly eye = new THREE.Vector3();
   private lastFov = 0;
   private lastAspect = 0;
   private lastPick = -Infinity;
@@ -59,15 +68,19 @@ export class InstancePicker {
     matrices: Float32Array,
     colors: Float32Array | null,
     offset: { x: number; y: number; z: number },
+    lite: THREE.InstancedMesh | null = null,
   ): PickEntry {
     const total = matrices.length / 16;
-    mesh.instanceMatrix = new THREE.InstancedBufferAttribute(new Float32Array(matrices), 16);
-    mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-    if (colors) {
-      mesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(colors), 3);
-      mesh.instanceColor.setUsage(THREE.DynamicDrawUsage);
+    for (const m of lite ? [mesh, lite] : [mesh]) {
+      m.instanceMatrix = new THREE.InstancedBufferAttribute(new Float32Array(matrices), 16);
+      m.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+      if (colors) {
+        m.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(colors), 3);
+        m.instanceColor.setUsage(THREE.DynamicDrawUsage);
+      }
+      m.frustumCulled = false;
+      m.count = 0;
     }
-    mesh.frustumCulled = false;
     const geo = mesh.geometry;
     if (!geo.boundingSphere) geo.computeBoundingSphere();
     const bs = geo.boundingSphere!;
@@ -82,6 +95,7 @@ export class InstancePicker {
       oz: offset.z,
       lift: bs.center.y * 1.5,
       radius: (bs.radius + Math.abs(bs.center.y) * 0.5) * 1.5,
+      lite,
     };
     this.entries.add(entry);
     this.fresh.add(entry);
@@ -141,6 +155,7 @@ export class InstancePicker {
     pc.near = camera.near;
     pc.far = camera.far;
     pc.position.copy(camera.position);
+    this.eye.copy(camera.position);
     pc.quaternion.copy(camera.quaternion);
     pc.updateProjectionMatrix();
     pc.updateMatrixWorld();
@@ -150,31 +165,40 @@ export class InstancePicker {
   }
 
   private pick(e: PickEntry, skip?: (x: number, z: number) => boolean): void {
-    const outM = e.mesh.instanceMatrix.array as Float32Array;
-    const outC = e.colors ? (e.mesh.instanceColor!.array as Float32Array) : null;
     const s = this.sphere;
     s.radius = e.radius;
-    let n = 0;
+    const far2 = LITE_DISTANCE * LITE_DISTANCE;
+    const targets = e.lite ? [e.mesh, e.lite] : [e.mesh];
+    const counts = [0, 0];
     for (let k = 0; k < e.total; k++) {
       const o = k * 16;
       const x = e.matrices[o + 12] + e.ox;
+      const y = e.matrices[o + 13] + e.oy;
       const z = e.matrices[o + 14] + e.oz;
-      s.center.set(x, e.matrices[o + 13] + e.oy + e.lift, z);
+      s.center.set(x, y + e.lift, z);
       if (!this.frustum.intersectsSphere(s) || (skip && skip(x, z))) continue;
+      const dx = x - this.eye.x;
+      const dy = y - this.eye.y;
+      const dz = z - this.eye.z;
+      const t = e.lite && dx * dx + dy * dy + dz * dz > far2 ? 1 : 0;
+      const m = targets[t];
+      const n = counts[t]++;
       // 写し先の同じ位置には前回の別の木が残っていることがあるので、いつも写す。
-      outM.set(e.matrices.subarray(o, o + 16), n * 16);
-      if (outC) outC.set(e.colors!.subarray(k * 3, k * 3 + 3), n * 3);
-      n++;
+      (m.instanceMatrix.array as Float32Array).set(e.matrices.subarray(o, o + 16), n * 16);
+      if (e.colors) (m.instanceColor!.array as Float32Array).set(e.colors.subarray(k * 3, k * 3 + 3), n * 3);
     }
-    e.mesh.count = n;
-    e.mesh.visible = n > 0;
-    e.mesh.instanceMatrix.clearUpdateRanges();
-    e.mesh.instanceMatrix.addUpdateRange(0, n * 16);
-    e.mesh.instanceMatrix.needsUpdate = true;
-    if (outC) {
-      e.mesh.instanceColor!.clearUpdateRanges();
-      e.mesh.instanceColor!.addUpdateRange(0, n * 3);
-      e.mesh.instanceColor!.needsUpdate = true;
-    }
+    targets.forEach((m, t) => {
+      const n = counts[t];
+      m.count = n;
+      m.visible = n > 0;
+      m.instanceMatrix.clearUpdateRanges();
+      m.instanceMatrix.addUpdateRange(0, n * 16);
+      m.instanceMatrix.needsUpdate = true;
+      if (m.instanceColor) {
+        m.instanceColor.clearUpdateRanges();
+        m.instanceColor.addUpdateRange(0, n * 3);
+        m.instanceColor.needsUpdate = true;
+      }
+    });
   }
 }

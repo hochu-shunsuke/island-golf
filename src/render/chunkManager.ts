@@ -384,9 +384,13 @@ export class ChunkManager {
       for (const b of data.batches) {
         const n = b.matrices.length / 16;
         const inst = new THREE.InstancedMesh(veg.geometries[b.kind], veg.material, n);
+        // 遠くの木は軽い形で（木の種類だけ。岩と茂みはもともと軽い）。
+        const liteGeo = veg.lite[b.kind];
+        const lite = liteGeo ? new THREE.InstancedMesh(liteGeo, veg.material, n) : null;
         // 中身は画面に入る木だけを写す（チャンク 192m の中でも、画面に入るのは一部）。行列はチャンクの原点から。
-        picks.push(this.picker.add(inst, b.matrices, b.colors, mesh.position));
+        picks.push(this.picker.add(inst, b.matrices, b.colors, mesh.position, lite));
         scatter.add(inst);
+        if (lite) scatter.add(lite);
       }
     }
 

@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { mulberry32 } from '../core/rng';
-import { paint } from './treeGeometry';
+import { paint, isLite } from './treeGeometry';
 
 /**
  * 針葉樹は主幹が最後まで真っ直ぐ伸びるので、枝の再帰ではなく「幹＋段」で作る。
@@ -51,14 +51,14 @@ export function buildConifer(
         trunkTopR,
         p.baseRadius * 0.2,
         trunkTop,
-        6,
+        isLite() ? 3 : 6,
       ).translate(0, trunkTop * 0.5, 0),
       p.bark,
     ),
   ];
   for (let i = 0; i < p.tiers; i++) {
     const hgt = tierR[i] * p.aspect;
-    const g = new THREE.ConeGeometry(tierR[i], hgt, 7);
+    const g = new THREE.ConeGeometry(tierR[i], hgt, isLite() ? 4 : 7);
     g.rotateY(rand() * Math.PI * 2);
     g.rotateX((rand() - 0.5) * 0.11);
     parts.push(
