@@ -2771,12 +2771,11 @@ kbd {
   display: none !important;
 }
 
-/* スタンプ（友達と回っている間）。スマホは右の列（地図の下）に 5 つのボタンを縦に。
-   PC はカーソルが無いので、右下に「1 🤡 2 😭 …」と番号の対応を出す（押すのはキー）。 */
+/* スタンプ（友達と回っている間）。スマホは右の列（地図の下）に絵文字のボタン 1 つ。押すと 5 種類が下に開く。
+   PC はカーソルが無いので、右下に「1 😃 2 😎 …」と番号の対応を出す（押すのはキー）。 */
 .stamp-bar {
   position: absolute;
   display: none;
-  gap: 6px;
   z-index: 4;
 }
 
@@ -2784,7 +2783,8 @@ kbd {
   display: flex;
 }
 
-.finale .stamp-bar {
+.finale .stamp-bar,
+.finale .stamp-bubbles {
   display: none !important;
 }
 
@@ -2795,9 +2795,6 @@ kbd {
   gap: 4px;
   padding: 0;
   color: var(--ink);
-  background: var(--glass);
-  border: 1px solid var(--edge);
-  backdrop-filter: blur(10px);
   line-height: 1;
 }
 
@@ -2805,7 +2802,7 @@ kbd {
   font-size: 22px;
 }
 
-.stamp-bar button.sent {
+.stamp-list button.sent {
   animation: stamp-sent 0.45s ease;
 }
 
@@ -2815,22 +2812,50 @@ kbd {
   }
 }
 
-/* スマホ: 押せるボタン。キーの番号は出さない。 */
+/* スマホ: 絵文字のボタン 1 つ。押すと下に 5 つ開く（キーの番号は出さない）。 */
 :root[data-input='touch'] .stamp-bar {
   right: max(16px, env(safe-area-inset-right));
   top: calc(max(16px, env(safe-area-inset-top)) + 216px);
   flex-direction: column;
+  align-items: center;
+  gap: 6px;
   pointer-events: auto;
 }
 
-:root[data-input='touch'] .stamp-bar button {
+:root[data-input='touch'] .stamp-open,
+:root[data-input='touch'] .stamp-list button {
   width: 44px;
   height: 44px;
+  background: var(--glass);
+  border: 1px solid var(--edge);
   border-radius: 50%;
+  backdrop-filter: blur(10px);
   cursor: pointer;
 }
 
-:root[data-input='touch'] .stamp-bar kbd {
+:root[data-input='touch'] .stamp-list {
+  display: none;
+  flex-direction: column;
+  gap: 6px;
+}
+
+:root[data-input='touch'] .stamp-bar.open .stamp-list {
+  display: flex;
+  animation: stamp-drop 0.18s ease both;
+}
+
+:root[data-input='touch'] .stamp-bar.open .stamp-open {
+  background: rgba(255, 255, 255, 0.24);
+}
+
+@keyframes stamp-drop {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+}
+
+:root[data-input='touch'] .stamp-list kbd {
   display: none;
 }
 
@@ -2838,7 +2863,7 @@ kbd {
   transform: scale(0.9);
 }
 
-/* PC: 右下に番号の対応を横に並べる（押すのは 1〜5 のキー）。 */
+/* PC: 開くボタンは出さず、右下に番号の対応を横に並べる（押すのは 1〜5 のキー）。 */
 :root:not([data-input='touch']) .stamp-bar {
   right: max(20px, env(safe-area-inset-right));
   bottom: max(24px, calc(env(safe-area-inset-bottom) + 14px));
@@ -2850,18 +2875,92 @@ kbd {
   pointer-events: none;
 }
 
-:root:not([data-input='touch']) .stamp-bar button {
+:root:not([data-input='touch']) .stamp-open {
+  display: none;
+}
+
+:root:not([data-input='touch']) .stamp-list {
+  display: flex;
+  gap: 6px;
+}
+
+:root:not([data-input='touch']) .stamp-list button {
   padding: 2px 4px;
   background: none;
   border: none;
-  backdrop-filter: none;
 }
 
-:root:not([data-input='touch']) .stamp-bar kbd {
+:root:not([data-input='touch']) .stamp-list kbd {
   min-width: 18px;
   padding: 1px 5px;
   font-size: 11px;
   color: var(--muted);
+}
+
+/* 球の上のスタンプの吹き出し（送った人の球の少し上。名前を添えて誰のものか分かるように）。 */
+.stamp-bubbles {
+  position: absolute;
+  inset: 0;
+  display: none;
+  pointer-events: none;
+  overflow: hidden;
+  z-index: 3;
+}
+
+.golfing .stamp-bubbles {
+  display: block;
+}
+
+.stamp-bubble {
+  position: absolute;
+  left: 0;
+  top: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  translate: -50% -100%;
+  will-change: transform;
+}
+
+.stamp-bubble.on {
+  animation: stamp-bubble 2.8s ease both;
+}
+
+.sb-face {
+  font-size: 40px;
+  line-height: 1;
+  filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.35));
+}
+
+.sb-name {
+  margin-top: 2px;
+  padding: 1px 7px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #fff;
+  background: rgba(12, 20, 26, 0.55);
+  border-radius: 999px;
+}
+
+@keyframes stamp-bubble {
+  0% {
+    opacity: 0;
+    scale: 0.5;
+  }
+  10% {
+    opacity: 1;
+    scale: 1.12;
+  }
+  18% {
+    scale: 1;
+  }
+  80% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    scale: 1;
+  }
 }
 
 /* 届いた・送ったスタンプ。左の真ん中あたりに、ぽんと出てふわっと消える。 */

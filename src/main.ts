@@ -491,8 +491,12 @@ function beginPartyRound(hole: number, scores: readonly (number | null)[] | null
  * 回っている途中（休憩中） → 「続きから」「友達を呼ぶ」。
  */
 // ── スタンプ（友達と） ─────────────────────────────────
-/** 最近スタンプを送った人（球の上の名前に 3 秒付ける）。 */
-const stampOn = new Map<string, { s: number; until: number }>();
+/**
+ * 最近スタンプを送った人（自分も）。球が画面に映っていれば球の上に吹き出しを出し、映っていなければ左に 1 回だけ出す（fed）。
+ */
+const stampOn = new Map<string, { s: number; until: number; key: string; fed: boolean }>();
+/** 吹き出しを出しておく時間（ms）。 */
+const STAMP_SHOW_MS = 2800;
 let lastStampSent = 0;
 
 /** スタンプを送る（1〜5 のキー・スタンプのボタン）。自分の画面にもすぐ出す。 */
@@ -502,15 +506,46 @@ function sendStamp(s: number): void {
   if (now - lastStampSent < STAMP_GAP_MS) return;
   lastStampSent = now;
   party.client.send({ t: 'stamp', s });
-  overlay.showStamp('あなた', s, true);
+  overlay.showStamp('', s, true, false);
+  stampOn.set(party.me, { s, until: now + STAMP_SHOW_MS, key: `${s}:${now}`, fed: false });
 }
 
 /** 友達のスタンプが届いた。 */
 function receiveStamp(id: string, s: number): void {
   const p = party?.view?.players.find((q) => q.id === id);
   if (!p || s < 0 || s >= STAMPS.length) return;
-  overlay.showStamp(p.name, s, false);
-  stampOn.set(id, { s, until: performance.now() + 3000 });
+  const now = performance.now();
+  stampOn.set(id, { s, until: now + STAMP_SHOW_MS, key: `${s}:${now}`, fed: false });
+}
+
+const stampScreen = new THREE.Vector3();
+/** スタンプの吹き出しを、送った人の球の上に置く。球が画面に映っていない人は、左に 1 回だけ出す。 */
+function placeStampBubbles(game: GolfGame, rivals: readonly OpponentState[]): void {
+  const items: { id: string; key: string; x: number; y: number; s: number; name: string }[] = [];
+  const now = performance.now();
+  for (const [id, st] of stampOn) {
+    if (st.until <= now) {
+      stampOn.delete(id);
+      continue;
+    }
+    const you = id === party?.me;
+    const r = you ? null : rivals.find((q) => q.id === id);
+    const ball = you ? game.ball.pos : r?.ball;
+    const name = you ? 'あなた' : (r?.name ?? party?.view?.players.find((p) => p.id === id)?.name ?? '');
+    let shown = false;
+    if (ball) {
+      stampScreen.set(ball.x, ball.y + 1.6, ball.z).project(camera);
+      if (stampScreen.z < 1 && Math.abs(stampScreen.x) < 0.95 && Math.abs(stampScreen.y) < 0.95) {
+        items.push({ id, key: st.key, x: ((stampScreen.x + 1) / 2) * innerWidth, y: ((1 - stampScreen.y) / 2) * innerHeight, s: st.s, name });
+        shown = true;
+      }
+    }
+    if (!shown && !st.fed) {
+      st.fed = true;
+      overlay.showStamp(name, st.s, you);
+    }
+  }
+  overlay.setStampBubbles(items);
 }
 
 function updatePartyLabel(): void {
@@ -1685,18 +1720,17 @@ const rivalMarkers: { x: number; y: number; text: string; color: number }[] = []
 /** COM と友達の球の上に色の点を出す（画面に映っている球だけ）。カメラの行列は placeFlagMarkers が更新してある。 */
 function placeRivalMarkers(rivals: readonly OpponentState[]): void {
   rivalMarkers.length = 0;
+  const now = performance.now();
   for (const r of rivals) {
     if (!r.ball) continue;
+    // スタンプの吹き出しを出している人は、吹き出しに名前がある（名前が 2 つ並ばないように）。
+    if ((stampOn.get(r.id)?.until ?? 0) > now) continue;
     rivalScreen.set(r.ball.x, r.ball.y + 1.1, r.ball.z).project(camera);
     if (rivalScreen.z >= 1 || Math.abs(rivalScreen.x) > 1 || Math.abs(rivalScreen.y) > 1) continue;
     rivalMarkers.push({
       x: ((rivalScreen.x + 1) / 2) * innerWidth,
       y: ((1 - rivalScreen.y) / 2) * innerHeight,
-      // スタンプを送ってきた人は、3 秒だけ名前の横に顔を付ける。
-      text: (() => {
-        const st = stampOn.get(r.id);
-        return st && st.until > performance.now() ? `${r.name} ${STAMPS[st.s]}` : r.name;
-      })(),
+      text: r.name,
       color: r.color,
     });
   }
@@ -1912,6 +1946,7 @@ renderer.setAnimationLoop(() => {
     if (!finaleCam) {
       placeFlagMarkers(golf, golf.ball.pos);
       placeRivalMarkers(rivals);
+      placeStampBubbles(golf, rivals);
       placeAimLabel(golf);
       placeTiming(golf);
     } else {

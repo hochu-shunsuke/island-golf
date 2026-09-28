@@ -349,7 +349,11 @@ export class Overlay {
       <div class="aim-label" aria-hidden="true"></div>
       <div class="celebrate" aria-live="polite"></div>
       <div class="hole-title" aria-live="polite"></div>
-      <div class="stamp-bar" aria-label="スタンプ">${STAMPS.map((e, i) => `<button type="button" data-s="${i}"><kbd>${i + 1}</kbd><span>${e}</span></button>`).join('')}</div>
+      <div class="stamp-bar" aria-label="スタンプ">
+        <button type="button" class="stamp-open" aria-label="スタンプを開く"><span>${STAMPS[0]}</span></button>
+        <div class="stamp-list">${STAMPS.map((e, i) => `<button type="button" data-s="${i}"><kbd>${i + 1}</kbd><span>${e}</span></button>`).join('')}</div>
+      </div>
+      <div class="stamp-bubbles" aria-hidden="true"></div>
       <div class="stamp-feed" aria-live="polite"></div>
       <div class="hole-wait" aria-live="polite"></div>
       <div class="scorecard"></div>
@@ -602,8 +606,14 @@ export class Overlay {
    * （Pointer Lock。Esc で開始画面へ戻る）ので、右下に番号と絵文字の対応を出し、1〜5 のキーで送る。
    */
   bindStamps(onSend: (s: number) => void): void {
-    for (const b of this.root.querySelectorAll<HTMLButtonElement>('.stamp-bar button')) {
-      b.addEventListener('click', () => onSend(Number(b.dataset.s)));
+    const bar = this.root.querySelector('.stamp-bar') as HTMLElement;
+    // スマホ: ボタン 1 つを押すと、5 種類が下に開く。選ぶと送って閉じる。
+    bar.querySelector('.stamp-open')!.addEventListener('click', () => bar.classList.toggle('open'));
+    for (const b of bar.querySelectorAll<HTMLButtonElement>('.stamp-list button')) {
+      b.addEventListener('click', () => {
+        bar.classList.remove('open');
+        onSend(Number(b.dataset.s));
+      });
     }
   }
 
@@ -611,25 +621,61 @@ export class Overlay {
   setStampBar(on: boolean): void {
     const bar = this.root.querySelector('.stamp-bar') as HTMLElement;
     bar.classList.toggle('on', on);
+    if (!on) bar.classList.remove('open');
   }
 
+  /**
+   * 球の上のスタンプの吹き出し（画面の位置 px。誰のものか名前も添える）。要素は人ごとに使い回し、
+   * 毎コマ transform だけを動かす（レイアウトを起こさない）。key が変わったら出し直す（ぽんと出る）。
+   */
+  setStampBubbles(items: readonly { id: string; key: string; x: number; y: number; s: number; name: string }[]): void {
+    const layer = this.root.querySelector('.stamp-bubbles') as HTMLElement;
+    const seen = new Set<string>();
+    for (const it of items) {
+      seen.add(it.id);
+      let b = this.bubbleEls.get(it.id);
+      if (!b) {
+        const el = document.createElement('div');
+        el.className = 'stamp-bubble';
+        layer.appendChild(el);
+        b = { el, key: '' };
+        this.bubbleEls.set(it.id, b);
+      }
+      if (b.key !== it.key) {
+        b.key = it.key;
+        b.el.innerHTML = `<span class="sb-face">${STAMPS[it.s] ?? ''}</span><span class="sb-name">${escapeHtml(it.name)}</span>`;
+        b.el.classList.remove('on');
+        void b.el.offsetWidth;
+        b.el.classList.add('on');
+      }
+      b.el.style.transform = `translate(${it.x.toFixed(1)}px, ${it.y.toFixed(1)}px)`;
+    }
+    for (const [id, b] of this.bubbleEls) {
+      if (seen.has(id)) continue;
+      b.el.remove();
+      this.bubbleEls.delete(id);
+    }
+  }
+  private readonly bubbleEls = new Map<string, { el: HTMLElement; key: string }>();
+
   /** 届いた・送ったスタンプを左に出す（ぽんと出て、ふわっと消える）。 */
-  showStamp(name: string, s: number, you: boolean): void {
+  showStamp(name: string, s: number, you: boolean, feed = true): void {
     // 自分が送ったものは、そのボタン（PC は右下の番号）を少し弾ませる。
     if (you) {
-      const b = this.root.querySelector(`.stamp-bar button[data-s="${s}"]`) as HTMLElement | null;
+      const b = this.root.querySelector(`.stamp-list button[data-s="${s}"]`) as HTMLElement | null;
       if (b) {
         b.classList.remove('sent');
         void b.offsetWidth;
         b.classList.add('sent');
       }
     }
-    const feed = this.root.querySelector('.stamp-feed') as HTMLElement;
+    if (!feed) return;
+    const feedEl = this.root.querySelector('.stamp-feed') as HTMLElement;
     const el = document.createElement('div');
     el.className = `stamp-item${you ? ' you' : ''}`;
     el.innerHTML = `<span class="si-name">${escapeHtml(name)}</span><span class="si-face">${STAMPS[s] ?? ''}</span>`;
-    feed.appendChild(el);
-    while (feed.children.length > 4) feed.firstElementChild!.remove();
+    feedEl.appendChild(el);
+    while (feedEl.children.length > 4) feedEl.firstElementChild!.remove();
     window.setTimeout(() => el.remove(), 2800);
   }
 

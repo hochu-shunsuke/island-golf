@@ -20,7 +20,7 @@ export const HOLE_WAIT_MS = 180_000;
 export const AWAY_WAIT_MS = 30_000;
 
 /** 送れるスタンプ（番号で送る。並びを変えると、古い版の相手に別の顔が届く）。 */
-export const STAMPS = ['🤡', '😭', '🤣', '😎', '😃'] as const;
+export const STAMPS = ['😃', '😎', '🤣', '😭', '🤡'] as const;
 /** 1 人がスタンプを送れる間隔（ms）。連打で画面が埋まらないように。 */
 export const STAMP_GAP_MS = 700;
 
