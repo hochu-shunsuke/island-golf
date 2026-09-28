@@ -497,6 +497,8 @@ function beginPartyRound(hole: number, scores: readonly (number | null)[] | null
 const stampOn = new Map<string, { s: number; until: number; key: string; fed: boolean }>();
 /** 吹き出しを出しておく時間（ms）。 */
 const STAMP_SHOW_MS = 2800;
+/** これより遠い球（カメラから m）には吹き出しを出さず、左に出す（遠くの人の吹き出しでコースが隠れないように）。 */
+const STAMP_NEAR = 90;
 let lastStampSent = 0;
 
 /** スタンプを送る（1〜5 のキー・スタンプのボタン）。自分の画面にもすぐ出す。 */
@@ -519,7 +521,7 @@ function receiveStamp(id: string, s: number): void {
 }
 
 const stampScreen = new THREE.Vector3();
-/** スタンプの吹き出しを、送った人の球の上に置く。球が画面に映っていない人は、左に 1 回だけ出す。 */
+/** スタンプの吹き出しを、送った人の球の上に置く。球が画面に映っていない・遠い人は、左に 1 回だけ出す。 */
 function placeStampBubbles(game: GolfGame, rivals: readonly OpponentState[]): void {
   const items: { id: string; key: string; x: number; y: number; s: number; name: string }[] = [];
   const now = performance.now();
@@ -533,7 +535,8 @@ function placeStampBubbles(game: GolfGame, rivals: readonly OpponentState[]): vo
     const ball = you ? game.ball.pos : r?.ball;
     const name = you ? 'あなた' : (r?.name ?? party?.view?.players.find((p) => p.id === id)?.name ?? '');
     let shown = false;
-    if (ball) {
+    const near = ball ? Math.hypot(ball.x - camera.position.x, ball.y - camera.position.y, ball.z - camera.position.z) < STAMP_NEAR : false;
+    if (ball && near) {
       stampScreen.set(ball.x, ball.y + 1.6, ball.z).project(camera);
       if (stampScreen.z < 1 && Math.abs(stampScreen.x) < 0.95 && Math.abs(stampScreen.y) < 0.95) {
         items.push({ id, key: st.key, x: ((stampScreen.x + 1) / 2) * innerWidth, y: ((1 - stampScreen.y) / 2) * innerHeight, s: st.s, name });

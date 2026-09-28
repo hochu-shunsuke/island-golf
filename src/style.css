@@ -2844,6 +2844,11 @@ kbd {
   animation: stamp-drop 0.18s ease both;
 }
 
+:root[data-input='touch'] .stamp-open .icon {
+  width: 24px;
+  height: 24px;
+}
+
 :root[data-input='touch'] .stamp-bar.open .stamp-open {
   background: rgba(255, 255, 255, 0.24);
 }
@@ -2922,7 +2927,12 @@ kbd {
   will-change: transform;
 }
 
-.stamp-bubble.on {
+/* 外側は位置だけ（毎コマ transform）。内側が根元からぽこっと膨らんで、その場で消える。 */
+.sb-in {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  transform-origin: 50% 100%;
   animation: stamp-bubble 2.8s ease both;
 }
 
@@ -2945,21 +2955,22 @@ kbd {
 @keyframes stamp-bubble {
   0% {
     opacity: 0;
-    scale: 0.5;
+    transform: scale(0.3);
   }
-  10% {
+  12% {
     opacity: 1;
-    scale: 1.12;
+    transform: scale(1.15);
   }
-  18% {
-    scale: 1;
+  20% {
+    transform: scale(1);
   }
   80% {
     opacity: 1;
+    transform: scale(1);
   }
   100% {
     opacity: 0;
-    scale: 1;
+    transform: scale(1);
   }
 }
 

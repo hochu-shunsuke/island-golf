@@ -116,6 +116,8 @@ const ICON = {
   eye: svg('M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12zM12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z'),
   /** 書き替える（コース ID を入れる）。 */
   edit: svg('M4 20h4L19 9l-4-4L4 16v4zM14 6l4 4'),
+  /** スタンプを開く（笑顔の線画。中の絵文字と見分けがつくように）。 */
+  smile: svg('M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM8.5 14.5s1.3 2 3.5 2 3.5-2 3.5-2M9 9.5h.01M15 9.5h.01'),
   /** 球へ戻る（戻る矢印）。 */
   back: svg('M9 14 4 9l5-5M4 9h10.5a5.5 5.5 0 0 1 0 11H11'),
 };
@@ -350,7 +352,7 @@ export class Overlay {
       <div class="celebrate" aria-live="polite"></div>
       <div class="hole-title" aria-live="polite"></div>
       <div class="stamp-bar" aria-label="スタンプ">
-        <button type="button" class="stamp-open" aria-label="スタンプを開く"><span>${STAMPS[0]}</span></button>
+        <button type="button" class="stamp-open" aria-label="スタンプを開く">${ICON.smile}</button>
         <div class="stamp-list">${STAMPS.map((e, i) => `<button type="button" data-s="${i}"><kbd>${i + 1}</kbd><span>${e}</span></button>`).join('')}</div>
       </div>
       <div class="stamp-bubbles" aria-hidden="true"></div>
@@ -643,10 +645,8 @@ export class Overlay {
       }
       if (b.key !== it.key) {
         b.key = it.key;
-        b.el.innerHTML = `<span class="sb-face">${STAMPS[it.s] ?? ''}</span><span class="sb-name">${escapeHtml(it.name)}</span>`;
-        b.el.classList.remove('on');
-        void b.el.offsetWidth;
-        b.el.classList.add('on');
+        // 外側は位置だけ、内側が膨らむ（同じ要素で拡大すると、位置の移動まで拡大されて斜めに動いて見えた）。
+        b.el.innerHTML = `<div class="sb-in"><span class="sb-face">${STAMPS[it.s] ?? ''}</span><span class="sb-name">${escapeHtml(it.name)}</span></div>`;
       }
       b.el.style.transform = `translate(${it.x.toFixed(1)}px, ${it.y.toFixed(1)}px)`;
     }
