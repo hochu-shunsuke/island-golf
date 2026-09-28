@@ -2688,7 +2688,7 @@ kbd {
   pointer-events: none;
 }
 
-/* ホールの始まりの番号（1 /9）。真ん中に大きく出て、シュッと左へ流れて消える。消えるまで操作は止まっている。 */
+/* ホールの始まりの番号（1 /9）。真ん中に大きく出て、その場でじわっと消える（2 秒）。消えるまで操作は止まっている。 */
 .hole-title {
   position: absolute;
   left: 50%;
@@ -2706,7 +2706,7 @@ kbd {
 
 .hole-title.on {
   display: flex;
-  animation: hole-title 1.6s cubic-bezier(0.3, 0, 0.2, 1) both;
+  animation: hole-title 2s ease both;
 }
 
 .ht-num b {
@@ -2732,23 +2732,17 @@ kbd {
 @keyframes hole-title {
   0% {
     opacity: 0;
-    transform: scale(0.9);
-    filter: blur(6px);
+    transform: scale(0.94);
   }
-  18% {
+  15% {
     opacity: 1;
     transform: scale(1);
-    filter: blur(0);
   }
-  72% {
+  60% {
     opacity: 1;
-    transform: translateX(0);
-    filter: blur(0);
   }
   100% {
     opacity: 0;
-    transform: translateX(-38vw) scaleX(1.25);
-    filter: blur(8px);
   }
 }
 
@@ -2768,19 +2762,21 @@ kbd {
   }
 }
 
+.titling .flag-markers,
+.titling .aim-label {
+  opacity: 0;
+}
+
 .finale .hole-title {
   display: none !important;
 }
 
-/* スタンプ（友達と回っている間）。右の列、地図の下に丸いボタン。押すと左へ 5 つ並ぶ。 */
+/* スタンプ（友達と回っている間）。スマホは右の列（地図の下）に 5 つのボタンを縦に。
+   PC はカーソルが無いので、右下に「1 🤡 2 😭 …」と番号の対応を出す（押すのはキー）。 */
 .stamp-bar {
   position: absolute;
-  right: max(16px, env(safe-area-inset-right));
-  top: calc(max(16px, env(safe-area-inset-top)) + 196px);
   display: none;
-  align-items: center;
-  gap: 8px;
-  pointer-events: auto;
+  gap: 6px;
   z-index: 4;
 }
 
@@ -2792,53 +2788,80 @@ kbd {
   display: none !important;
 }
 
-.stamp-open,
-.stamp-palette button {
-  display: grid;
-  place-items: center;
-  width: 44px;
-  height: 44px;
+.stamp-bar button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
   padding: 0;
-  font-size: 22px;
-  line-height: 1;
+  color: var(--ink);
   background: var(--glass);
   border: 1px solid var(--edge);
-  border-radius: 50%;
   backdrop-filter: blur(10px);
+  line-height: 1;
+}
+
+.stamp-bar button span {
+  font-size: 22px;
+}
+
+.stamp-bar button.sent {
+  animation: stamp-sent 0.45s ease;
+}
+
+@keyframes stamp-sent {
+  40% {
+    transform: scale(1.25);
+  }
+}
+
+/* スマホ: 押せるボタン。キーの番号は出さない。 */
+:root[data-input='touch'] .stamp-bar {
+  right: max(16px, env(safe-area-inset-right));
+  top: calc(max(16px, env(safe-area-inset-top)) + 216px);
+  flex-direction: column;
+  pointer-events: auto;
+}
+
+:root[data-input='touch'] .stamp-bar button {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
   cursor: pointer;
 }
 
-.stamp-palette {
+:root[data-input='touch'] .stamp-bar kbd {
   display: none;
-  gap: 6px;
-  padding: 4px;
-  background: var(--glass);
-  border: 1px solid var(--edge);
-  border-radius: 28px;
-  backdrop-filter: blur(10px);
 }
 
-.stamp-palette button {
-  width: 40px;
-  height: 40px;
-  font-size: 24px;
+:root[data-input='touch'] .stamp-bar button:active {
+  transform: scale(0.9);
+}
+
+/* PC: 右下に番号の対応を横に並べる（押すのは 1〜5 のキー）。 */
+:root:not([data-input='touch']) .stamp-bar {
+  right: max(20px, env(safe-area-inset-right));
+  bottom: max(24px, calc(env(safe-area-inset-bottom) + 14px));
+  padding: 6px 8px;
+  background: var(--glass);
+  border: 1px solid var(--edge);
+  border-radius: 16px;
+  backdrop-filter: blur(10px);
+  pointer-events: none;
+}
+
+:root:not([data-input='touch']) .stamp-bar button {
+  padding: 2px 4px;
   background: none;
   border: none;
   backdrop-filter: none;
 }
 
-.stamp-palette button:active,
-.stamp-open:active {
-  transform: scale(0.92);
-}
-
-.stamp-bar.open .stamp-palette {
-  display: flex;
-}
-
-/* PC は地図（右上 96×176）の下へ。 */
-:root:not([data-input='touch']) .stamp-bar {
-  top: calc(max(16px, env(safe-area-inset-top)) + 188px);
+:root:not([data-input='touch']) .stamp-bar kbd {
+  min-width: 18px;
+  padding: 1px 5px;
+  font-size: 11px;
+  color: var(--muted);
 }
 
 /* 届いた・送ったスタンプ。左の真ん中あたりに、ぽんと出てふわっと消える。 */
@@ -2901,9 +2924,4 @@ kbd {
     opacity: 0;
     transform: translateY(-18px);
   }
-}
-
-/* スマホは地図（右の列、下端 222px）の下へ。 */
-:root[data-input='touch'] .stamp-bar {
-  top: calc(max(16px, env(safe-area-inset-top)) + 216px);
 }

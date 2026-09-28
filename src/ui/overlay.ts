@@ -349,10 +349,7 @@ export class Overlay {
       <div class="aim-label" aria-hidden="true"></div>
       <div class="celebrate" aria-live="polite"></div>
       <div class="hole-title" aria-live="polite"></div>
-      <div class="stamp-bar">
-        <div class="stamp-palette">${STAMPS.map((e, i) => `<button type="button" data-s="${i}" title="${i + 1}">${e}</button>`).join('')}</div>
-        <button type="button" class="stamp-open" aria-label="スタンプ">${STAMPS[4]}</button>
-      </div>
+      <div class="stamp-bar" aria-label="スタンプ">${STAMPS.map((e, i) => `<button type="button" data-s="${i}"><kbd>${i + 1}</kbd><span>${e}</span></button>`).join('')}</div>
       <div class="stamp-feed" aria-live="polite"></div>
       <div class="hole-wait" aria-live="polite"></div>
       <div class="scorecard"></div>
@@ -600,15 +597,13 @@ export class Overlay {
     this.scoreChip.classList.toggle('has-rank', r !== null);
   }
 
-  /** スタンプのボタンをつなぐ（押すと 5 つが並び、選ぶと onSend）。 */
+  /**
+   * スタンプのボタンをつなぐ。スマホは右の列に 5 つのボタンを並べて押す。PC は遊んでいる間カーソルが無い
+   * （Pointer Lock。Esc で開始画面へ戻る）ので、右下に番号と絵文字の対応を出し、1〜5 のキーで送る。
+   */
   bindStamps(onSend: (s: number) => void): void {
-    const bar = this.root.querySelector('.stamp-bar') as HTMLElement;
-    bar.querySelector('.stamp-open')!.addEventListener('click', () => bar.classList.toggle('open'));
-    for (const b of bar.querySelectorAll<HTMLButtonElement>('.stamp-palette button')) {
-      b.addEventListener('click', () => {
-        bar.classList.remove('open');
-        onSend(Number(b.dataset.s));
-      });
+    for (const b of this.root.querySelectorAll<HTMLButtonElement>('.stamp-bar button')) {
+      b.addEventListener('click', () => onSend(Number(b.dataset.s)));
     }
   }
 
@@ -616,11 +611,19 @@ export class Overlay {
   setStampBar(on: boolean): void {
     const bar = this.root.querySelector('.stamp-bar') as HTMLElement;
     bar.classList.toggle('on', on);
-    if (!on) bar.classList.remove('open');
   }
 
   /** 届いた・送ったスタンプを左に出す（ぽんと出て、ふわっと消える）。 */
   showStamp(name: string, s: number, you: boolean): void {
+    // 自分が送ったものは、そのボタン（PC は右下の番号）を少し弾ませる。
+    if (you) {
+      const b = this.root.querySelector(`.stamp-bar button[data-s="${s}"]`) as HTMLElement | null;
+      if (b) {
+        b.classList.remove('sent');
+        void b.offsetWidth;
+        b.classList.add('sent');
+      }
+    }
     const feed = this.root.querySelector('.stamp-feed') as HTMLElement;
     const el = document.createElement('div');
     el.className = `stamp-item${you ? ' you' : ''}`;
@@ -638,7 +641,12 @@ export class Overlay {
     el.classList.remove('on');
     void el.offsetWidth;
     el.classList.add('on');
+    // 出している間は、真ん中の旗と落とし所の札を隠す（番号と重なって読めなかった）。
+    this.root.classList.add('titling');
+    window.clearTimeout(this.titleTimer);
+    this.titleTimer = window.setTimeout(() => this.root.classList.remove('titling'), seconds * 1000);
   }
+  private titleTimer = 0;
 
   /** 打った一打のでき（ナイスショット・フック・スライス）を画面の真ん中に大きく。 */
   shotFeedback(kind: 'nice' | 'hook' | 'slice'): void {
