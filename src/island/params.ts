@@ -87,8 +87,9 @@ export function randomSeed(): string {
  * 今日のコースの合言葉（日付から決まる 8 文字）。`#` 無しで開いた人は全員これを回る（core/day.ts の日で替わる）。
  * 日付をそのまま合言葉にすると、先の日の合言葉を当てて前もって回れてしまうので、日付を混ぜた値から作る。
  */
-export function dailySeed(day: number): string {
-  const rand = mulberry32(hashSeed(`hole-in-isle:daily:${day}`)[0]);
+export function dailySeed(day: number, n = 0): string {
+  // 1 本目は前からの今日のコースのまま（同じ日の同じ合言葉）。2 本目からは番号も混ぜる。
+  const rand = mulberry32(hashSeed(n === 0 ? `hole-in-isle:daily:${day}` : `hole-in-isle:daily:${day}:${n}`)[0]);
   let s = '';
   for (let i = 0; i < 8; i++) s += SEED_CHARS[Math.floor(rand() * SEED_CHARS.length)];
   return s;

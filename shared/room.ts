@@ -20,8 +20,8 @@ export const HOLE_WAIT_MS = 180_000;
 export const AWAY_WAIT_MS = 30_000;
 
 /** 送れるスタンプ（番号で送る。並びを変えると、古い版の相手に別の顔が届く）。 */
-export const STAMPS = ['😃', '😎', '🤣', '😭', '🤡', '🙏'] as const;
-/** ふだん選べるスタンプの数（先頭から）。残り（🙏）はラウンドの結果の画面の「ありがとう」だけで送る。 */
+export const STAMPS = ['😃', '😎', '🤣', '😭', '🤡', '👍'] as const;
+/** ふだん選べるスタンプの数（先頭から）。残り（👍）はラウンドの結果の画面の「ありがとう」だけで送る。 */
 export const STAMP_PICK = 5;
 /** 結果の画面の「ありがとう」。 */
 export const THANKS = 5;
@@ -117,6 +117,8 @@ export type ClientMessage =
   | { t: 'rest'; hole: number; rest: RestInfo }
   /** スタンプ（STAMPS の番号）。 */
   | { t: 'stamp'; s: number }
+  /** 回り終えた部屋を、次のコースへ移す（回っている途中は受け付けない）。部屋は受付に戻る。 */
+  | { t: 'course'; seed: string; day: number; pars: number[] }
   /** 「部屋を出る」を押した（一覧から消す。切れただけの人は残して、つなぎ直せば戻れる）。 */
   | { t: 'leave' };
 

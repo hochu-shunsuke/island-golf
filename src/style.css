@@ -1240,14 +1240,14 @@ kbd {
   border-color: rgba(255, 255, 255, 0.4);
 }
 
-.rr-actions .rr-again {
+.rr-actions .rr-next {
   font-weight: 600;
   color: #10201f;
   background: #eef2f3;
   border-color: transparent;
 }
 
-.rr-actions .rr-again:hover {
+.rr-actions .rr-next:hover {
   background: #fff;
 }
 
@@ -1336,7 +1336,7 @@ kbd {
     grid-template-columns: 1fr 1fr;
   }
 
-  .rr-actions .rr-again {
+  .rr-actions .rr-next {
     grid-column: 1 / -1;
     padding: 15px;
     font-size: 16px;
@@ -2230,12 +2230,12 @@ kbd {
     margin-top: 10px;
   }
 
-  .rr-actions .rr-again {
+  .rr-actions .rr-next {
     grid-column: auto;
   }
 
   .rr-actions button,
-  .rr-actions .rr-again {
+  .rr-actions .rr-next {
     padding: 9px 8px;
     font-size: 13.5px;
   }

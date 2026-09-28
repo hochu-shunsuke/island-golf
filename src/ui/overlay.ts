@@ -21,6 +21,8 @@ export interface OverlayHandlers {
   onAgain: () => void;
   /** ラウンドの終わりの「新しいコース」（開始画面へ戻って合言葉を振り直す）。 */
   onNewCourse: () => void;
+  /** 結果の画面の「次のコースへ」（今日の次のコース）。 */
+  onNext: () => void;
   /** 結果の画面の「ありがとう」（友達と）。 */
   onThanks: () => void;
   /** 遊び方（COM と対戦・ひとりで）を替えた。 */
@@ -374,9 +376,9 @@ export class Overlay {
           <div class="rr-table"></div>
           <div class="rr-stats"></div>
           <div class="rr-actions">
-            <button type="button" class="rr-again">もう一度回る</button>
+            <button type="button" class="rr-next">次のコースへ</button>
+            <button type="button" class="rr-again">${ICON.refresh}もう一度回る</button>
             <button type="button" class="rr-share">${ICON.link}結果を共有</button>
-            <button type="button" class="rr-new">${ICON.refresh}新しいコース</button>
           </div>
         </div>
       </div>
@@ -461,7 +463,7 @@ export class Overlay {
     this.scorecard = this.root.querySelector('.scorecard')!;
     this.roundResult = this.root.querySelector('.round-result')!;
     this.root.querySelector('.rr-again')!.addEventListener('click', () => this.handlers.onAgain());
-    this.root.querySelector('.rr-new')!.addEventListener('click', () => this.handlers.onNewCourse());
+    this.root.querySelector('.rr-next')!.addEventListener('click', () => this.handlers.onNext());
     const thank = this.root.querySelector('.rr-thank') as HTMLButtonElement;
     thank.addEventListener('click', () => {
       thank.disabled = true;

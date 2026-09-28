@@ -215,6 +215,28 @@ export class GolfRoom {
       const hole = num(msg.hole, 99);
       if (!shot || hole === null) return;
       this.broadcast(ws, { t: 'shot', id: member.id, hole, shot });
+    } else if (msg.t === 'course') {
+      // 回り終えた部屋（か受付）を次のコースへ。回っている途中は受け付けない。部屋は受付に戻り、打数も消す。
+      if (room.phase === 'play') return;
+      const seed = cleanSeed(msg.seed);
+      const pars = Array.isArray(msg.pars)
+        ? msg.pars.slice(0, 18).map((p) => Math.max(2, Math.min(7, Math.round(Number(p) || 4))))
+        : [];
+      if (!seed || pars.length === 0) return;
+      room.seed = seed;
+      room.day = Math.round(num(msg.day, 1e6) ?? room.day);
+      room.pars = pars;
+      room.phase = 'lobby';
+      room.hole = 1;
+      room.firstDoneAt = null;
+      for (const m of room.members) {
+        m.scores = pars.map(() => null);
+        m.done = false;
+        m.playing = false;
+      }
+      await this.scheduleAlarm();
+      await this.save();
+      this.broadcastRoom();
     } else if (msg.t === 'stamp') {
       // 番号だけを中継する（文字は送らせない）。1 人 STAMP_GAP_MS に 1 回まで。
       const i = typeof msg.s === 'number' && Number.isInteger(msg.s) ? msg.s : -1;

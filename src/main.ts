@@ -97,14 +97,57 @@ document.documentElement.dataset.input = inputMode;
 /** アドレスの # は「合言葉」か、友達を部屋に呼ぶ「合言葉@部屋の番号」。 */
 const [hashCourse = '', hashRoom = ''] = location.hash.replace(/^#/, '').split('@');
 let params: IslandParams = courseParams(`#${hashCourse}`);
-// `#` 無しで開いたら今日のコース（同じ日なら誰でも同じコース。スコアを見せ合える）。
-if (!cleanSeed(hashCourse.split('.')[0] ?? '')) params = { ...params, seed: dailySeed(dayIndex()) };
+
+/**
+ * 今日のコースは 1 日 1 本ではなく、番号の付いた並び（dailySeed(日, 番号)。同じ日の同じ番号は誰でも同じ）。
+ * 何本目まで来たかを端末に覚え、前に開いたときに今日のコースで遊んでいれば次の番号から出す
+ * （1 本だけだと、1 時間後に開いてもまた同じコースでつまらなかった。利用者の判断）。回り終えたら「次のコースへ」。
+ */
+const TODAY_KEY = 'hole-in-isle:today';
+let dailyNo = (() => {
+  try {
+    const saved = JSON.parse(localStorage.getItem(TODAY_KEY) ?? 'null') as { day: number; n: number; played: boolean } | null;
+    if (!saved || saved.day !== dayIndex() || !Number.isInteger(saved.n) || saved.n < 0) return 0;
+    return saved.played ? saved.n + 1 : saved.n;
+  } catch {
+    return 0;
+  }
+})();
+function saveDaily(played: boolean): void {
+  try {
+    localStorage.setItem(TODAY_KEY, JSON.stringify({ day: dayIndex(), n: dailyNo, played }));
+  } catch {
+    // 覚えられない環境では、開くたびに 1 本目から。
+  }
+}
+saveDaily(false);
+/** 今日の dailyNo 本目の合言葉。 */
+function todaySeed(): string {
+  return dailySeed(dayIndex(), dailyNo);
+}
+// `#` 無しで開いたら今日のコース（同じ日の同じ番号なら誰でも同じコース。スコアを見せ合える）。
+if (!cleanSeed(hashCourse.split('.')[0] ?? '')) params = { ...params, seed: todaySeed() };
 /** ピンと風の日。ふだんは今日、友達の部屋では部屋を作った人の日に合わせる（夜中の 0 時をまたいでも同じピン）。 */
 let courseDay = dayIndex();
 
 /** 今日のコースを回っているか。 */
 function isDaily(): boolean {
-  return params.seed === dailySeed(dayIndex());
+  return params.seed === todaySeed();
+}
+
+/** 今日のコースで遊び始めた（次に開いたときは次の番号から出す）。 */
+function markDailyPlayed(): void {
+  if (isDaily()) saveDaily(true);
+}
+
+/** 今日のコースの次の番号へ（結果の画面の「次のコースへ」）。島を作り直して開始画面へ。 */
+function nextDaily(): void {
+  dailyNo++;
+  saveDaily(false);
+  courseDay = dayIndex();
+  params = { ...params, seed: todaySeed() };
+  overlay.setParams(params);
+  commit();
 }
 
 // ── 描画 ───────────────────────────────────────────────
@@ -195,9 +238,23 @@ const overlay = new Overlay(document.getElementById('ui')!, params, inputMode ==
     if (isDaily()) return;
     leaveRoom();
     courseDay = dayIndex();
-    params = { ...params, seed: dailySeed(dayIndex()) };
+    params = { ...params, seed: todaySeed() };
     overlay.setParams(params);
     commit();
+  },
+  // 回り終えた結果の画面から、今日の次のコースへ。友達の部屋では、島ができたら部屋ごと移す。
+  onNext: () => {
+    leaveFinale();
+    stopPlaying();
+    overlay.show();
+    if (playMode === 'friends' && party) {
+      pendingRoomCourse = true;
+      nextDaily();
+      openRoom();
+      return;
+    }
+    leaveRoom();
+    nextDaily();
   },
   // 遊び方を替えた: 覚えておき、COM の相手を置き直して 1 番のティーから回り直す。
   onMode: (mode) => {
@@ -288,6 +345,8 @@ interface Party {
   /** 「はじめる」を送って、部屋が始まったと返すのを待っている（その間に届いた前の様子で inRound を外さない）。 */
   starting: boolean;
 }
+/** 友達の部屋で「次のコースへ」を押し、島ができたら部屋へ知らせる。 */
+let pendingRoomCourse = false;
 /** 入っている部屋（入っていなければ null）。 */
 let party: Party | null = null;
 
@@ -381,6 +440,14 @@ function onRoomView(view: RoomView): void {
   }
   party.view = view;
   party.viewAt = performance.now();
+  // 誰かが「次のコースへ」を押して、部屋が次のコースの受付に戻った: 結果の画面を閉じて部屋の窓へ。
+  if (before && before.seed !== view.seed && view.phase === 'lobby' && (roundResult || finaleCam)) {
+    leaveFinale();
+    stopPlaying();
+    overlay.show();
+    overlay.flash('次のコースへ移りました');
+    overlay.showRoom(true);
+  }
   if (view.phase === 'play') party.starting = false;
   else if (!party.starting) party.inRound = false;
   // 回っている途中で長く切れていて、部屋が回りから外していたら（待ち時間を過ぎた）、加わり直す。
@@ -518,17 +585,16 @@ function sendThanks(): void {
   if (!party) return;
   party.client.send({ t: 'stamp', s: THANKS });
   overlay.addThanks('あなた', true);
+  const now = performance.now();
+  stampOn.set(party.me, { s: THANKS, until: now + STAMP_SHOW_MS, key: `${THANKS}:${now}`, fed: false });
 }
 
 /** 友達のスタンプが届いた。 */
 function receiveStamp(id: string, s: number): void {
   const p = party?.view?.players.find((q) => q.id === id);
   if (!p || s < 0 || s >= STAMPS.length) return;
-  // 「ありがとう」は結果の画面の中に並べる（球の上には出さない）。
-  if (s === THANKS) {
-    overlay.addThanks(p.name, false);
-    return;
-  }
+  // 「ありがとう」は、結果の画面を出していればその中にも並べる。ほかのスタンプと同じく球の上・左にも出す。
+  if (s === THANKS && roundResult) overlay.addThanks(p.name, false);
   const now = performance.now();
   stampOn.set(id, { s, until: now + STAMP_SHOW_MS, key: `${s}:${now}`, fed: false });
 }
@@ -756,6 +822,7 @@ function show(msg: GenerateResult): void {
     shownSeed = made.seed;
     scout = false;
     entered = false;
+    restView = false;
     overlay.resetEntered();
     updatePartyLabel();
   }
@@ -803,6 +870,11 @@ worker.onmessage = (ev: MessageEvent<WorkerResult>) => {
     if (msg.id === drawnId && msg.id === lastRequested) {
       sceneReady = true;
       overlay.setReady(true);
+      // 友達の部屋で「次のコースへ」を押した: 島ができたので、部屋ごとこのコースへ移す（パーが要るので作った後に送る）。
+      if (pendingRoomCourse && party) {
+        pendingRoomCourse = false;
+        party.client.send({ t: 'course', seed: params.seed, day: courseDay, pars: course.map((h) => h.par) });
+      }
       renderRoom();
     }
     return;
@@ -838,7 +910,7 @@ worker.onmessage = (ev: MessageEvent<WorkerResult>) => {
 function commit(): void {
   // 今日のコースは `#` を付けない（読み直しても、次の日に開いても、その日の今日のコースになる）。
   history.replaceState(null, '', addressHash());
-  overlay.setDaily(isDaily() ? dayLabel() : null);
+  overlay.setDaily(isDaily() ? (dailyNo > 0 ? `${dayLabel()} · ${dailyNo + 1} 本目` : dayLabel()) : null);
   request();
 }
 
@@ -846,6 +918,11 @@ function commit(): void {
 /** 遊んでいる最中か。PC はポインタロックの有無と一致するが、タッチにはロックが無いので状態で持つ。 */
 let playing = false;
 let entered = false;
+/**
+ * 回っている途中の休憩で、後ろに遊んでいた画面をそのまま映しているか。空撮に戻すと、友達とのラウンドから
+ * 抜けてしまったように見えた（利用者の判断）。ラウンドの後・島が替わったときは空撮。
+ */
+let restView = false;
 let touchControls: TouchControls | null = null;
 let wakeLock: WakeLockSentinelLike | null = null;
 let lastAutoFlight = false;
@@ -1298,6 +1375,8 @@ function prepareCourseView(): void {
 function startPlaying(): void {
   if (playing) return;
   playing = true;
+  restView = false;
+  markDailyPlayed();
   music?.play();
   if (!entered) {
     entered = true;
@@ -1361,10 +1440,14 @@ function stopPlaying(): void {
   overlay.setFinale(false);
   overlay.setFlightInfo(false, 0, 0, false);
   void releaseWakeLock();
-  // 休憩中は、開始画面と同じくコース紹介の空撮を流す（チャンクはそのまま使う）。谷全体から、暗転で入る。
-  flyover?.restart();
-  camera.fov = MAKE_FOV;
-  camera.updateProjectionMatrix();
+  // 回っている途中の休憩は、遊んでいた画面をそのまま後ろに映す（友達の球も動き続ける）。
+  // ラウンドの後などは、開始画面と同じくコース紹介の空撮（谷全体から、暗転で入る）。
+  restView = !!golf && entered && !roundResult && !scout;
+  if (!restView) {
+    flyover?.restart();
+    camera.fov = MAKE_FOV;
+    camera.updateProjectionMatrix();
+  }
   if (document.pointerLockElement) document.exitPointerLock();
   overlay.show(
     inputMode === 'touch'
@@ -1970,6 +2053,14 @@ renderer.setAnimationLoop(() => {
       overlay.setRivalMarkers([]);
       overlay.setTiming(null, 0);
     }
+  } else if (restView && golf && sceneReady) {
+    // 回っている途中の休憩: 遊んでいた画面のまま（球・友達の球・カメラを進め続ける）。
+    golf.update(dt);
+    golf.updateCamera(camera, dt);
+    chunks?.update(camera.position.x, camera.position.z);
+    overlay.setAttractCaption(null, true);
+    overlay.setFade(0);
+    loadingCurtain = 0;
   } else if (flyover && sceneReady) {
     // 開始画面・休憩中: コース紹介の空撮。カットの範囲を読み込み、揃うまでは暗いまま待つ（flyover.ts）。
     chunks?.setFocus(flyover.area);
