@@ -3094,3 +3094,33 @@ kbd {
     transform: scale(0.6);
   }
 }
+
+/* 回っている途中の休憩: 遊び方の切り替えと案内の一文は出さない（ボタンは「ゲームに戻る」）。 */
+.resting .mode-switch,
+.resting .lead {
+  display: none;
+}
+
+/* 休憩中だけの「ゲームを終了」（2 つ目のボタンと同じ見た目）。 */
+.quit-game {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: 13px 10px;
+  font-size: 14.5px;
+  letter-spacing: 0.08em;
+  color: var(--ink);
+  background: var(--glass);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  backdrop-filter: blur(10px);
+}
+
+.resting .quit-game {
+  display: inline-flex;
+}
+
+/* 押した後にボタンへ残るフォーカスの枠（白い線）は出さない（開始画面のデザインに無い）。 */
+.play-panel button:focus,
+.course-panel button:focus {
+  outline: none;
+}

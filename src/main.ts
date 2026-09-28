@@ -242,6 +242,17 @@ const overlay = new Overlay(document.getElementById('ui')!, params, inputMode ==
     overlay.setParams(params);
     commit();
   },
+  // 休憩中の「ゲームを終了」: 回っていたラウンドをやめて、最初の開始画面（空撮・遊び方の切り替え）へ。友達の部屋も出る。
+  onQuit: () => {
+    restView = false;
+    overlay.setResting(false);
+    leaveRoom();
+    applyRivals();
+    flyover?.restart();
+    camera.fov = MAKE_FOV;
+    camera.updateProjectionMatrix();
+    overlay.show();
+  },
   // 回り終えた結果の画面から、今日の次のコースへ。友達の部屋では、島ができたら部屋ごと移す。
   onNext: () => {
     leaveFinale();
@@ -823,6 +834,7 @@ function show(msg: GenerateResult): void {
     scout = false;
     entered = false;
     restView = false;
+    overlay.setResting(false);
     overlay.resetEntered();
     updatePartyLabel();
   }
@@ -1375,6 +1387,8 @@ function prepareCourseView(): void {
 function startPlaying(): void {
   if (playing) return;
   playing = true;
+  // 休憩中の目印（「ゲームに戻る」）はここでは外さない。外すと、パネルが消えるまでの一瞬「続きから」に戻って見えた。
+  // 次に休憩するとき（stopPlaying）に付け直す。
   restView = false;
   markDailyPlayed();
   music?.play();
@@ -1449,11 +1463,8 @@ function stopPlaying(): void {
     camera.updateProjectionMatrix();
   }
   if (document.pointerLockElement) document.exitPointerLock();
-  overlay.show(
-    inputMode === 'touch'
-      ? '休憩中。タップすると続きから打てます。'
-      : '休憩中。クリックすると続きから打てます。',
-  );
+  overlay.setResting(restView);
+  overlay.show();
 }
 
 async function enterFullscreen(): Promise<void> {

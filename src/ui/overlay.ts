@@ -23,6 +23,8 @@ export interface OverlayHandlers {
   onNewCourse: () => void;
   /** 結果の画面の「次のコースへ」（今日の次のコース）。 */
   onNext: () => void;
+  /** 休憩中の「ゲームを終了」（回っていたラウンドをやめて、最初の開始画面へ）。 */
+  onQuit: () => void;
   /** 結果の画面の「ありがとう」（友達と）。 */
   onThanks: () => void;
   /** 遊び方（COM と対戦・ひとりで）を替えた。 */
@@ -295,6 +297,7 @@ export class Overlay {
           </div>
           <button class="start" disabled>コースを作っています…</button>
           <button type="button" class="join-room">${ICON.enter}部屋に入る</button>
+          <button type="button" class="quit-game">ゲームを終了</button>
         </section>
       </aside>
       <div class="modal join-modal" role="dialog">
@@ -464,6 +467,7 @@ export class Overlay {
     this.roundResult = this.root.querySelector('.round-result')!;
     this.root.querySelector('.rr-again')!.addEventListener('click', () => this.handlers.onAgain());
     this.root.querySelector('.rr-next')!.addEventListener('click', () => this.handlers.onNext());
+    this.root.querySelector('.quit-game')!.addEventListener('click', () => this.handlers.onQuit());
     const thank = this.root.querySelector('.rr-thank') as HTMLButtonElement;
     thank.addEventListener('click', () => {
       thank.disabled = true;
@@ -1202,6 +1206,17 @@ export class Overlay {
     this.updateStartLabel();
   }
 
+  /**
+   * 回っている途中の休憩（後ろは遊んでいた画面のまま）。ボタンは「ゲームに戻る」、遊び方の切り替えと
+   * 案内の一文は出さない（休憩中に遊び方を替える場面ではない）。
+   */
+  setResting(on: boolean): void {
+    this.resting = on;
+    this.root.classList.toggle('resting', on);
+    this.updateStartLabel();
+  }
+  private resting = false;
+
   /** 一度入った後は「続きから」にする。 */
   setEntered(): void {
     this.entered = true;
@@ -1226,6 +1241,8 @@ export class Overlay {
       this.startBtn.innerHTML = this.loadingText;
     } else if (this.startLabel) {
       this.startBtn.textContent = this.startLabel;
+    } else if (this.resting) {
+      this.startBtn.textContent = 'ゲームに戻る';
     } else if (this.entered) {
       this.startBtn.textContent = '続きから';
     } else {
