@@ -1,4 +1,4 @@
-import { STAMPS, isRoomId } from '../../shared/room';
+import { STAMPS, STAMP_PICK, THANKS, isRoomId } from '../../shared/room';
 import { PERFECT } from '../golf/aim';
 import { LIE_NAMES, toPar, type GolfStatus } from '../golf/game';
 import type { IslandParams } from '../island/params';
@@ -21,6 +21,8 @@ export interface OverlayHandlers {
   onAgain: () => void;
   /** ラウンドの終わりの「新しいコース」（開始画面へ戻って合言葉を振り直す）。 */
   onNewCourse: () => void;
+  /** 結果の画面の「ありがとう」（友達と）。 */
+  onThanks: () => void;
   /** 遊び方（COM と対戦・ひとりで）を替えた。 */
   onMode: (mode: PlayMode) => void;
   /** 「今日のコースへ」（別のコースを回っているとき）。 */
@@ -353,7 +355,7 @@ export class Overlay {
       <div class="hole-title" aria-live="polite"></div>
       <div class="stamp-bar" aria-label="スタンプ">
         <button type="button" class="stamp-open" aria-label="スタンプを開く">${ICON.smile}</button>
-        <div class="stamp-list">${STAMPS.map((e, i) => `<button type="button" data-s="${i}"><kbd>${i + 1}</kbd><span>${e}</span></button>`).join('')}</div>
+        <div class="stamp-list">${STAMPS.slice(0, STAMP_PICK).map((e, i) => `<button type="button" data-s="${i}"><kbd>${i + 1}</kbd><span>${e}</span></button>`).join('')}</div>
       </div>
       <div class="stamp-bubbles" aria-hidden="true"></div>
       <div class="stamp-feed" aria-live="polite"></div>
@@ -365,6 +367,10 @@ export class Overlay {
           <div class="rr-total"><b class="rr-strokes"></b><span class="rr-unit">打</span><span class="rr-par"></span></div>
           <div class="rr-best"></div>
           <div class="rr-ranking"></div>
+          <div class="rr-thanks">
+            <button type="button" class="rr-thank">${STAMPS[THANKS]} ありがとう</button>
+            <div class="rr-thanks-list" aria-live="polite"></div>
+          </div>
           <div class="rr-table"></div>
           <div class="rr-stats"></div>
           <div class="rr-actions">
@@ -456,6 +462,11 @@ export class Overlay {
     this.roundResult = this.root.querySelector('.round-result')!;
     this.root.querySelector('.rr-again')!.addEventListener('click', () => this.handlers.onAgain());
     this.root.querySelector('.rr-new')!.addEventListener('click', () => this.handlers.onNewCourse());
+    const thank = this.root.querySelector('.rr-thank') as HTMLButtonElement;
+    thank.addEventListener('click', () => {
+      thank.disabled = true;
+      this.handlers.onThanks();
+    });
     const shareBtn = this.root.querySelector('.rr-share') as HTMLButtonElement;
     shareBtn.addEventListener('click', () => void this.shareResult(shareBtn));
     // 左上の表示の下端。狭い画面で何行かに折り返しても、風のメーターと地図をその下に置く（style.css）。
@@ -925,6 +936,23 @@ export class Overlay {
   }
 
   /** ラウンドの結果を出す。合計の打数は数え上げ、打数のマスは 1 つずつ出す。 */
+  /** 結果の画面の「ありがとう」を出す（友達と回ったとき）。出し直すたびに、押せる状態と届いた一覧を戻す。 */
+  setThanks(on: boolean): void {
+    this.roundResult.classList.toggle('friends', on);
+    (this.root.querySelector('.rr-thank') as HTMLButtonElement).disabled = false;
+    (this.root.querySelector('.rr-thanks-list') as HTMLElement).innerHTML = '';
+  }
+
+  /** 「ありがとう」が届いた（自分のも）。結果の画面の中に並べる。 */
+  addThanks(name: string, you: boolean): void {
+    const list = this.root.querySelector('.rr-thanks-list') as HTMLElement;
+    const el = document.createElement('span');
+    el.className = `rr-thanks-item${you ? ' you' : ''}`;
+    el.innerHTML = `${escapeHtml(name)} <b>${STAMPS[THANKS]}</b>`;
+    list.appendChild(el);
+    if (you) (this.root.querySelector('.rr-thank') as HTMLButtonElement).disabled = true;
+  }
+
   showRoundResult(r: RoundResult): void {
     const q = (sel: string) => this.roundResult.querySelector(sel) as HTMLElement;
     q('.rr-course').textContent = `${r.seed} · ${r.dateLabel} のピン`;

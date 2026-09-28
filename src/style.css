@@ -3034,3 +3034,63 @@ kbd {
     transform: translateY(-18px);
   }
 }
+
+/* 結果の画面の「ありがとう」（友達と回ったときだけ）。押すと届いた一覧に並ぶ。 */
+.rr-thanks {
+  display: none;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 8px 10px;
+  margin: 4px 0 10px;
+}
+
+.round-result.friends .rr-thanks {
+  display: flex;
+}
+
+.rr-thank {
+  padding: 8px 16px;
+  font: inherit;
+  font-size: 14px;
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid var(--edge);
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.rr-thank:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.rr-thanks-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.rr-thanks-item {
+  font-size: 13px;
+  color: var(--muted);
+  animation: stamp-pop 2.8s ease both;
+  animation-name: rr-thanks-in;
+  animation-duration: 0.4s;
+}
+
+.rr-thanks-item b {
+  font-size: 20px;
+  font-weight: 400;
+}
+
+.rr-thanks-item.you {
+  color: #fff;
+}
+
+@keyframes rr-thanks-in {
+  from {
+    opacity: 0;
+    transform: scale(0.6);
+  }
+}

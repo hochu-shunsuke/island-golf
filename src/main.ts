@@ -21,7 +21,7 @@ import { RIVALS, Rivals } from './golf/rivals';
 import { Peers, peerColor } from './golf/peers';
 import type { Opponents } from './golf/opponents';
 import { RoomClient, type RoomStatus } from './net/room';
-import { type RoomView, STAMPS, STAMP_GAP_MS, cleanName, isRoomId, newRoomId } from '../shared/room';
+import { type RoomView, STAMPS, STAMP_GAP_MS, STAMP_PICK, THANKS, cleanName, isRoomId, newRoomId } from '../shared/room';
 import type { OpponentState } from './golf/opponents';
 import { type TouchControls, createTouchControls, hasTouchInput, isTouchDevice } from './ui/touch';
 import { Flyover } from './view/flyover';
@@ -231,6 +231,7 @@ const overlay = new Overlay(document.getElementById('ui')!, params, inputMode ==
     overlay.setRoomName(playerName);
   },
   // ラウンドの終わり: 開始画面へ戻って、別のコースを引く。
+  onThanks: () => sendThanks(),
   onNewCourse: () => {
     leaveFinale();
     stopPlaying();
@@ -503,7 +504,7 @@ let lastStampSent = 0;
 
 /** スタンプを送る（1〜5 のキー・スタンプのボタン）。自分の画面にもすぐ出す。 */
 function sendStamp(s: number): void {
-  if (!party?.inRound || s < 0 || s >= STAMPS.length) return;
+  if (!party?.inRound || s < 0 || s >= STAMP_PICK) return;
   const now = performance.now();
   if (now - lastStampSent < STAMP_GAP_MS) return;
   lastStampSent = now;
@@ -512,10 +513,22 @@ function sendStamp(s: number): void {
   stampOn.set(party.me, { s, until: now + STAMP_SHOW_MS, key: `${s}:${now}`, fed: false });
 }
 
+/** 結果の画面の「ありがとう」を送る（ラウンドが終わって部屋は回っていないが、部屋にいれば送れる）。 */
+function sendThanks(): void {
+  if (!party) return;
+  party.client.send({ t: 'stamp', s: THANKS });
+  overlay.addThanks('あなた', true);
+}
+
 /** 友達のスタンプが届いた。 */
 function receiveStamp(id: string, s: number): void {
   const p = party?.view?.players.find((q) => q.id === id);
   if (!p || s < 0 || s >= STAMPS.length) return;
+  // 「ありがとう」は結果の画面の中に並べる（球の上には出さない）。
+  if (s === THANKS) {
+    overlay.addThanks(p.name, false);
+    return;
+  }
   const now = performance.now();
   stampOn.set(id, { s, until: now + STAMP_SHOW_MS, key: `${s}:${now}`, fed: false });
 }
@@ -1889,6 +1902,7 @@ renderer.setAnimationLoop(() => {
     }
     if (roundResult && roundResultAt > 0 && performance.now() >= roundResultAt && !holeFade) {
       roundResultAt = 0;
+      overlay.setThanks(playMode === 'friends' && party !== null);
       overlay.showRoundResult(roundResult);
       // 結果の窓のボタンを押せるように、マウスを放す（ロックが外れても休憩にはしない）。
       if (document.pointerLockElement === canvas) document.exitPointerLock();
