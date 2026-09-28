@@ -134,7 +134,39 @@ const COLOR_FRAGMENT = /* glsl */ `
   );
 `;
 
+/**
+ * 遠景の島を粗い形で描くとき（overviewMesh.ts）: 色・岩の色・量・法線を、頂点ではなく画像から画素ごとに引く。
+ * 形を粗くしても、色の境目（フェアウェイの縁・雪と岩の境）は元の細かさのまま。
+ * 色と岩の色は平方根で詰めてある（暗い所の段差を減らす）。法線は 0..1 へ写してある。
+ */
+const TEXTURED_PARS = /* glsl */ `
+  uniform sampler2D uOvColor;
+  uniform sampler2D uOvRock;
+  uniform sampler2D uOvSurf;
+  uniform sampler2D uOvNormal;
+  // xy: 画像の 0 番の画素の中心の世界座標、zw: 世界座標 1m あたりの画像の座標。
+  uniform vec4 uOvMap;
+  vec3 tColor;
+  vec3 tRock;
+  vec3 tSurf;
+  vec3 tNormal;
+`;
+
+const TEXTURED_START = /* glsl */ `
+  {
+    vec2 ovUv = (vTerrainPos.xz - uOvMap.xy) * uOvMap.zw;
+    vec3 c = texture2D(uOvColor, ovUv).rgb;
+    tColor = c * c;
+    vec3 r = texture2D(uOvRock, ovUv).rgb;
+    tRock = r * r;
+    tSurf = texture2D(uOvSurf, ovUv).rgb;
+    tNormal = normalize(texture2D(uOvNormal, ovUv).rgb * 2.0 - 1.0);
+  }
+`;
+
 export interface TerrainMaterialOptions {
+  /** 色などを頂点ではなく画像から引く（遠景の島の粗い形。uniforms に uOv* を渡す）。 */
+  textured?: boolean;
   /** 断片シェーダーに足す宣言（uniform や関数）。 */
   fragmentPars?: string;
   /** main の先頭に足す文（discard の判定など）。変数 vTerrainPos を使える。 */
@@ -154,19 +186,30 @@ export function createTerrainMaterial(options: TerrainMaterialOptions = {}): THR
     shader.vertexShader = shader.vertexShader
       .replace('#include <common>', `#include <common>\n${PARS_VERTEX}`)
       .replace('#include <begin_vertex>', `#include <begin_vertex>\n${VERTEX}`);
+    const textured = options.textured === true;
+    // 画像から引くときは、頂点の値（vColor・vRock・vSurf・vTerrainNormal）の代わりに画素ごとの値を使う。
+    const color = textured
+      ? COLOR_FRAGMENT.replaceAll('vColor.rgb', 'tColor')
+          .replaceAll('vRock', 'tRock')
+          .replaceAll('vSurf', 'tSurf')
+          .replaceAll('vTerrainNormal', 'tNormal')
+      : COLOR_FRAGMENT;
     shader.fragmentShader = shader.fragmentShader
       .replace(
         '#include <common>',
-        `#include <common>\n#define NOISE_CELLS ${NOISE_CELLS.toFixed(1)}\n${PARS_FRAGMENT}\n${options.fragmentPars ?? ''}`,
+        `#include <common>\n#define NOISE_CELLS ${NOISE_CELLS.toFixed(1)}\n${PARS_FRAGMENT}\n${textured ? TEXTURED_PARS : ''}\n${options.fragmentPars ?? ''}`,
       )
-      .replace('void main() {', `void main() {\n${options.fragmentStart ?? ''}`)
-      .replace('#include <color_fragment>', COLOR_FRAGMENT)
+      .replace('void main() {', `void main() {\n${options.fragmentStart ?? ''}\n${textured ? TEXTURED_START : ''}`)
+      .replace('#include <color_fragment>', color)
       .replace(
         '#include <normal_fragment_maps>',
-        '#include <normal_fragment_maps>\n  normal = terrainBump(-vViewPosition, normal, terrainHeight);',
+        textured
+          ? // 光も画像の法線で（粗い形の頂点の法線では、細かい尾根の陰影が消える）。
+            '#include <normal_fragment_maps>\n  normal = normalize(mat3(viewMatrix) * tNormal);\n  normal = terrainBump(-vViewPosition, normal, terrainHeight);'
+          : '#include <normal_fragment_maps>\n  normal = terrainBump(-vViewPosition, normal, terrainHeight);',
       );
     injectIslandLight(shader, 'vTerrainPos.xz');
   };
-  material.customProgramCacheKey = () => `terrain:${options.cacheKey ?? ''}`;
+  material.customProgramCacheKey = () => `terrain:${options.cacheKey ?? ''}:${options.textured ? 'tex' : 'vtx'}`;
   return material;
 }

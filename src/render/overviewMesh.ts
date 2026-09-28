@@ -4,6 +4,7 @@ import { CHUNK_SIZE } from '../world/chunk';
 import { COVERAGE_OFFSET, COVERAGE_SIZE } from './chunkManager';
 import { RENDER_ORDER } from './order';
 import { createTerrainMaterial } from './terrainMaterial';
+import { splitsAlongMainDiagonal } from '../world/terrain';
 
 /**
  * 島全体を 1 枚で描く。「つくる」で見渡す島であり、飛んでいる間の遠景でもある。
@@ -18,7 +19,17 @@ import { createTerrainMaterial } from './terrainMaterial';
  * 三角形の番号だけを分け（頂点は共有）、チャンクで全部覆われた升目と画面の外の升目を描かない。升目の境目を
  * またぐ三角形は「継ぎ目」にまとめて常に描く（片方の升目に入れると、その升目を描かないときに隙間が開く）。
  * 見える升目が多いとき（島全体を見渡す開始画面など）は、描く回数を増やさないよう 1 枚のまま描く。
+ *
+ * **遠くから見るときは、形を 1 つおきの粗さにし、色は画像から引く。** 島全体を沖の高い所から見ると、
+ * 5.3m 格子の三角形が 1〜2 画素まで小さくなり、同じ画素を何度も塗って重かった（開始画面の島全体のカットで GPU の
+ * 8 割、PC で 30fps ほど）。形だけ粗くすると色の境目（フェアウェイの縁・雪と岩の境）がぼやけるので、色・岩の色・
+ * 量・法線は元の細かさの画像に写して画素ごとに引く（terrainMaterial.ts の textured）。粗い形は同じ頂点を 1 つおきに
+ * つないだ三角形の番号だけ。切り替えは島全体でまとめて（升目ごとに混ぜると境目に隙間ができる）。
  */
+
+/** これより高い（海面から m）か、島の中心から遠い（m）カメラでは、遠くから見る粗い形で描く。 */
+const FAR_ALTITUDE = 600;
+const FAR_DISTANCE = 2600;
 
 /** 升目の 1 辺（チャンクの数、768m）。2（384m）より描く回数が少なく、減らせる三角形はほぼ同じだった。 */
 const TILE_CHUNKS = 4;
@@ -67,6 +78,18 @@ export class OverviewMesh {
   private readonly frustum = new THREE.Frustum();
   private readonly viewProj = new THREE.Matrix4();
   private water: THREE.Mesh | null = null;
+  /** 遠くから見るときの粗い形（色は画像から引く）と、その画像。 */
+  private far: THREE.Mesh | null = null;
+  private farTextures: THREE.DataTexture[] = [];
+  private readonly farUniforms = {
+    uOvColor: { value: null as THREE.Texture | null },
+    uOvRock: { value: null as THREE.Texture | null },
+    uOvSurf: { value: null as THREE.Texture | null },
+    uOvNormal: { value: null as THREE.Texture | null },
+    uOvMap: { value: new THREE.Vector4() },
+  };
+  private readonly farMaterial: THREE.MeshLambertMaterial;
+  private readonly center = new THREE.Vector3();
   private readonly uniforms: CoverageUniforms = {
     uCoverage: { value: null },
     uCoverageOn: { value: 0 },
@@ -80,6 +103,14 @@ export class OverviewMesh {
       fragmentPars: COVERAGE_GLSL,
       fragmentStart: '  if (coveredByChunk(vTerrainPos.xz)) discard;',
       cacheKey: 'overview',
+    });
+
+    this.farMaterial = createTerrainMaterial({
+      uniforms: { ...this.uniforms, ...this.farUniforms } as unknown as Record<string, THREE.IUniform>,
+      fragmentPars: COVERAGE_GLSL,
+      fragmentStart: '  if (coveredByChunk(vTerrainPos.xz)) discard;',
+      cacheKey: 'overview',
+      textured: true,
     });
 
     // 水の材質は海・近くの川と共有しているので、遠景の水面だけ複製して「描かない所」を足す。
@@ -110,7 +141,21 @@ export class OverviewMesh {
    * 描く前に毎コマ呼ぶ: チャンクで全部覆われた升目と画面の外の升目を描かない。見える升目が多ければ 1 枚で描く。
    */
   update(camera: THREE.Camera): void {
-    if (!this.terrain || this.tiles.length === 0) return;
+    if (!this.terrain) return;
+    // 遠くから見るときは、粗い形と画像の色で島全体を 1 枚で描く。
+    const p = camera.position;
+    const farView = this.far !== null && (p.y > FAR_ALTITUDE || Math.hypot(p.x - this.center.x, p.z - this.center.z) > FAR_DISTANCE);
+    if (this.far) this.far.visible = farView;
+    if (farView) {
+      this.terrain.visible = false;
+      if (this.seam) this.seam.visible = false;
+      for (const t of this.tiles) t.mesh.visible = false;
+      return;
+    }
+    if (this.tiles.length === 0) {
+      this.terrain.visible = true;
+      return;
+    }
     this.refreshCovered();
     camera.updateMatrixWorld();
     this.viewProj.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
@@ -164,7 +209,9 @@ export class OverviewMesh {
     geo.computeBoundingSphere();
     this.terrain = new THREE.Mesh(geo, this.terrainMaterial);
     this.group.add(this.terrain);
+    this.center.copy(geo.boundingSphere!.center);
     this.buildTiles(geo, arrays);
+    this.buildFar(geo, arrays);
     if (water) {
       const waterGeo = new THREE.BufferGeometry();
       waterGeo.setAttribute('position', new THREE.BufferAttribute(water, 3));
@@ -246,6 +293,72 @@ export class OverviewMesh {
     this.coverageVersion = -1;
   }
 
+  /**
+   * 遠くから見る粗い形（同じ頂点を 1 つおきにつなぐ）と、色・岩の色・量・法線の画像（元の格子の細かさ）を作る。
+   * 画像の 1 画素は格子の 1 点。色と岩の色は平方根で詰め（暗い所の段差を減らす）、法線は 0..1 へ写す。
+   */
+  private buildFar(full: THREE.BufferGeometry, arrays: OverviewArrays): void {
+    const pos = arrays.position;
+    const sn = Math.round(Math.sqrt(pos.length / 3));
+    if (sn < 5 || sn * sn * 3 !== pos.length) return;
+    const texture = (src: Float32Array, encode: (v: number) => number) => {
+      const out = new Uint8Array(sn * sn * 4);
+      for (let k = 0; k < sn * sn; k++) {
+        for (let c = 0; c < 3; c++) out[k * 4 + c] = Math.round(Math.min(1, Math.max(0, encode(src[k * 3 + c]))) * 255);
+        out[k * 4 + 3] = 255;
+      }
+      const tex = new THREE.DataTexture(out, sn, sn, THREE.RGBAFormat, THREE.UnsignedByteType);
+      // 縮小版（ミップマップ）は使わない。遠くでは 1 段粗い版が混ざり、頂点の色より境目がぼやけた。
+      tex.magFilter = THREE.LinearFilter;
+      tex.minFilter = THREE.LinearFilter;
+      tex.generateMipmaps = false;
+      tex.wrapS = THREE.ClampToEdgeWrapping;
+      tex.wrapT = THREE.ClampToEdgeWrapping;
+      tex.needsUpdate = true;
+      this.farTextures.push(tex);
+      return tex;
+    };
+    const u = this.farUniforms;
+    u.uOvColor.value = texture(arrays.color, Math.sqrt);
+    u.uOvRock.value = texture(arrays.rock, Math.sqrt);
+    u.uOvSurf.value = texture(arrays.surf, (v) => v);
+    u.uOvNormal.value = texture(arrays.normal, (v) => v * 0.5 + 0.5);
+    // 格子の点 (i, j) の世界座標は x0 + i dx, z0 + j dz。画素の中心を合わせる。
+    const x0 = pos[0];
+    const z0 = pos[2];
+    const dx = pos[3] - pos[0];
+    const dz = pos[sn * 3 + 2] - pos[2];
+    u.uOvMap.value.set(x0 - dx / 2, z0 - dz / 2, 1 / (dx * sn), 1 / (dz * sn));
+
+    // 1 つおきの点をつなぐ（端の点は必ず入れる。点の数が偶数なら最後の 1 列は 1 つ幅で）。
+    const at: number[] = [];
+    for (let i = 0; i < sn - 1; i += 2) at.push(i);
+    at.push(sn - 1);
+    const h = (i: number, j: number) => pos[(j * sn + i) * 3 + 1];
+    const list: number[] = [];
+    for (let jj = 0; jj < at.length - 1; jj++) {
+      for (let ii = 0; ii < at.length - 1; ii++) {
+        const i0 = at[ii];
+        const i1 = at[ii + 1];
+        const j0 = at[jj];
+        const j1 = at[jj + 1];
+        const a = j0 * sn + i0;
+        const b = j0 * sn + i1;
+        const d = j1 * sn + i0;
+        const e = j1 * sn + i1;
+        if (splitsAlongMainDiagonal(h(i0, j0), h(i1, j0), h(i0, j1), h(i1, j1))) list.push(a, d, e, a, e, b);
+        else list.push(a, d, b, d, e, b);
+      }
+    }
+    const geo = new THREE.BufferGeometry();
+    for (const name of ['position', 'normal', 'color', 'rock', 'surf']) geo.setAttribute(name, full.getAttribute(name));
+    geo.setIndex(new THREE.BufferAttribute(new Uint32Array(list), 1));
+    geo.boundingSphere = full.boundingSphere!.clone();
+    this.far = new THREE.Mesh(geo, this.farMaterial);
+    this.far.visible = false;
+    this.group.add(this.far);
+  }
+
   private clear(): void {
     for (const mesh of [this.terrain, this.water]) {
       if (!mesh) continue;
@@ -259,6 +372,13 @@ export class OverviewMesh {
       this.group.remove(mesh);
       mesh.geometry.dispose();
     }
+    if (this.far) {
+      this.group.remove(this.far);
+      this.far.geometry.dispose();
+      this.far = null;
+    }
+    for (const t of this.farTextures) t.dispose();
+    this.farTextures = [];
     this.tiles = [];
     this.seam = null;
     this.covered.clear();
