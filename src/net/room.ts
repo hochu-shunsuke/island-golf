@@ -20,6 +20,8 @@ export interface RoomHandlers {
   onRoom(room: RoomView): void;
   onShot(id: string, hole: number, shot: ShotInfo): void;
   onRest(id: string, hole: number, rest: RestInfo): void;
+  /** 友達がスタンプを送った（STAMPS の番号）。 */
+  onStamp(id: string, s: number): void;
   onStatus(status: RoomStatus): void;
 }
 
@@ -155,6 +157,7 @@ export class RoomClient {
     else if (msg.t === 'room') this.handlers.onRoom(msg.room);
     else if (msg.t === 'shot') this.handlers.onShot(msg.id, msg.hole, msg.shot);
     else if (msg.t === 'rest') this.handlers.onRest(msg.id, msg.hole, msg.rest);
+    else if (msg.t === 'stamp') this.handlers.onStamp(msg.id, msg.s);
     else if (msg.t === 'refused') {
       // 満員の部屋には、つなぎ直しても入れない。
       this.closed = true;

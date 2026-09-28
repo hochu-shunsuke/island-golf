@@ -59,7 +59,7 @@ globalThis.WebSocketRequestResponsePair ??= class {};
 const server = await createServer({ configFile: false, appType: 'custom', logLevel: 'silent', server: { middlewareMode: true } });
 try {
   const { GolfRoom } = await server.ssrLoadModule('/server/room.ts');
-  const { HOLE_WAIT_MS, isRoomId, cleanName, newRoomId } = await server.ssrLoadModule('/shared/room.ts');
+  const { HOLE_WAIT_MS, AWAY_WAIT_MS, isRoomId, cleanName, newRoomId } = await server.ssrLoadModule('/shared/room.ts');
 
   // 決まり
   assert.ok(isRoomId(newRoomId()) && !isRoomId('12345') && !isRoomId('abcdef') && !isRoomId(123456));
@@ -139,10 +139,14 @@ try {
   assert.equal(player(x2, 'ゲスト').scores[0], 8);
   assert.equal(player(x2, 'ゲスト2').online, false, '切れた人は残る（離席中）');
 
-  // 待ち時間を過ぎても戻らない人はダブルパーにして回りから外す（次のホールからは待たない）。
+  // 切れた人は AWAY_WAIT_MS だけ待つ（残り時間を部屋の様子で知らせる）。過ぎても戻らなければ
+  // ダブルパーにして回りから外す（次のホールからは待たない）。
   await holeOut(x2, 2, 3);
-  assert.equal(x2.room.hole, 2);
-  room.room.firstDoneAt -= HOLE_WAIT_MS;
+  assert.equal(x2.room.hole, 2, '切れて間もない人は待つ');
+  const left = player(x2, 'ゲスト2').awayMs;
+  assert.ok(left > 0 && left <= AWAY_WAIT_MS, `離席中の残り時間を知らせる（${left}）`);
+  assert.ok(state.alarm <= Date.now() + AWAY_WAIT_MS, '切れた人を待つ時間のアラーム');
+  room.room.members.find((m) => m.name === 'ゲスト2').goneAt -= AWAY_WAIT_MS;
   await room.alarm();
   assert.equal(x2.room.hole, 3);
   assert.equal(player(x2, 'ゲスト2').scores[1], 6);
@@ -181,7 +185,7 @@ try {
   for (let i = 0; i < 60; i++) await r2.webSocketMessage(spam, JSON.stringify({ t: 'name', name: 'x' }));
   assert.ok(spam.closed, '送り付けは切る');
 
-  console.log('PASS  部屋 途中から入る・見ているだけは待たない・時間切れ・切れた人を待つ／外す・全員が一瞬切れても残る・出る・満員の空け直し・同じ名前・送り付け');
+  console.log('PASS  部屋 途中から入る・見ているだけは待たない・時間切れ・切れた人を 30 秒待つ／外す・全員が一瞬切れても残る・出る・満員の空け直し・同じ名前・送り付け');
 } finally {
   await server.close();
 }

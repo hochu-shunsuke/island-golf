@@ -1,4 +1,4 @@
-import { isRoomId } from '../../shared/room';
+import { STAMPS, isRoomId } from '../../shared/room';
 import { PERFECT } from '../golf/aim';
 import { LIE_NAMES, toPar, type GolfStatus } from '../golf/game';
 import type { IslandParams } from '../island/params';
@@ -348,6 +348,12 @@ export class Overlay {
       <div class="standings" aria-label="順位"></div>
       <div class="aim-label" aria-hidden="true"></div>
       <div class="celebrate" aria-live="polite"></div>
+      <div class="hole-title" aria-live="polite"></div>
+      <div class="stamp-bar">
+        <div class="stamp-palette">${STAMPS.map((e, i) => `<button type="button" data-s="${i}" title="${i + 1}">${e}</button>`).join('')}</div>
+        <button type="button" class="stamp-open" aria-label="スタンプ">${STAMPS[4]}</button>
+      </div>
+      <div class="stamp-feed" aria-live="polite"></div>
       <div class="hole-wait" aria-live="polite"></div>
       <div class="scorecard"></div>
       <div class="round-result" role="dialog" aria-label="ラウンド終了">
@@ -592,6 +598,46 @@ export class Overlay {
     this.scoreChip.innerHTML = text ? `${text}${r ? '<i class="chip-caret"></i>' : ''}` : '';
     this.scoreChip.classList.toggle('on', text !== '' && this.golfHud.classList.contains('on'));
     this.scoreChip.classList.toggle('has-rank', r !== null);
+  }
+
+  /** スタンプのボタンをつなぐ（押すと 5 つが並び、選ぶと onSend）。 */
+  bindStamps(onSend: (s: number) => void): void {
+    const bar = this.root.querySelector('.stamp-bar') as HTMLElement;
+    bar.querySelector('.stamp-open')!.addEventListener('click', () => bar.classList.toggle('open'));
+    for (const b of bar.querySelectorAll<HTMLButtonElement>('.stamp-palette button')) {
+      b.addEventListener('click', () => {
+        bar.classList.remove('open');
+        onSend(Number(b.dataset.s));
+      });
+    }
+  }
+
+  /** スタンプのボタンを出す（友達と回っている間）。 */
+  setStampBar(on: boolean): void {
+    const bar = this.root.querySelector('.stamp-bar') as HTMLElement;
+    bar.classList.toggle('on', on);
+    if (!on) bar.classList.remove('open');
+  }
+
+  /** 届いた・送ったスタンプを左に出す（ぽんと出て、ふわっと消える）。 */
+  showStamp(name: string, s: number, you: boolean): void {
+    const feed = this.root.querySelector('.stamp-feed') as HTMLElement;
+    const el = document.createElement('div');
+    el.className = `stamp-item${you ? ' you' : ''}`;
+    el.innerHTML = `<span class="si-name">${escapeHtml(name)}</span><span class="si-face">${STAMPS[s] ?? ''}</span>`;
+    feed.appendChild(el);
+    while (feed.children.length > 4) feed.firstElementChild!.remove();
+    window.setTimeout(() => el.remove(), 2800);
+  }
+
+  /** ホールの始まりに、真ん中へ大きく「1 /9」とパー・距離を出し、seconds 秒でシュッと消す。 */
+  showHoleTitle(n: number, of: number, sub: string, seconds: number): void {
+    const el = this.root.querySelector('.hole-title') as HTMLElement;
+    el.innerHTML = `<div class="ht-num"><b>${n}</b><small>/${of}</small></div><div class="ht-sub">${escapeHtml(sub)}</div>`;
+    el.style.animationDuration = `${seconds}s`;
+    el.classList.remove('on');
+    void el.offsetWidth;
+    el.classList.add('on');
   }
 
   /** 打った一打のでき（ナイスショット・フック・スライス）を画面の真ん中に大きく。 */

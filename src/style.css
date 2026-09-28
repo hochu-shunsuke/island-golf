@@ -2687,3 +2687,223 @@ kbd {
   background: rgba(0, 0, 0, 0.62);
   pointer-events: none;
 }
+
+/* ホールの始まりの番号（1 /9）。真ん中に大きく出て、シュッと左へ流れて消える。消えるまで操作は止まっている。 */
+.hole-title {
+  position: absolute;
+  left: 50%;
+  top: 42%;
+  translate: -50% -50%;
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  color: #fff;
+  text-shadow: 0 2px 16px rgba(0, 0, 0, 0.45), 0 1px 3px rgba(0, 0, 0, 0.6);
+  pointer-events: none;
+  z-index: 6;
+}
+
+.hole-title.on {
+  display: flex;
+  animation: hole-title 1.6s cubic-bezier(0.3, 0, 0.2, 1) both;
+}
+
+.ht-num b {
+  font-size: 96px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: -0.02em;
+}
+
+.ht-num small {
+  margin-left: 4px;
+  font-size: 32px;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.72);
+}
+
+.ht-sub {
+  font-size: 15px;
+  letter-spacing: 0.12em;
+  color: rgba(255, 255, 255, 0.85);
+}
+
+@keyframes hole-title {
+  0% {
+    opacity: 0;
+    transform: scale(0.9);
+    filter: blur(6px);
+  }
+  18% {
+    opacity: 1;
+    transform: scale(1);
+    filter: blur(0);
+  }
+  72% {
+    opacity: 1;
+    transform: translateX(0);
+    filter: blur(0);
+  }
+  100% {
+    opacity: 0;
+    transform: translateX(-38vw) scaleX(1.25);
+    filter: blur(8px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hole-title.on {
+    animation-name: hole-title-still;
+  }
+
+  @keyframes hole-title-still {
+    0%,
+    80% {
+      opacity: 1;
+    }
+    100% {
+      opacity: 0;
+    }
+  }
+}
+
+.finale .hole-title {
+  display: none !important;
+}
+
+/* スタンプ（友達と回っている間）。右の列、地図の下に丸いボタン。押すと左へ 5 つ並ぶ。 */
+.stamp-bar {
+  position: absolute;
+  right: max(16px, env(safe-area-inset-right));
+  top: calc(max(16px, env(safe-area-inset-top)) + 196px);
+  display: none;
+  align-items: center;
+  gap: 8px;
+  pointer-events: auto;
+  z-index: 4;
+}
+
+.golfing .stamp-bar.on {
+  display: flex;
+}
+
+.finale .stamp-bar {
+  display: none !important;
+}
+
+.stamp-open,
+.stamp-palette button {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  font-size: 22px;
+  line-height: 1;
+  background: var(--glass);
+  border: 1px solid var(--edge);
+  border-radius: 50%;
+  backdrop-filter: blur(10px);
+  cursor: pointer;
+}
+
+.stamp-palette {
+  display: none;
+  gap: 6px;
+  padding: 4px;
+  background: var(--glass);
+  border: 1px solid var(--edge);
+  border-radius: 28px;
+  backdrop-filter: blur(10px);
+}
+
+.stamp-palette button {
+  width: 40px;
+  height: 40px;
+  font-size: 24px;
+  background: none;
+  border: none;
+  backdrop-filter: none;
+}
+
+.stamp-palette button:active,
+.stamp-open:active {
+  transform: scale(0.92);
+}
+
+.stamp-bar.open .stamp-palette {
+  display: flex;
+}
+
+/* PC は地図（右上 96×176）の下へ。 */
+:root:not([data-input='touch']) .stamp-bar {
+  top: calc(max(16px, env(safe-area-inset-top)) + 188px);
+}
+
+/* 届いた・送ったスタンプ。左の真ん中あたりに、ぽんと出てふわっと消える。 */
+.stamp-feed {
+  position: absolute;
+  left: max(16px, env(safe-area-inset-left));
+  top: 36%;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  pointer-events: none;
+  z-index: 4;
+}
+
+.stamp-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 12px 4px 10px;
+  color: var(--ink);
+  background: var(--glass);
+  border: 1px solid var(--edge);
+  border-radius: 999px;
+  backdrop-filter: blur(10px);
+  animation: stamp-pop 2.8s ease both;
+}
+
+.si-name {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.stamp-item.you .si-name {
+  color: #fff;
+}
+
+.si-face {
+  font-size: 30px;
+  line-height: 1;
+}
+
+@keyframes stamp-pop {
+  0% {
+    opacity: 0;
+    transform: scale(0.6) translateY(8px);
+  }
+  10% {
+    opacity: 1;
+    transform: scale(1.08);
+  }
+  18% {
+    transform: scale(1);
+  }
+  80% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-18px);
+  }
+}
+
+/* スマホは地図（右の列、下端 222px）の下へ。 */
+:root[data-input='touch'] .stamp-bar {
+  top: calc(max(16px, env(safe-area-inset-top)) + 216px);
+}

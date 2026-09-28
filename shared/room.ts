@@ -13,6 +13,16 @@ export const MAX_ROOM_PLAYERS = 4;
 export const MAX_NAME_LENGTH = 12;
 /** 誰かが入れてから、まだの人を待つ時間（ms）。過ぎたらダブルパーで次のホールへ（放置で全員が止まらないように）。 */
 export const HOLE_WAIT_MS = 180_000;
+/**
+ * 回っている人が切れてから、戻るのを待つ時間（ms）。過ぎたらその人はダブルパーで回りから外し、残りで先へ進む。
+ * 3 分（HOLE_WAIT_MS）待っていた頃は、1 人抜けると全員が止まってしまった（利用者の判断）。戻れば自動で加わり直す。
+ */
+export const AWAY_WAIT_MS = 30_000;
+
+/** 送れるスタンプ（番号で送る。並びを変えると、古い版の相手に別の顔が届く）。 */
+export const STAMPS = ['🤡', '😭', '🤣', '😎', '😃'] as const;
+/** 1 人がスタンプを送れる間隔（ms）。連打で画面が埋まらないように。 */
+export const STAMP_GAP_MS = 700;
 
 /** 部屋の番号か（数字 6 桁）。 */
 export function isRoomId(value: unknown): value is string {
@@ -75,6 +85,8 @@ export interface RoomPlayer {
   playing: boolean;
   /** つながっているか（切れても打数は残す。つなぎ直せば戻れる。別のアプリへ行っただけの人など）。 */
   online: boolean;
+  /** 回っていて切れている人を、あと何 ms 待つか（過ぎたら外して先へ）。待っていなければ null。 */
+  awayMs: number | null;
 }
 
 /** 部屋の様子（変わるたびに全員へ丸ごと送る。4 人までなので小さい）。 */
@@ -99,6 +111,8 @@ export type ClientMessage =
   | { t: 'start' }
   | { t: 'shot'; hole: number; shot: ShotInfo }
   | { t: 'rest'; hole: number; rest: RestInfo }
+  /** スタンプ（STAMPS の番号）。 */
+  | { t: 'stamp'; s: number }
   /** 「部屋を出る」を押した（一覧から消す。切れただけの人は残して、つなぎ直せば戻れる）。 */
   | { t: 'leave' };
 
@@ -108,5 +122,6 @@ export type ServerMessage =
   | { t: 'room'; room: RoomView }
   | { t: 'shot'; id: string; hole: number; shot: ShotInfo }
   | { t: 'rest'; id: string; hole: number; rest: RestInfo }
+  | { t: 'stamp'; id: string; s: number }
   /** 入れなかった（満員）。 */
   | { t: 'refused'; reason: 'full' };

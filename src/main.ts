@@ -21,7 +21,7 @@ import { RIVALS, Rivals } from './golf/rivals';
 import { Peers, peerColor } from './golf/peers';
 import type { Opponents } from './golf/opponents';
 import { RoomClient, type RoomStatus } from './net/room';
-import { type RoomView, cleanName, isRoomId, newRoomId } from '../shared/room';
+import { type RoomView, STAMPS, STAMP_GAP_MS, cleanName, isRoomId, newRoomId } from '../shared/room';
 import type { OpponentState } from './golf/opponents';
 import { type TouchControls, createTouchControls, hasTouchInput, isTouchDevice } from './ui/touch';
 import { Flyover } from './view/flyover';
@@ -282,6 +282,8 @@ interface Party {
   status: RoomStatus;
   /** 今の回りに自分も加わっているか（「はじめる」「n 番から入る」を押した）。回りが終わると外れる。 */
   inRound: boolean;
+  /** 部屋の様子が届いた時刻（performance.now）。離席中の人の残り秒数を数えるのに使う。 */
+  viewAt: number;
   /** 「はじめる」を送って、部屋が始まったと返すのを待っている（その間に届いた前の様子で inRound を外さない）。 */
   starting: boolean;
 }
@@ -330,6 +332,7 @@ function joinRoom(id: string): void {
       onRoom: (view) => onRoomView(view),
       onShot: (who, hole, shot) => party?.peers?.onShot(who, hole, shot),
       onRest: (who, hole, rest) => party?.peers?.onRest(who, hole, rest),
+      onStamp: (who, s) => receiveStamp(who, s),
       onStatus: (status) => {
         if (!party) return;
         party.status = status;
@@ -342,7 +345,7 @@ function joinRoom(id: string): void {
       },
     },
   );
-  party = { id, client, me: '', view: null, peers: null, status: 'connecting', inRound: false, starting: false };
+  party = { id, client, me: '', view: null, peers: null, status: 'connecting', inRound: false, starting: false, viewAt: 0 };
   if (playMode !== 'friends') {
     playMode = 'friends';
     overlay.setMode('friends');
@@ -376,6 +379,7 @@ function onRoomView(view: RoomView): void {
     for (const p of others(before)) if (!view.players.some((q) => q.id === p.id)) overlay.flash(`${p.name} が部屋を出ました`);
   }
   party.view = view;
+  party.viewAt = performance.now();
   if (view.phase === 'play') party.starting = false;
   else if (!party.starting) party.inRound = false;
   // 回っている途中で長く切れていて、部屋が回りから外していたら（待ち時間を過ぎた）、加わり直す。
@@ -486,7 +490,31 @@ function beginPartyRound(hole: number, scores: readonly (number | null)[] | null
  * 部屋に入っていない → 「部屋を作る」「部屋に入る」。部屋にいてまだ回っていない → 「部屋を開く」だけ。
  * 回っている途中（休憩中） → 「続きから」「友達を呼ぶ」。
  */
+// ── スタンプ（友達と） ─────────────────────────────────
+/** 最近スタンプを送った人（球の上の名前に 3 秒付ける）。 */
+const stampOn = new Map<string, { s: number; until: number }>();
+let lastStampSent = 0;
+
+/** スタンプを送る（1〜5 のキー・スタンプのボタン）。自分の画面にもすぐ出す。 */
+function sendStamp(s: number): void {
+  if (!party?.inRound || s < 0 || s >= STAMPS.length) return;
+  const now = performance.now();
+  if (now - lastStampSent < STAMP_GAP_MS) return;
+  lastStampSent = now;
+  party.client.send({ t: 'stamp', s });
+  overlay.showStamp('あなた', s, true);
+}
+
+/** 友達のスタンプが届いた。 */
+function receiveStamp(id: string, s: number): void {
+  const p = party?.view?.players.find((q) => q.id === id);
+  if (!p || s < 0 || s >= STAMPS.length) return;
+  overlay.showStamp(p.name, s, false);
+  stampOn.set(id, { s, until: performance.now() + 3000 });
+}
+
 function updatePartyLabel(): void {
+  overlay.setStampBar(playMode === 'friends' && !!party?.inRound);
   overlay.setCourseLocked(playMode === 'friends' && party ? party.id : null);
   if (playMode !== 'friends') {
     overlay.setStartLabel(null);
@@ -1150,6 +1178,20 @@ function loadHole(): void {
   overlay.setFade(1);
 }
 
+/** ホールの始まりに真ん中へ出す番号の長さ（秒）。この間は操作を受け付けない（シュッと消えてから打てる）。 */
+const HOLE_TITLE_S = 1.6;
+
+/**
+ * ホールの始まり（まだ 1 打も打っていないティー）に、真ん中へ「1 /9」を出す。消えるまで操作を止める。
+ * 休憩から戻ったとき・途中のホールで読み込み直したときは出さない。
+ */
+function showHoleTitle(game: GolfGame): void {
+  if (game.phase !== 'aim' || game.strokes !== 0) return;
+  const h = game.target;
+  overlay.showHoleTitle(h.number, game.course.length, `パー ${h.par} · ${Math.round(h.length)} m`, HOLE_TITLE_S);
+  game.lockInput(HOLE_TITLE_S);
+}
+
 /** 毎フレームの暗転の進み。load の間は true を返す（ホールの紹介を進めない）。 */
 function updateHoleFade(dt: number): boolean {
   if (!holeFade || !golf) return false;
@@ -1165,7 +1207,10 @@ function updateHoleFade(dt: number): boolean {
     return false;
   }
   if (holeFade.phase === 'load') {
-    if ((chunks?.settled ?? true) || holeFade.t > HOLE_LOAD_MAX) holeFade = { phase: 'in', t: 0 };
+    if ((chunks?.settled ?? true) || holeFade.t > HOLE_LOAD_MAX) {
+      holeFade = { phase: 'in', t: 0 };
+      showHoleTitle(golf);
+    }
     return true;
   }
   overlay.setFade(1 - Math.min(1, holeFade.t / HOLE_FADE_IN));
@@ -1388,6 +1433,11 @@ function pushPerPixel(game: GolfGame): number {
 addEventListener('keydown', (e: KeyboardEvent) => {
   if (!playing) return;
   if (e.code === 'Space') e.preventDefault();
+  // 友達と: 1〜5 でスタンプ（マウスを固定している PC ではボタンを押せない）。カップイン後に待つ間も送れる。
+  if (!e.repeat && playMode === 'friends' && party?.inRound && /^Digit[1-5]$/.test(e.code)) {
+    sendStamp(Number(e.code.slice(5)) - 1);
+    return;
+  }
   // カップに入った後は、どのキーでも次のティーへ（Tab・M・F・Esc は除く）。
   if (golf && !scout && golf.phase === 'holed' && !e.repeat && !['Tab', 'KeyM', 'KeyF', 'Escape'].includes(e.code)) {
     holedPress();
@@ -1516,6 +1566,7 @@ const cancelAim = (e: PointerEvent) => {
 };
 canvas.addEventListener('pointerup', endAim);
 canvas.addEventListener('pointercancel', cancelAim);
+overlay.bindStamps((s) => sendStamp(s));
 overlay.bindGolfTouch({
   onShotDown: shotPress,
   onShotUp: () => {},
@@ -1641,7 +1692,11 @@ function placeRivalMarkers(rivals: readonly OpponentState[]): void {
     rivalMarkers.push({
       x: ((rivalScreen.x + 1) / 2) * innerWidth,
       y: ((1 - rivalScreen.y) / 2) * innerHeight,
-      text: r.name,
+      // スタンプを送ってきた人は、3 秒だけ名前の横に顔を付ける。
+      text: (() => {
+        const st = stampOn.get(r.id);
+        return st && st.until > performance.now() ? `${r.name} ${STAMPS[st.s]}` : r.name;
+      })(),
       color: r.color,
     });
   }
@@ -1826,7 +1881,16 @@ renderer.setAnimationLoop(() => {
         ? roomView.players.filter((p) => p.playing && p.scores[holeIndex] != null).length
         : 0;
       const playingCount = waitingForFriends ? roomView.players.filter((p) => p.playing).length : 0;
-      overlay.setHoleWait(waitingForFriends ? `みんなを待っています ${doneCount}/${playingCount}` : null);
+      // 離席中の人を待っているときは、あと何秒で先へ進むかを出す（部屋は AWAY_WAIT_MS 待って外す）。
+      const away = waitingForFriends ? roomView.players.find((p) => p.awayMs !== null && p.awayMs !== undefined) : undefined;
+      const awayLeft = away ? Math.max(0, Math.ceil((away.awayMs! - (performance.now() - party!.viewAt)) / 1000)) : 0;
+      overlay.setHoleWait(
+        !waitingForFriends
+          ? null
+          : away
+            ? `${away.name} が離席中 · あと ${awayLeft} 秒で先へ進みます`
+            : `みんなを待っています ${doneCount}/${playingCount}`,
+      );
       // カップインの後のスコアカードは、COM の相手が打ち終えてから（全員の打数を並べて出す）。
       // 友達を待つ間は景色を見回せるよう、中央のカードを自動では出さない。
       const card =

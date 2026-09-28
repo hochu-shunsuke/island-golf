@@ -203,6 +203,8 @@ export class GolfGame {
   private solveWait = 0;
   /** ホールに立った直後、上空からホール全体を見せる残り時間（s）。 */
   private intro = 0;
+  /** ホールの番号を真ん中に出している間は、操作を受け付けない残り秒数（lockInput）。 */
+  private inputLock = 0;
   private readonly golfGround: GolfGround;
 
   constructor(
@@ -467,9 +469,19 @@ export class GolfGame {
     this.emit();
   }
 
+  /** しばらく操作を受け付けない（ホールの始まりに番号を出している間。main.ts）。 */
+  lockInput(seconds: number): void {
+    this.inputLock = Math.max(this.inputLock, seconds);
+  }
+
+  /** 操作を受け付けない間か。 */
+  get inputLocked(): boolean {
+    return this.inputLock > 0;
+  }
+
   /** 狙いを回す（球を中心に）。 */
   rotateAim(delta: number): void {
-    if (this.phase !== 'aim') return;
+    if (this.phase !== 'aim' || this.inputLock > 0) return;
     this.intro = Math.min(this.intro, INTRO_OUT);
     this.setAim(this.aimYaw + delta, this.aimDistance);
   }
@@ -483,7 +495,7 @@ export class GolfGame {
 
   /** 輪を前後に動かす（m）。クラブを自分で選んでいなければ、距離に合うクラブへ替える。 */
   pushAim(delta: number): void {
-    if (this.phase !== 'aim') return;
+    if (this.phase !== 'aim' || this.inputLock > 0) return;
     this.intro = Math.min(this.intro, INTRO_OUT);
     const d = Math.max(0, this.aimDistance + delta);
     if (!this.clubLocked && !this.putting) this.clubIndex = this.clubFor(d);
@@ -493,7 +505,7 @@ export class GolfGame {
 
   /** クラブを替える（自分で選んだら、輪を動かしても替えない）。 */
   changeClub(step: number): void {
-    if (this.phase !== 'aim') return;
+    if (this.phase !== 'aim' || this.inputLock > 0) return;
     let c = this.clubIndex;
     for (let k = 0; k < CLUBS.length; k++) {
       c = (c + step + CLUBS.length) % CLUBS.length;
@@ -515,6 +527,7 @@ export class GolfGame {
 
   /** 打つ操作を押した: 狙っていれば針を振り始め、振れていれば止めて打つ。 */
   press(): void {
+    if (this.inputLock > 0) return;
     if (this.phase === 'aim') {
       if (this.solveDirty) this.solve();
       this.intro = 0;
@@ -595,6 +608,7 @@ export class GolfGame {
 
   update(dt: number): void {
     this.intro = Math.max(0, this.intro - dt);
+    this.inputLock = Math.max(0, this.inputLock - dt);
     this.updateConfetti(dt);
     this.trailFade.update(dt);
     if (this.phase === 'aim') {

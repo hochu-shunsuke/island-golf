@@ -1,7 +1,10 @@
 import {
+  AWAY_WAIT_MS,
   HOLE_WAIT_MS,
   MAX_NAME_LENGTH,
   MAX_ROOM_PLAYERS,
+  STAMPS,
+  STAMP_GAP_MS,
   type RestInfo,
   type RoomPlayer,
   type RoomView,
@@ -38,6 +41,8 @@ interface Member {
   done: boolean;
   /** 今の回りに加わっているか（shared/room.ts の RoomPlayer.playing）。 */
   playing: boolean;
+  /** 切れた時刻（ms）。つながっていれば null。AWAY_WAIT_MS 過ぎても戻らなければ、待たずに先へ進む。 */
+  goneAt: number | null;
 }
 
 interface RoomState {
@@ -124,6 +129,8 @@ function cleanRest(raw: unknown): RestInfo | null {
 
 export class GolfRoom {
   private room: RoomState | null = null;
+  /** 人ごとの最後にスタンプを中継した時刻（休眠で消えてよい）。 */
+  private readonly lastStamp = new Map<string, number>();
   /** 接続ごとの、今の区切りで受けた言葉の数（休眠で消えてよい）。 */
   private readonly rate = new WeakMap<WebSocket, { from: number; count: number }>();
 
@@ -135,6 +142,7 @@ export class GolfRoom {
       // playing を持つ前に作られた部屋は、全員が回っている扱い。
       for (const m of this.room?.members ?? []) m.playing ??= this.room!.phase === 'play';
       if (this.room) this.room.emptyAt ??= null;
+      for (const m of this.room?.members ?? []) m.goneAt ??= null;
     });
   }
 
@@ -207,6 +215,14 @@ export class GolfRoom {
       const hole = num(msg.hole, 99);
       if (!shot || hole === null) return;
       this.broadcast(ws, { t: 'shot', id: member.id, hole, shot });
+    } else if (msg.t === 'stamp') {
+      // 番号だけを中継する（文字は送らせない）。1 人 STAMP_GAP_MS に 1 回まで。
+      const i = typeof msg.s === 'number' && Number.isInteger(msg.s) ? msg.s : -1;
+      if (i < 0 || i >= STAMPS.length) return;
+      const now = Date.now();
+      if (now - (this.lastStamp.get(member.cid) ?? 0) < STAMP_GAP_MS) return;
+      this.lastStamp.set(member.cid, now);
+      this.broadcast(ws, { t: 'stamp', id: member.id, s: i });
     } else if (msg.t === 'rest') {
       const rest = cleanRest(msg.rest);
       const hole = num(msg.hole, 99);
@@ -268,6 +284,7 @@ export class GolfRoom {
         scores: room.pars.map(() => null),
         done: false,
         playing: false,
+        goneAt: null,
       };
       room.members.push(member);
     } else {
@@ -288,6 +305,7 @@ export class GolfRoom {
     ws.serializeAttachment({ cid } satisfies Attachment);
     // 誰かが戻ってきたら、片付けの予定は取り消す（ホールの待ち時間があれば、そちらを入れ直す）。
     room.emptyAt = null;
+    member.goneAt = null;
     await this.scheduleAlarm();
     await this.save();
     ws.send(JSON.stringify({ t: 'welcome', you: member.id, room: this.view() } satisfies ServerMessage));
@@ -307,8 +325,12 @@ export class GolfRoom {
     const room = this.room;
     if (!room) return;
     const online = this.onlineCids(ws);
+    // 切れた人の時刻を覚える（AWAY_WAIT_MS まで待つ）。同じ人の別の接続が生きていれば切れていない。
+    const cid = (ws.deserializeAttachment() as Attachment | null)?.cid;
+    const gone = cid ? room.members.find((m) => m.cid === cid) : undefined;
+    if (gone && !online.has(gone.cid)) gone.goneAt ??= Date.now();
     if (online.size === 0) room.emptyAt ??= Date.now();
-    // 出た人（一覧から消えた）を待っていたなら、残りで次へ。切れただけの人は待ち時間まで待つ。
+    // 出た人（一覧から消えた）を待っていたなら、残りで次へ。切れただけの人は AWAY_WAIT_MS まで待つ。
     else this.advanceIfAllDone();
     await this.scheduleAlarm();
     await this.save();
@@ -333,23 +355,45 @@ export class GolfRoom {
       }
     } else {
       room.emptyAt = null;
+      const hole = room.hole;
+      const phase = room.phase;
       if (room.phase === 'play' && room.firstDoneAt !== null && Date.now() >= room.firstDoneAt + HOLE_WAIT_MS - 1000) {
         this.advance();
-        this.broadcastRoom();
+      } else {
+        // 切れた人を待つ時間が過ぎた。
+        this.advanceIfAllDone();
       }
+      if (room.hole !== hole || room.phase !== phase) this.broadcastRoom();
     }
     await this.scheduleAlarm();
     await this.save();
   }
 
-  /** アラームは 1 つだけ: 誰もいなければ片付け、回っていて誰かが入れていればホールの待ち時間、どちらも無ければ止める。 */
+  /**
+   * アラームは 1 つだけ: 誰もいなければ片付け。回っている間は、ホールの待ち時間と、切れた人を待つ時間の早い方。
+   * どれも無ければ止める。
+   */
   private async scheduleAlarm(): Promise<void> {
     const room = this.room;
     if (!room) return;
-    if (room.emptyAt !== null) await this.state.storage.setAlarm(room.emptyAt + CLEANUP_MS);
-    else if (room.phase === 'play' && room.firstDoneAt !== null)
-      await this.state.storage.setAlarm(room.firstDoneAt + HOLE_WAIT_MS);
+    if (room.emptyAt !== null) {
+      await this.state.storage.setAlarm(room.emptyAt + CLEANUP_MS);
+      return;
+    }
+    let at = Infinity;
+    if (room.phase === 'play') {
+      if (room.firstDoneAt !== null) at = room.firstDoneAt + HOLE_WAIT_MS;
+      for (const m of this.awaiting()) at = Math.min(at, m.goneAt! + AWAY_WAIT_MS);
+    }
+    if (Number.isFinite(at)) await this.state.storage.setAlarm(at);
     else await this.state.storage.deleteAlarm();
+  }
+
+  /** 回っていて、このホールをまだ終えず、切れている人（戻るのを待っている人）。 */
+  private awaiting(online = this.onlineCids()): Member[] {
+    const room = this.room;
+    if (!room) return [];
+    return room.members.filter((m) => m.playing && !m.done && m.goneAt !== null && !online.has(m.cid));
   }
 
   /** 送り付けすぎる接続は切る（RATE_LIMIT）。 */
@@ -376,7 +420,10 @@ export class GolfRoom {
   private advanceIfAllDone(): void {
     const room = this.room;
     if (!room || room.phase !== 'play') return;
-    const playing = room.members.filter((m) => m.playing);
+    const now = Date.now();
+    // 切れて AWAY_WAIT_MS たった人は待たない（advance でダブルパーにして回りから外す）。
+    const expired = new Set(this.awaiting().filter((m) => now >= m.goneAt! + AWAY_WAIT_MS - 500));
+    const playing = room.members.filter((m) => m.playing && !expired.has(m));
     if (playing.length > 0 && playing.every((m) => m.done)) this.advance();
   }
 
@@ -414,6 +461,8 @@ export class GolfRoom {
   private view(except?: WebSocket): RoomView {
     const room = this.room!;
     const online = this.onlineCids(except);
+    const now = Date.now();
+    const awaiting = new Set(this.awaiting(online));
     return {
       seed: room.seed,
       day: room.day,
@@ -429,6 +478,7 @@ export class GolfRoom {
           done: m.done,
           playing: m.playing === true,
           online: online.has(m.cid),
+          awayMs: awaiting.has(m) ? Math.max(0, m.goneAt! + AWAY_WAIT_MS - now) : null,
         }),
       ),
     };
