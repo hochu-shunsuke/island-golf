@@ -868,6 +868,7 @@ export class Overlay {
   setStandings(rows: readonly StandingRow[] | null): void {
     const shown = rows !== null && rows.length > 0;
     this.standings.classList.toggle('on', shown);
+    this.root.classList.toggle('ranked', shown);
     const you = rows?.find((r) => r.you);
     const rank = shown && you ? { rank: you.rank, of: rows!.length } : null;
     if (shown !== this.standingsShown || rank?.rank !== this.chipRank?.rank || rank?.of !== this.chipRank?.of) {

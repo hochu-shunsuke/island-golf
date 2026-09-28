@@ -2529,8 +2529,8 @@ kbd {
   text-overflow: ellipsis;
 }
 
-/* 通算は帯の下の札に出す。 */
-:root[data-input='touch'] .gl-total {
+/* 順位表を出している間は、通算は順位表にあるので帯には出さない（ひとりのときは帯に出す）。 */
+:root[data-input='touch'] .ranked .gl-total {
   display: none;
 }
 
@@ -2615,16 +2615,15 @@ kbd {
   translate: 0 2px;
 }
 
-/* 順位表は札を押したときだけ、札の下に開く。 */
-:root[data-input='touch'] .standings,
-:root[data-input='touch'] .standings.on {
-  display: none;
+/* 順位表は帯のすぐ下にいつも出す（開閉の札はやめた。利用者の判断）。 */
+:root[data-input='touch'] .standings {
   left: max(16px, env(safe-area-inset-left));
-  top: calc(var(--strip-top) + var(--strip-h) + 44px);
+  top: calc(var(--strip-top) + var(--strip-h) + 8px);
 }
 
-:root[data-input='touch'] .standings.on.open {
-  display: grid;
+.score-chip,
+:root[data-input='touch'] .score-chip.on {
+  display: none;
 }
 
 /* 地図は右の列、空から見るボタンの下（列の真ん中にそろえる）。 */
