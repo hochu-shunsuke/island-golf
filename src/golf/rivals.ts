@@ -455,7 +455,7 @@ export class Rivals implements Opponents {
     const gauge = 1 + (Math.abs(eDist) < hardPerfect(pick) ? 0 : eDist) * POWER_RANGE;
     const eDir = clamp1(gauss(rand) * spec.spread);
     const effect = needleEffect(eDir, false, true, hardPerfect(pick * gauge));
-    return { club, yaw: yaw + effect.yaw, power: Math.max(0.1, Math.min(1.3, power * gauge)), curve: effect.curve };
+    return { club, yaw: yaw + effect.yaw, power: Math.max(0.1, Math.min(1, power * gauge)), curve: effect.curve };
   }
 }
 

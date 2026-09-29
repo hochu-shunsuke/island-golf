@@ -549,10 +549,11 @@ export class GolfGame {
         // 距離の針を止めた: 真ん中なら狙った距離どおり、ずれるほど強く・弱く（端で ±POWER_RANGE）。
         const e = this.needle;
         const perfect = Math.abs(e) < this.perfectWidth;
-        this.gaugeSet = 1 + (perfect ? 0 : e) * POWER_RANGE;
+        // 上振れしても、そのクラブの全力（power 1）より強くはならない（最大飛距離は輪の限度と同じ）。
+        this.gaugeSet = Math.min(1 + (perfect ? 0 : e) * POWER_RANGE, 1 / Math.max(0.05, this.power));
         this.powerDistance = this.aimDistance * this.gaugeSet;
         const pct = Math.round((this.gaugeSet - 1) * 100);
-        this.onMessage(perfect ? '距離 ぴったり' : `距離 ${pct > 0 ? '+' : ''}${pct}%`);
+        this.onMessage(perfect || pct === 0 ? '距離 ぴったり' : `距離 ${pct > 0 ? '+' : ''}${pct}%`);
         this.swingStage = 'impact';
         this.needleTime = 0;
         this.needle = -1;
@@ -587,7 +588,7 @@ export class GolfGame {
     this.lastSpot.z = this.ball.pos.z;
     const yaw = this.aimYaw + effect.yaw;
     // 2 回押しでは、距離は 1 本目の針だけで決まる（2 本目は方向だけ）。
-    const power = this.twoClick ? this.power * this.gaugeSet : this.power * effect.power;
+    const power = Math.min(1, this.twoClick ? this.power * this.gaugeSet : this.power * effect.power);
     const lieLoss = putt ? 1 : LIE_POWER[this.ball.lie];
     this.ball.hit(yaw, club.loft, club.speed * power * lieLoss, club.spin, club.bite, effect.curve);
     // 友達には、同じ物理でもう一度飛ばせるよう、打った一打をそのまま送る。
