@@ -198,7 +198,7 @@ export class GolfGame {
   /** カップインの紙吹雪。 */
   private confetti: { points: THREE.Points; vel: Float32Array; age: number } | null = null;
   /** パットのときの傾斜の矢印（下る向き・長さと色が急さ）。 */
-  private readonly slopes: THREE.LineSegments;
+  private readonly slopes: THREE.Mesh;
   private slopesFor = '';
   private readonly trailPoints: THREE.Vector3[] = [];
   private needleTime = 0;
@@ -310,9 +310,18 @@ export class GolfGame {
     const trailMaterial = new THREE.LineBasicMaterial({ color: 0xffe98a, transparent: true, opacity: 0.85 });
     this.trail = new THREE.Line(new THREE.BufferGeometry(), trailMaterial);
     this.trailFade = new TrailFade(this.trail, trailMaterial, 0.85);
-    this.slopes = new THREE.LineSegments(
+    // 傾斜の矢印は地面に貼った塗りの矢印（1 ピクセルの線では細すぎて読めなかった）。
+    this.slopes = new THREE.Mesh(
       new THREE.BufferGeometry(),
-      new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.9 }),
+      new THREE.MeshBasicMaterial({
+        vertexColors: true,
+        transparent: true,
+        opacity: 0.75,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+        polygonOffset: true,
+        polygonOffsetFactor: -2,
+      }),
     );
     this.slopes.visible = false;
     this.aids.add(this.arc, this.roll, this.landing, this.trail, this.slopes);
@@ -854,12 +863,12 @@ export class GolfGame {
     const cx = (b.x + pin.x) / 2;
     const cz = (b.z + pin.z) / 2;
     const reach = Math.min(22, Math.hypot(pin.x - b.x, pin.z - b.z) / 2 + 5);
-    const step = 1.25;
+    const step = 1.6;
     const e = 0.4;
     const pos: number[] = [];
     const col: number[] = [];
     const color = new THREE.Color();
-    const h = (x: number, z: number) => this.golfGround.height(x, z);
+    const h = (x: number, z: number) => this.golfGround.height(x, z) + 0.03;
     for (let z = cz - reach; z <= cz + reach; z += step) {
       for (let x = cx - reach; x <= cx + reach; x += step) {
         if (Math.hypot(x - cx, z - cz) > reach) continue;
@@ -867,26 +876,37 @@ export class GolfGame {
         const gz = (h(x, z + e) - h(x, z - e)) / (2 * e);
         const slope = Math.hypot(gx, gz);
         if (slope < 0.004) continue;
-        // 下る向き。長さは急さ（1% で 0.25m、5% 以上で 0.8m）。
+        // 下る向き（d）と横（n）。長さは急さ（1% で 0.5m、5% 以上で 1.1m）。矢印の真ん中を格子の点に置く。
         const dx = -gx / slope;
         const dz = -gz / slope;
-        const len = Math.min(0.8, 0.12 + slope * 14);
-        const y0 = h(x, z) + 0.05;
-        const tx = x + dx * len;
-        const tz = z + dz * len;
-        const y1 = h(tx, tz) + 0.05;
+        const nx = -dz;
+        const nz = dx;
+        const len = Math.min(1.1, 0.36 + slope * 14);
+        const head = Math.min(0.32, len * 0.45);
+        const shaft = 0.045;
+        const wing = 0.17;
+        const ox = x - dx * len * 0.5;
+        const oz = z - dz * len * 0.5;
         // 白（ほぼ平ら）→ 水色 → 黄 → 赤（5% 以上）。
         const t = Math.min(1, slope / 0.05);
-        color.setHSL(0.55 - t * 0.55, t < 0.15 ? 0.1 : 0.85, t < 0.15 ? 0.95 : 0.6);
-        const push = (ax: number, ay: number, az: number, bx: number, by: number, bz: number) => {
-          pos.push(ax, ay, az, bx, by, bz);
-          col.push(color.r, color.g, color.b, color.r, color.g, color.b);
+        color.setHSL(0.55 - t * 0.55, t < 0.15 ? 0.25 : 0.85, t < 0.15 ? 0.92 : 0.62);
+        const at = (along: number, side: number): [number, number, number] => {
+          const px = ox + dx * along + nx * side;
+          const pz = oz + dz * along + nz * side;
+          return [px, h(px, pz), pz];
         };
-        push(x, y0, z, tx, y1, tz);
-        const hx = -dz * 0.12;
-        const hz = dx * 0.12;
-        push(tx, y1, tz, tx - dx * 0.2 + hx, y1, tz - dz * 0.2 + hz);
-        push(tx, y1, tz, tx - dx * 0.2 - hx, y1, tz - dz * 0.2 - hz);
+        const tri = (a: number[], b2: number[], c: number[]) => {
+          pos.push(...a, ...b2, ...c);
+          for (let k = 0; k < 3; k++) col.push(color.r, color.g, color.b);
+        };
+        // 軸（細長い四角 = 三角 2 つ）と頭（三角）。
+        const s0 = at(0, -shaft);
+        const s1 = at(0, shaft);
+        const s2 = at(len - head, shaft);
+        const s3 = at(len - head, -shaft);
+        tri(s0, s1, s2);
+        tri(s0, s2, s3);
+        tri(at(len - head, -wing), at(len - head, wing), at(len, 0));
       }
     }
     this.slopes.geometry.dispose();
