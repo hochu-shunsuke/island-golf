@@ -316,7 +316,7 @@ export class GolfGame {
       new THREE.MeshBasicMaterial({
         vertexColors: true,
         transparent: true,
-        opacity: 0.75,
+        opacity: 0.6,
         depthWrite: false,
         side: THREE.DoubleSide,
         polygonOffset: true,
