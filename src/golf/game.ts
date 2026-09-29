@@ -141,11 +141,19 @@ function smoothstep(a: number, b: number, x: number): number {
 }
 
 /**
- * 速い針の速さ（元の針の何倍か）。距離では変えない（みんゴルと同じ）。距離で変えていた頃（近い 1.2 倍〜遠い 1.65 倍、
- * 真ん中の幅も近いほど広い）は、遠いと外れても結局寄り、近いとゆっくりでほぼ入って、針の意味が薄かった。
- * 実際のゴルフでも寄せのずれは距離に対してむしろ大きい（ツアーで 150 ヤードは約 6.5%、20 ヤードは約 10%）。
+ * 2 回押しの針の速さ（1 秒に片道いくつ。フェアウェイで端から端まで 0.73 秒）。距離では変えない（みんゴルと同じ）。
+ * 距離で変えていた頃（近いほど遅く広い）は、遠いと外れても結局寄り、近いとゆっくりでほぼ入って、針の意味が薄かった。
+ * ライが悪いほど少しだけ速い。元の針のライの倍率（ラフ 1.35・砂 1.7）を掛け合わせると、ラフや砂に入った次の一打で
+ * 急に倍近く速くなった（利用者に「途中でバカ早くなった」と言われた）ので、上乗せは 1〜2 割にとどめる。
  */
-const NEEDLE_FACTOR = 1.45;
+const FAST_NEEDLE_SPEED: Record<Surface, number> = {
+  green: 1.16,
+  fairway: 1.38,
+  rough: 1.52,
+  sand: 1.65,
+  rock: 1.58,
+  snow: 1.58,
+};
 
 export class GolfGame {
   readonly group = new THREE.Group();
@@ -659,11 +667,14 @@ export class GolfGame {
     }
     if (this.phase === 'swing') {
       this.needleTime += dt;
-      // パットの方向だけは元のゆっくりした針。ほかは元の針の NEEDLE_FACTOR 倍（距離では変えない）。
+      // パットの方向だけは元のゆっくりした針。ほかはライごとの速さ（距離では変えない）。
+      const lie = this.putting ? 'green' : this.ball.lie;
       const f =
         this.putting && this.swingStage === 'impact'
           ? PUTT_NEEDLE_SPEED
-          : NEEDLE_SPEED[this.putting ? 'green' : this.ball.lie] * (this.hardNeedle ? NEEDLE_FACTOR : 1);
+          : this.hardNeedle
+            ? FAST_NEEDLE_SPEED[lie]
+            : NEEDLE_SPEED[lie];
       // 左端から右へ、右端から左へ、を繰り返す（三角波）。
       const t = (this.needleTime * f) % 2;
       this.needle = -1 + 2 * (t < 1 ? t : 2 - t);

@@ -33,7 +33,7 @@ export const PERFECT = 0.12;
 
 /**
  * 散らばりを乱数ではなく腕で決める針（Golf Clash の正確さの針と同じ考え）。2026-09-29 に入れた。
- * 針は元の 1.45 倍速く（game.ts の NEEDLE_FACTOR。距離では変えない）、真ん中は狭く（±8%）、外すと大きく曲がる。
+ * 針は元より速く（game.ts の FAST_NEEDLE_SPEED。距離では変えない）、真ん中は狭く（±8%）、外すと大きく曲がる。
  * 元の針（±2°）では、自動で打たせるとパーオン率 92%・バンカー 0% で、ハザードが飾りになっていた（プロの実際は約 67%）。
  */
 export const HARD_NEEDLE = { perfect: 0.08, yawDeg: 9, curve: 0.6, power: 0.1 };
