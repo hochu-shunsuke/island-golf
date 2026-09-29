@@ -1392,11 +1392,8 @@ function startPlaying(): void {
   restView = false;
   markDailyPlayed();
   music?.play();
-  if (!entered) {
-    entered = true;
-    overlay.setEntered();
-    updatePartyLabel();
-  }
+  const firstEntry = !entered;
+  entered = true;
   // 近くのチャンク（足元 2m 格子・木）は、本番の島が届いたときに作ってある（prepareCourseView）。
   controls.enabled = false;
   overlay.setAttractCaption(null, true);
@@ -1419,7 +1416,11 @@ function startPlaying(): void {
   if (scout) chunks?.setFocus(null);
   fog.density = FOG_FLY;
   overlay.hide();
-  overlay.showKeyboardGuide();
+  // 「続きから」などへの字の替えは、カードを隠してから（消えていく間に一瞬見えないように）。
+  if (firstEntry) {
+    overlay.setEntered();
+    updatePartyLabel();
+  }
   applyTouchUi();
   if (scout && player?.autoFlight) void requestWakeLock();
 }
@@ -1535,9 +1536,9 @@ document.addEventListener('pointerlockchange', () => {
   } else if (inputMode === 'keys' && playing) {
     if (roundResult) return;
     if (golf && !scout && golf.phase === 'swing') {
+      // 構えをやめる（2 回押しで距離を決めた後はやめずにそのまま）。案内の文は出さない。
       golf.cancelSwing();
       relockPending = true;
-      overlay.flash('構えをやめました。クリックで操作に戻ります（もう一度 Esc で休憩）');
       return;
     }
     stopPlaying();
@@ -1616,8 +1617,6 @@ addEventListener('keydown', (e: KeyboardEvent) => {
   else if (e.code === 'KeyD' || e.code === 'ArrowRight') golf.aimInput = -1;
   else if (e.code === 'KeyW' || e.code === 'ArrowUp') golf.distInput = 1;
   else if (e.code === 'KeyS' || e.code === 'ArrowDown') golf.distInput = -1;
-  else if (e.code === 'KeyQ' && !e.repeat) golf.changeClub(-1);
-  else if (e.code === 'KeyE' && !e.repeat) golf.changeClub(1);
   else if (e.code === 'Space' && !e.repeat) shotPress();
 });
 addEventListener('keyup', (e: KeyboardEvent) => {
@@ -1661,13 +1660,6 @@ addEventListener('mousedown', (e: MouseEvent) => {
 addEventListener('contextmenu', (e) => {
   if (playing) e.preventDefault();
 });
-addEventListener(
-  'wheel',
-  (e: WheelEvent) => {
-    if (playing && !scout && golf && Math.abs(e.deltaY) > 4) golf.changeClub(e.deltaY > 0 ? 1 : -1);
-  },
-  { passive: true },
-);
 
 // タッチ: 画面をなぞって輪を動かす（左右 = 向き、上下 = 距離）。打つ・クラブ・空から・休憩はボタン。
 let aimPointer: number | null = null;
@@ -1866,10 +1858,10 @@ function placeTiming(game: GolfGame): void {
   const topClearance = touchTiming ? 80 : 140;
   const bottomClearance = touchTiming ? 230 : 130;
   const timingY = Math.max(topClearance, Math.min(Math.max(topClearance, innerHeight - bottomClearance), y));
-  overlay.setTiming(
-    { x: Math.max(160, Math.min(innerWidth - 160, x)), y: timingY },
-    game.needle,
-  );
+  const at = { x: Math.max(160, Math.min(innerWidth - 160, x)), y: timingY };
+  // 2 回押しの 1 本目（距離）と 2 本目（方向）は同じ見た目で、上の文字だけ替える。
+  const label = game.twoClick ? (game.swingStage === 'power' ? '距離' : '方向') : '';
+  overlay.setTiming(at, game.needle, game.perfectWidth, label);
 }
 
 const aimScreen = new THREE.Vector3();

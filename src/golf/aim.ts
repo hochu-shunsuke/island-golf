@@ -31,6 +31,13 @@ export const PREVIEW_STEP = 1 / 60;
 /** 針の真ん中とみなす幅（ナイスショット。ずれなしで打てる）。 */
 export const PERFECT = 0.12;
 
+/**
+ * 散らばりを乱数ではなく腕で決める針（Golf Clash の正確さの針と同じ考え）。2026-09-29 に入れた。
+ * 針は距離に応じて元の 1.2〜1.5 倍速く（game.ts の hardNeedleSpeed）、真ん中は距離で狭く、外すと大きく曲がる。
+ * 元の針（±2°）では、自動で打たせるとパーオン率 92%・バンカー 0% で、ハザードが飾りになっていた（プロの実際は約 67%）。
+ */
+export const HARD_NEEDLE = { perfect: 0.08, yawDeg: 9, curve: 0.6, power: 0.1 };
+
 /** ライ lie から、クラブ c が届く一番遠いキャリー（m）。パターは転がる距離。 */
 export function reachOf(c: number, lie: Surface): number {
   if (c === PUTTER) return 40;
@@ -182,7 +189,23 @@ export function solvePower(
  * 針のずれ e（-1..1）が打球に効く分。真ん中（PERFECT の内）ならずれなし。
  * ずれるほど左右へ向きがずれて曲がり、少し短くなる。パットは曲がらず、ずれも小さい。
  */
-export function needleEffect(e: number, putt: boolean): { perfect: boolean; yaw: number; power: number; curve: number } {
+export function needleEffect(
+  e: number,
+  putt: boolean,
+  hard = false,
+  /** 真ん中（ずれ無し）の幅。速い針では距離で狭くなる（game.ts の perfectWidth）。 */
+  width = HARD_NEEDLE.perfect,
+): { perfect: boolean; yaw: number; power: number; curve: number } {
+  if (hard && !putt) {
+    const perfect = Math.abs(e) < width;
+    const x = perfect ? 0 : e;
+    return {
+      perfect,
+      yaw: -((x * HARD_NEEDLE.yawDeg * Math.PI) / 180),
+      power: 1 - Math.abs(x) * HARD_NEEDLE.power,
+      curve: x * HARD_NEEDLE.curve,
+    };
+  }
   const perfect = Math.abs(e) < PERFECT;
   const x = perfect ? 0 : e;
   return {

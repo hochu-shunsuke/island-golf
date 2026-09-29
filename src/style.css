@@ -179,43 +179,56 @@ kbd {
 }
 
 .keyboard-guide {
+  /* 休憩画面だけ、右上にほかのカードと同じガラスの札で出す。最初の画面（ロビー）と遊んでいる間は出さない。 */
   position: absolute;
-  left: 50%;
-  bottom: max(42px, calc(env(safe-area-inset-bottom) + 24px));
-  width: min(760px, calc(100vw - 32px));
+  top: max(24px, env(safe-area-inset-top));
+  right: max(24px, env(safe-area-inset-right));
   display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  gap: 7px 14px;
-  padding: 10px 16px;
-  border-radius: 14px;
-  color: rgba(255, 255, 255, 0.72);
-  background: rgba(12, 20, 26, 0.48);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  box-shadow: 0 5px 24px rgba(4, 10, 14, 0.16);
-  backdrop-filter: blur(6px);
-  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.45);
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 16px 15px;
+  color: var(--ink);
+  background: var(--glass);
+  border: 1px solid var(--edge);
+  border-radius: 20px;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  box-shadow: 0 10px 40px rgba(4, 10, 14, 0.25);
   opacity: 0;
-  transform: translate(-50%, 8px);
-  transition: opacity 350ms ease, transform 350ms ease;
-}
-
-.keyboard-guide span {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  white-space: nowrap;
-  font-size: 10.5px;
-}
-
-.keyboard-guide kbd {
-  color: rgba(255, 255, 255, 0.9);
-  background: rgba(255, 255, 255, 0.1);
+  transform: translateY(-6px);
+  pointer-events: none;
+  transition: opacity 450ms ease, transform 450ms ease;
 }
 
 .keyboard-guide.on {
   opacity: 1;
-  transform: translate(-50%, 0);
+  transform: none;
+}
+
+.kg-rows {
+  display: grid;
+  grid-template-columns: auto auto;
+  align-items: center;
+  gap: 7px 12px;
+  margin: 0;
+}
+
+.kg-rows dt {
+  display: flex;
+  justify-content: flex-end;
+  gap: 4px;
+}
+
+.kg-rows dd {
+  margin: 0;
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.kg-rows kbd {
+  font-size: 10.5px;
+  color: var(--ink);
 }
 
 .toast {
@@ -479,6 +492,17 @@ kbd {
   box-shadow: 0 0 10px 2px rgba(255, 255, 255, 0.9);
 }
 
+.t-label {
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 6px);
+  transform: translateX(-50%);
+  font: 600 12px/1 system-ui, sans-serif;
+  color: #fff;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.6);
+  white-space: nowrap;
+  pointer-events: none;
+}
 .timing.sweet .t-sweet {
   background: rgba(255, 255, 255, 0.75);
 }

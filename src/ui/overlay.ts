@@ -252,8 +252,6 @@ export class Overlay {
   private entered = false;
   private flightText = '';
   private toastTimer = 0;
-  private keyboardGuideTimer = 0;
-  private keyboardGuideShown = false;
 
   constructor(
     root: HTMLElement,
@@ -402,10 +400,15 @@ export class Overlay {
         <button class="g-btn g-shot" aria-label="打つ">${BALL_ICON}</button>
       </div>
       <div class="keyboard-guide" aria-label="操作方法" aria-hidden="true">
-        <span><kbd>マウス</kbd><kbd>WASD</kbd> 落とし所の輪を動かす</span>
-        <span><kbd>クリック</kbd><kbd>Space</kbd> 構える → 針が真ん中で打つ</span>
-        <span><kbd>F</kbd> 空から見る／戻る</span>
-        <span><kbd>Esc</kbd> 構えをやめる／休憩</span>
+        <span class="course-label">操作</span>
+        <dl class="kg-rows">
+          <dt><kbd>マウス</kbd><kbd>WASD</kbd></dt><dd>落とし所の輪を動かす</dd>
+          <dt><kbd>クリック</kbd><kbd>Space</kbd></dt><dd>構える → 距離 → 方向（針を真ん中で）</dd>
+          <dt><kbd>F</kbd></dt><dd>空から見る／戻る</dd>
+          <dt><kbd>Tab</kbd></dt><dd>スコアカード</dd>
+          <dt><kbd>M</kbd></dt><dd>音を消す／出す</dd>
+          <dt><kbd>Esc</kbd></dt><dd>構えをやめる／休憩</dd>
+        </dl>
       </div>
       <div class="toast"></div>
     `;
@@ -451,6 +454,10 @@ export class Overlay {
     this.shotDist = this.root.querySelector('.shot-dist')!;
     this.timing = this.root.querySelector('.timing')!;
     this.timingNeedle = this.root.querySelector('.t-needle')!;
+    this.timingSweet = this.root.querySelector('.t-sweet')!;
+    this.timingLabel = document.createElement('span');
+    this.timingLabel.className = 't-label';
+    this.timing.append(this.timingLabel);
     this.aimLabel = this.root.querySelector('.aim-label')!;
     this.holeNo = this.root.querySelector('.hole-no')!;
     this.holeOf = this.root.querySelector('.hole-of')!;
@@ -513,6 +520,8 @@ export class Overlay {
   private readonly shotDist: HTMLElement;
   private readonly timing: HTMLElement;
   private readonly timingNeedle: HTMLElement;
+  private readonly timingSweet: HTMLElement;
+  private readonly timingLabel: HTMLElement;
   private readonly aimLabel: HTMLElement;
   private aimLabelText = '';
   private readonly holeNo: HTMLElement;
@@ -714,7 +723,7 @@ export class Overlay {
   /** 打った一打のでき（ナイスショット・フック・スライス）を画面の真ん中に大きく。 */
   shotFeedback(kind: 'nice' | 'hook' | 'slice'): void {
     const el = this.feedbackEl;
-    el.textContent = kind === 'nice' ? 'ナイスショット！' : kind === 'hook' ? 'フック' : 'スライス';
+    el.textContent = kind === 'nice' ? 'Nice Shot!' : kind === 'hook' ? 'Hook' : 'Slice';
     el.classList.remove('on', 'nice', 'miss');
     void el.offsetWidth;
     el.classList.add('on', kind === 'nice' ? 'nice' : 'miss');
@@ -1044,12 +1053,21 @@ export class Overlay {
    * 端ほど左・右へ曲がる。画面の下の端に置くと、狙いから目線が離れて見づらかった。
    * 同じ太さのバーにする（真ん中が高い山の形は、強さのゲージに見えた）。at は球の画面の位置（px）、null で隠す。
    */
-  setTiming(at: { x: number; y: number } | null, needle: number): void {
+  setTiming(at: { x: number; y: number } | null, needle: number, perfect = PERFECT, label = ''): void {
     this.timing.classList.toggle('on', at !== null);
     if (!at) return;
     this.timing.style.transform = `translate(${at.x.toFixed(1)}px, ${at.y.toFixed(1)}px)`;
     this.timingNeedle.style.left = `${(((needle + 1) / 2) * 100).toFixed(2)}%`;
-    this.timing.classList.toggle('sweet', Math.abs(needle) < PERFECT);
+    // 真ん中の幅（試作の速い針では狭い）。
+    const sweet = this.timingSweet;
+    const width = `${(perfect * 100).toFixed(1)}%`;
+    const left = `${(50 - perfect * 50).toFixed(1)}%`;
+    if (sweet.style.width !== width || sweet.style.left !== left) {
+      sweet.style.width = width;
+      sweet.style.left = left;
+    }
+    this.timing.classList.toggle('sweet', Math.abs(needle) < perfect);
+    if (this.timingLabel.textContent !== label) this.timingLabel.textContent = label;
   }
 
   /** 落とし所の輪の上に、距離の目印。画面の位置（px）か、null で隠す。 */
@@ -1199,10 +1217,7 @@ export class Overlay {
 
   setInputMode(touch: boolean): void {
     this.touch = touch;
-    if (touch) {
-      this.keyboardGuide.classList.remove('on');
-      this.keyboardGuide.ariaHidden = 'true';
-    }
+    this.setKeyboardGuide(!this.panel.classList.contains('hidden'));
     this.updateStartLabel();
   }
 
@@ -1217,10 +1232,12 @@ export class Overlay {
   }
   private resting = false;
 
-  /** 一度入った後は「続きから」にする。 */
+  /**
+   * 一度入った後は「続きから」にする。字は次にカードを出すとき（show）に替える。
+   * すぐ替えると、プレイを押してカードが消えていく間に「続きから」が一瞬見えた。
+   */
   setEntered(): void {
     this.entered = true;
-    this.updateStartLabel();
   }
 
   /** 別のコースになった（「続きから」ではなく、最初から）。 */
@@ -1237,6 +1254,8 @@ export class Overlay {
 
   private updateStartLabel(): void {
     this.startBtn.disabled = !this.ready;
+    // カードを隠している間（消えていく途中も）は字を替えない。次に出すとき（show）に替える。
+    if (this.panel.classList.contains('hidden')) return;
     if (!this.ready) {
       this.startBtn.innerHTML = this.loadingText;
     } else if (this.startLabel) {
@@ -1266,25 +1285,23 @@ export class Overlay {
     this.flightHud.classList.add('on');
   }
 
-  /** PC で最初に島へ入ったときだけ、操作を15秒見せる。休憩から戻るたびには繰り返さない。 */
-  showKeyboardGuide(): void {
-    if (this.touch || this.keyboardGuideShown) return;
-    this.keyboardGuideShown = true;
-    this.keyboardGuide.classList.add('on');
-    this.keyboardGuide.ariaHidden = 'false';
-    clearTimeout(this.keyboardGuideTimer);
-    this.keyboardGuideTimer = window.setTimeout(() => {
-      this.keyboardGuide.classList.remove('on');
-      this.keyboardGuide.ariaHidden = 'true';
-    }, 15_000);
+  /**
+   * PC の操作の案内は、カード（開始画面・休憩）を出している間だけ見せる。遊んでいる間は出さない
+   * （最初の 15 秒だけ薄く出して消えるのは、ほぼ見えないのに視界を邪魔すると利用者に嫌われた）。
+   */
+  private setKeyboardGuide(on: boolean): void {
+    // 休憩画面だけ（最初の画面＝ロビーには出さない）。
+    const show = on && this.resting && !this.touch;
+    this.keyboardGuide.classList.toggle('on', show);
+    this.keyboardGuide.ariaHidden = show ? 'false' : 'true';
   }
 
   /** カードを出す（つくる・休憩）。message は見出しの下の一文を差し替える。 */
   show(message?: string): void {
     this.panel.classList.remove('hidden');
     this.hud.classList.add('dim');
-    this.keyboardGuide.classList.remove('on');
-    this.keyboardGuide.ariaHidden = 'true';
+    this.setKeyboardGuide(true);
+    this.updateStartLabel();
     this.lead.textContent = message ?? DEFAULT_LEAD;
   }
 
@@ -1297,6 +1314,7 @@ export class Overlay {
   hide(): void {
     this.panel.classList.add('hidden');
     this.hud.classList.remove('dim');
+    this.setKeyboardGuide(false);
   }
 
   /** 部屋の窓のボタンと名前の欄をつなぐ。 */
