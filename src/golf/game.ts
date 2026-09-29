@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { SEA_LEVEL } from '../world/terrain';
 import type { Terrain } from '../world/terrain';
-import { LIE_POWER, PERFECT, type Point3, type Trial, clubFor, needleEffect, reachOf, solvePower } from './aim';
+import { LIE_POWER, PERFECT, POWER_RANGE, hardPerfect, type Point3, type Trial, clubFor, needleEffect, reachOf, solvePower } from './aim';
 import { BALL_RADIUS, Ball, type GolfGround, type Surface, rollSpeed } from './ball';
 import { CLUBS, type Club, PUTTER } from './clubs';
 import { type Hole, holeIntro } from './course';
@@ -139,15 +139,6 @@ function smoothstep(a: number, b: number, x: number): number {
   const t = Math.max(0, Math.min(1, (x - a) / (b - a)));
   return t * t * (3 - 2 * t);
 }
-
-/** 速い針の真ん中（ずれ無し）の幅。遠いほど狭い（40m 以下 ±12%、200m 以上 ±6%）。 */
-function hardPerfect(d: number): number {
-  const t = Math.max(0, Math.min(1, (d - 40) / 160));
-  return 0.12 - 0.06 * t * t * (3 - 2 * t);
-}
-
-/** 2 回押し: 距離の針を端で止めたときの強さのずれ（±30%）。 */
-const POWER_RANGE = 0.3;
 
 /**
  * 速い針の速さ（今の針の何倍か）を、狙う距離で変える。遠いほど速い。

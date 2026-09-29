@@ -1065,14 +1065,6 @@ let finaleCam: FinaleCamera | null = null;
 /** 結果の窓を出す時刻（0 なら出している・出さない）。お祝いと紙吹雪を見せてから出す。 */
 let roundResultAt = 0;
 
-/** 1 ホールの打数を、共有する文の印に（入れた 1 打・イーグル以上・バーディ・パー・ボギー・それ以上）。 */
-function scoreEmoji(s: number | undefined, par: number): string {
-  if (s === undefined) return '▫️';
-  if (s === 1) return '⭐';
-  const d = s - par;
-  return d <= -2 ? '🟡' : d === -1 ? '🔵' : d === 0 ? '⚪' : d === 1 ? '🟧' : '🟥';
-}
-
 /** 最後のホールを入れた: 結果をまとめ、自己ベストを付け、締めの絵に切り替える。 */
 function startFinale(total: number, totalPar: number): void {
   if (!golf) return;
@@ -1085,7 +1077,8 @@ function startFinale(total: number, totalPar: number): void {
   const stats = golf.roundStats;
   const dateLabel = dayLabel();
   const daily = isDaily();
-  const marks = pars.map((p, k) => scoreEmoji(scores[k], p)).join('');
+  // 共有する文のホールごとの打数（絵文字の升目はうるさく、宣伝の投稿のように見えたので数字だけ）。
+  const holeScores = scores.map((s) => (s === undefined ? '-' : String(s))).join(' ');
   // COM や友達と回ったときの順位（同じなら同じ順位）。
   const rivals = golf.rivalStates;
   const entries = [
@@ -1126,9 +1119,9 @@ function startFinale(total: number, totalPar: number): void {
     ranking,
     rivalRows: rivals.map((r) => ({ label: r.name, scores: [...r.scores], color: r.color })),
     shareText: [
-      daily ? `Hole in Isle 今日のコース（${dateLabel}）` : `Hole in Isle ${seed}（${dateLabel} のピン）`,
-      `${total} 打（${toPar(total, totalPar)}）${myRank ? ` · ${playMode === 'friends' ? '友達' : 'COM'} と ${ranking.length} 人で ${myRank} 位` : ''}`,
-      marks,
+      `Hole in Isle · ${daily ? `今日のコース ${dateLabel}` : seed}`,
+      `${total} (${toPar(total, totalPar)})${myRank ? ` · ${ranking.length} 人中 ${myRank} 位` : ''}`,
+      holeScores,
       // 今日のコースは、`#` 無しのアドレスを送る（開いた人がその日の今日のコースを回れる。Wordle と同じ）。
       daily ? `${location.origin}${location.pathname}` : `${location.origin}${location.pathname}#${seed}`,
     ].join('\n'),

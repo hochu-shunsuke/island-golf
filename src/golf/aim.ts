@@ -38,6 +38,15 @@ export const PERFECT = 0.12;
  */
 export const HARD_NEEDLE = { perfect: 0.08, yawDeg: 9, curve: 0.6, power: 0.1 };
 
+/** 2 回押し: 距離の針を端で止めたときの強さのずれ（±30%）。プレイヤー（game.ts）と COM（rivals.ts）で同じ。 */
+export const POWER_RANGE = 0.3;
+
+/** 速い針の真ん中（ずれ無し）の幅。狙う距離が遠いほど狭い（40m 以下 ±12%、200m 以上 ±6%）。 */
+export function hardPerfect(d: number): number {
+  const t = Math.max(0, Math.min(1, (d - 40) / 160));
+  return 0.12 - 0.06 * t * t * (3 - 2 * t);
+}
+
 /** ライ lie から、クラブ c が届く一番遠いキャリー（m）。パターは転がる距離。 */
 export function reachOf(c: number, lie: Surface): number {
   if (c === PUTTER) return 40;

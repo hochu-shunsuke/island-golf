@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { hashSeed, mulberry32 } from '../core/rng';
-import { LIE_POWER, type Point3, clubFor, needleEffect, reachOf, solvePower, trial } from './aim';
+import { LIE_POWER, POWER_RANGE, type Point3, clubFor, hardPerfect, needleEffect, reachOf, solvePower, trial } from './aim';
 import { BALL_RADIUS, BALL_STEP, Ball, type GolfGround, rollSpeed } from './ball';
 import { CLUBS, PUTTER } from './clubs';
 import type { Hole } from './course';
@@ -25,9 +25,9 @@ export interface RivalSpec {
   /** 強さの呼び名。 */
   level: string;
   color: number;
-  /** 正確さの針のずれの大きさ（標準偏差、-1..1 の針に対して。プレイヤーの針と同じ効き方）。 */
+  /** 方向の針を止めるずれ（標準偏差、-1..1 の針に対して。プレイヤーの 2 回押しの 2 本目と同じ効き方）。 */
   spread: number;
-  /** 強さの狂い（割合の標準偏差。針とは別の、距離の合わせ損ね）。 */
+  /** 距離の針を止めるずれ（標準偏差。プレイヤーの 2 回押しの 1 本目と同じ効き方）。 */
   distance: number;
   /** 風をどれだけ読めるか（0 = 無視、1 = 完全に）。 */
   windRead: number;
@@ -45,8 +45,8 @@ export const RIVALS: readonly RivalSpec[] = [
     name: 'COM1',
     level: 'やさしい',
     color: 0xffcf3f,
-    spread: 0.6,
-    distance: 0.14,
+    spread: 0.2,
+    distance: 0.2,
     windRead: 0.25,
     puttPower: 0.25,
     puttYaw: 5,
@@ -57,8 +57,8 @@ export const RIVALS: readonly RivalSpec[] = [
     name: 'COM2',
     level: 'ふつう',
     color: 0xe8eef2,
-    spread: 0.48,
-    distance: 0.11,
+    spread: 0.13,
+    distance: 0.13,
     windRead: 0.5,
     puttPower: 0.2,
     puttYaw: 3.8,
@@ -69,7 +69,7 @@ export const RIVALS: readonly RivalSpec[] = [
     name: 'COM3',
     level: 'つよい',
     color: 0x3f63b8,
-    spread: 0.36,
+    spread: 0.08,
     distance: 0.08,
     windRead: 0.75,
     puttPower: 0.15,
@@ -449,10 +449,13 @@ export class Rivals implements Opponents {
       const got = Math.hypot(land.x - b.x, land.z - b.z);
       dist = Math.max(1, dist + (pick - got));
     }
-    const needle = Math.max(-1, Math.min(1, gauss(rand) * spec.spread));
-    const effect = needleEffect(needle, false);
-    const miss = 1 + gauss(rand) * spec.distance;
-    return { club, yaw: yaw + effect.yaw, power: Math.max(0.1, Math.min(1, power * effect.power * miss)), curve: effect.curve };
+    // プレイヤーと同じ 2 回押し: 1 本目の針で距離の ±、2 本目の針で方向の ±（真ん中の幅は距離で狭くなる）。
+    const clamp1 = (v: number) => Math.max(-1, Math.min(1, v));
+    const eDist = clamp1(gauss(rand) * spec.distance);
+    const gauge = 1 + (Math.abs(eDist) < hardPerfect(pick) ? 0 : eDist) * POWER_RANGE;
+    const eDir = clamp1(gauss(rand) * spec.spread);
+    const effect = needleEffect(eDir, false, true, hardPerfect(pick * gauge));
+    return { club, yaw: yaw + effect.yaw, power: Math.max(0.1, Math.min(1.3, power * gauge)), curve: effect.curve };
   }
 }
 
