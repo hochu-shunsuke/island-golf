@@ -41,6 +41,24 @@ export const HARD_NEEDLE = { perfect: 0.08, yawDeg: 9, curve: 0.6, power: 0.1 };
 /** 2 回押し: 距離の針を端で止めたときの強さのずれ（±30%）。プレイヤー（game.ts）と COM（rivals.ts）で同じ。 */
 export const POWER_RANGE = 0.3;
 
+/**
+ * 距離の針の目盛り。左端は −30%、右端は +30% かそのクラブの全力（最大飛距離）の手前の方。
+ * power は輪に届く強さ（全力を 1 として）。center は狙いどおり（倍率 1）になる針の位置（-1..1）で、
+ * 最大の近くを狙うほど右へ寄る（右端で止めたときだけ全力。真ん中より右なら全部全力、にはしない）。
+ */
+export function distanceScale(power: number): { lo: number; hi: number; center: number } {
+  const lo = 1 - POWER_RANGE;
+  const hi = Math.max(1, Math.min(1 + POWER_RANGE, 1 / Math.max(0.05, power)));
+  return { lo, hi, center: (2 * (1 - lo)) / (hi - lo) - 1 };
+}
+
+/** 距離の針を n（-1..1）で止めたときの強さの倍率。真ん中の帯（center から ±width）なら狙いどおり。 */
+export function distanceGauge(n: number, power: number, width: number): { gauge: number; perfect: boolean } {
+  const { lo, hi, center } = distanceScale(power);
+  const perfect = Math.abs(n - center) < width;
+  return { gauge: perfect ? 1 : lo + ((n + 1) / 2) * (hi - lo), perfect };
+}
+
 /** 速い針の真ん中（ずれ無し）の幅。狙う距離が遠いほど狭い（40m 以下 ±12%、200m 以上 ±6%）。 */
 export function hardPerfect(d: number): number {
   const t = Math.max(0, Math.min(1, (d - 40) / 160));

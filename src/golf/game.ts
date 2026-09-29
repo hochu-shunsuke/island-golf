@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { SEA_LEVEL } from '../world/terrain';
 import type { Terrain } from '../world/terrain';
-import { LIE_POWER, PERFECT, POWER_RANGE, hardPerfect, type Point3, type Trial, clubFor, needleEffect, reachOf, solvePower } from './aim';
+import { LIE_POWER, PERFECT, distanceGauge, distanceScale, hardPerfect, type Point3, type Trial, clubFor, needleEffect, reachOf, solvePower } from './aim';
 import { BALL_RADIUS, Ball, type GolfGround, type Surface, rollSpeed } from './ball';
 import { CLUBS, type Club, PUTTER } from './clubs';
 import { type Hole, holeIntro } from './course';
@@ -142,11 +142,11 @@ function smoothstep(a: number, b: number, x: number): number {
 
 /**
  * 速い針の速さ（今の針の何倍か）を、狙う距離で変える。遠いほど速い。
- * 近くても最低 1.2 倍（寄せの緊張が消えないように）、200m 以上で 1.5 倍（2.6 倍・1.9 倍は速すぎた）。
+ * 近くても最低 1.2 倍（寄せの緊張が消えないように）、200m 以上で 1.65 倍（2.6 倍・1.9 倍は速すぎ、1.5 倍は少し遅かった）。
  */
 function hardNeedleSpeed(d: number): number {
   const t = Math.max(0, Math.min(1, (d - 40) / 160));
-  return 1.2 + (1.5 - 1.2) * t * t * (3 - 2 * t);
+  return 1.2 + (1.65 - 1.2) * t * t * (3 - 2 * t);
 }
 
 export class GolfGame {
@@ -228,6 +228,11 @@ export class GolfGame {
   /** 今の針の難しさを決める距離（2 回押しの 2 本目は、1 本目で決まった距離）。 */
   get stageDistance(): number {
     return this.twoClick && this.swingStage === 'impact' ? this.powerDistance : this.aimDistance;
+  }
+
+  /** 今の針の真ん中（狙いどおり）の位置。距離の針は、最大の近くを狙うほど右へ寄る。 */
+  get needleCenter(): number {
+    return this.twoClick && this.swingStage === 'power' ? distanceScale(this.power).center : 0;
   }
 
   /** 今の針の真ん中（ずれ無し）の幅。 */
@@ -548,9 +553,9 @@ export class GolfGame {
       if (this.swingStage === 'power') {
         // 距離の針を止めた: 真ん中なら狙った距離どおり、ずれるほど強く・弱く（端で ±POWER_RANGE）。
         const e = this.needle;
-        const perfect = Math.abs(e) < this.perfectWidth;
-        // 上振れしても、そのクラブの全力（power 1）より強くはならない（最大飛距離は輪の限度と同じ）。
-        this.gaugeSet = Math.min(1 + (perfect ? 0 : e) * POWER_RANGE, 1 / Math.max(0.05, this.power));
+        // 目盛りの右端がそのクラブの全力（distanceScale）。最大の近くを狙うと真ん中の帯は右へ寄る。
+        const { gauge, perfect } = distanceGauge(e, this.power, this.perfectWidth);
+        this.gaugeSet = gauge;
         this.powerDistance = this.aimDistance * this.gaugeSet;
         const pct = Math.round((this.gaugeSet - 1) * 100);
         this.onMessage(perfect || pct === 0 ? '距離 ぴったり' : `距離 ${pct > 0 ? '+' : ''}${pct}%`);

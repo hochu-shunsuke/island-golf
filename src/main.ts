@@ -1854,7 +1854,7 @@ function placeTiming(game: GolfGame): void {
   const at = { x: Math.max(160, Math.min(innerWidth - 160, x)), y: timingY };
   // 2 回押しの 1 本目（距離）と 2 本目（方向）は同じ見た目で、上の文字だけ替える。
   const label = game.twoClick ? (game.swingStage === 'power' ? '距離' : '方向') : '';
-  overlay.setTiming(at, game.needle, game.perfectWidth, label);
+  overlay.setTiming(at, game.needle, game.perfectWidth, label, game.needleCenter);
 }
 
 const aimScreen = new THREE.Vector3();

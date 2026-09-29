@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { hashSeed, mulberry32 } from '../core/rng';
-import { LIE_POWER, POWER_RANGE, type Point3, clubFor, hardPerfect, needleEffect, reachOf, solvePower, trial } from './aim';
+import { LIE_POWER, type Point3, clubFor, distanceGauge, distanceScale, hardPerfect, needleEffect, reachOf, solvePower, trial } from './aim';
 import { BALL_RADIUS, BALL_STEP, Ball, type GolfGround, rollSpeed } from './ball';
 import { CLUBS, PUTTER } from './clubs';
 import type { Hole } from './course';
@@ -451,8 +451,9 @@ export class Rivals implements Opponents {
     }
     // プレイヤーと同じ 2 回押し: 1 本目の針で距離の ±、2 本目の針で方向の ±（真ん中の幅は距離で狭くなる）。
     const clamp1 = (v: number) => Math.max(-1, Math.min(1, v));
-    const eDist = clamp1(gauss(rand) * spec.distance);
-    const gauge = 1 + (Math.abs(eDist) < hardPerfect(pick) ? 0 : eDist) * POWER_RANGE;
+    // 距離の針はプレイヤーと同じ目盛り（右端が全力、最大の近くでは真ん中が右へ寄る）。
+    const { center } = distanceScale(power);
+    const { gauge } = distanceGauge(clamp1(center + gauss(rand) * spec.distance), power, hardPerfect(pick));
     const eDir = clamp1(gauss(rand) * spec.spread);
     const effect = needleEffect(eDir, false, true, hardPerfect(pick * gauge));
     return { club, yaw: yaw + effect.yaw, power: Math.max(0.1, Math.min(1, power * gauge)), curve: effect.curve };

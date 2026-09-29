@@ -1053,7 +1053,7 @@ export class Overlay {
    * 端ほど左・右へ曲がる。画面の下の端に置くと、狙いから目線が離れて見づらかった。
    * 同じ太さのバーにする（真ん中が高い山の形は、強さのゲージに見えた）。at は球の画面の位置（px）、null で隠す。
    */
-  setTiming(at: { x: number; y: number } | null, needle: number, perfect = PERFECT, label = ''): void {
+  setTiming(at: { x: number; y: number } | null, needle: number, perfect = PERFECT, label = '', center = 0): void {
     this.timing.classList.toggle('on', at !== null);
     if (!at) return;
     this.timing.style.transform = `translate(${at.x.toFixed(1)}px, ${at.y.toFixed(1)}px)`;
@@ -1061,12 +1061,12 @@ export class Overlay {
     // 真ん中の幅（試作の速い針では狭い）。
     const sweet = this.timingSweet;
     const width = `${(perfect * 100).toFixed(1)}%`;
-    const left = `${(50 - perfect * 50).toFixed(1)}%`;
+    const left = `${(50 + center * 50 - perfect * 50).toFixed(1)}%`;
     if (sweet.style.width !== width || sweet.style.left !== left) {
       sweet.style.width = width;
       sweet.style.left = left;
     }
-    this.timing.classList.toggle('sweet', Math.abs(needle) < perfect);
+    this.timing.classList.toggle('sweet', Math.abs(needle - center) < perfect);
     if (this.timingLabel.textContent !== label) this.timingLabel.textContent = label;
   }
 
