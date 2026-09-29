@@ -232,7 +232,15 @@ export class GolfGame {
 
   /** 今の針の真ん中（狙いどおり）の位置。距離の針は、最大の近くを狙うほど右へ寄る。 */
   get needleCenter(): number {
-    return this.twoClick && this.swingStage === 'power' ? distanceScale(this.power).center : 0;
+    return this.twoClick && this.swingStage === 'power' ? distanceScale(this.scalePower).center : 0;
+  }
+
+  /**
+   * 距離の針の目盛りに使う、輪に届く強さ。輪がそのクラブの届く限界にあれば全力（1）とみなす
+   * （試し打ちで求めた強さは全力のわずか下になり、最大を狙っても真ん中の帯が右端から少し離れていた）。
+   */
+  private get scalePower(): number {
+    return this.aimDistance >= this.reachOf(this.clubIndex) - 1 ? 1 : this.power;
   }
 
   /** 今の針の真ん中（ずれ無し）の幅。 */
@@ -554,7 +562,7 @@ export class GolfGame {
         // 距離の針を止めた: 真ん中なら狙った距離どおり、ずれるほど強く・弱く（端で ±POWER_RANGE）。
         const e = this.needle;
         // 目盛りの右端がそのクラブの全力（distanceScale）。最大の近くを狙うと真ん中の帯は右へ寄る。
-        const { gauge, perfect } = distanceGauge(e, this.power, this.perfectWidth);
+        const { gauge, perfect } = distanceGauge(e, this.scalePower, this.perfectWidth);
         this.gaugeSet = gauge;
         this.powerDistance = this.aimDistance * this.gaugeSet;
         const pct = Math.round((this.gaugeSet - 1) * 100);

@@ -1060,8 +1060,11 @@ export class Overlay {
     this.timingNeedle.style.left = `${(((needle + 1) / 2) * 100).toFixed(2)}%`;
     // 真ん中の幅（試作の速い針では狭い）。
     const sweet = this.timingSweet;
-    const width = `${(perfect * 100).toFixed(1)}%`;
-    const left = `${(50 + center * 50 - perfect * 50).toFixed(1)}%`;
+    // 帯がバーの端からはみ出すときは端で切る（最大を狙うと、帯は右端にぴったり付く）。
+    const from = Math.max(0, 50 + center * 50 - perfect * 50);
+    const to = Math.min(100, 50 + center * 50 + perfect * 50);
+    const width = `${(to - from).toFixed(1)}%`;
+    const left = `${from.toFixed(1)}%`;
     if (sweet.style.width !== width || sweet.style.left !== left) {
       sweet.style.width = width;
       sweet.style.left = left;
