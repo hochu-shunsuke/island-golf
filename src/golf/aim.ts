@@ -33,7 +33,7 @@ export const PERFECT = 0.12;
 
 /**
  * 散らばりを乱数ではなく腕で決める針（Golf Clash の正確さの針と同じ考え）。2026-09-29 に入れた。
- * 針は距離に応じて元の 1.2〜1.5 倍速く（game.ts の hardNeedleSpeed）、真ん中は距離で狭く、外すと大きく曲がる。
+ * 針は元の 1.45 倍速く（game.ts の NEEDLE_FACTOR。距離では変えない）、真ん中は狭く（±8%）、外すと大きく曲がる。
  * 元の針（±2°）では、自動で打たせるとパーオン率 92%・バンカー 0% で、ハザードが飾りになっていた（プロの実際は約 67%）。
  */
 export const HARD_NEEDLE = { perfect: 0.08, yawDeg: 9, curve: 0.6, power: 0.1 };
@@ -59,11 +59,6 @@ export function distanceGauge(n: number, power: number, width: number): { gauge:
   return { gauge: perfect ? 1 : lo + ((n + 1) / 2) * (hi - lo), perfect };
 }
 
-/** 速い針の真ん中（ずれ無し）の幅。狙う距離が遠いほど狭い（40m 以下 ±12%、200m 以上 ±6%）。 */
-export function hardPerfect(d: number): number {
-  const t = Math.max(0, Math.min(1, (d - 40) / 160));
-  return 0.12 - 0.06 * t * t * (3 - 2 * t);
-}
 
 /** ライ lie から、クラブ c が届く一番遠いキャリー（m）。パターは転がる距離。 */
 export function reachOf(c: number, lie: Surface): number {

@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { SEA_LEVEL } from '../world/terrain';
 import type { Terrain } from '../world/terrain';
-import { LIE_POWER, PERFECT, distanceGauge, distanceScale, hardPerfect, type Point3, type Trial, clubFor, needleEffect, reachOf, solvePower } from './aim';
+import { HARD_NEEDLE, LIE_POWER, PERFECT, distanceGauge, distanceScale, type Point3, type Trial, clubFor, needleEffect, reachOf, solvePower } from './aim';
 import { BALL_RADIUS, Ball, type GolfGround, type Surface, rollSpeed } from './ball';
 import { CLUBS, type Club, PUTTER } from './clubs';
 import { type Hole, holeIntro } from './course';
@@ -141,13 +141,11 @@ function smoothstep(a: number, b: number, x: number): number {
 }
 
 /**
- * 速い針の速さ（今の針の何倍か）を、狙う距離で変える。遠いほど速い。
- * 近くても最低 1.2 倍（寄せの緊張が消えないように）、200m 以上で 1.65 倍（2.6 倍・1.9 倍は速すぎ、1.5 倍は少し遅かった）。
+ * 速い針の速さ（元の針の何倍か）。距離では変えない（みんゴルと同じ）。距離で変えていた頃（近い 1.2 倍〜遠い 1.65 倍、
+ * 真ん中の幅も近いほど広い）は、遠いと外れても結局寄り、近いとゆっくりでほぼ入って、針の意味が薄かった。
+ * 実際のゴルフでも寄せのずれは距離に対してむしろ大きい（ツアーで 150 ヤードは約 6.5%、20 ヤードは約 10%）。
  */
-function hardNeedleSpeed(d: number): number {
-  const t = Math.max(0, Math.min(1, (d - 40) / 160));
-  return 1.2 + (1.65 - 1.2) * t * t * (3 - 2 * t);
-}
+const NEEDLE_FACTOR = 1.45;
 
 export class GolfGame {
   readonly group = new THREE.Group();
@@ -217,18 +215,15 @@ export class GolfGame {
   /** 散らばりを腕で決める速い針（aim.ts の HARD_NEEDLE）。 */
   hardNeedle = true;
   /**
-   * みんゴルのような 2 回押し。狙い（輪）で大枠を決め、1 本目の針で距離の ±、2 本目の針で方向の ± を決める。
-   * どちらも真ん中で止めれば狙いどおり。ミニゲームの間は弧を描き直さない（結果は打つまで分からない）。
+   * 2 回押し。狙い（輪）で大枠を決め、1 本目の針で方向の ±、2 本目の針で距離の ± を決める
+   * （近くで大事な距離を最後に。パットの「ライン → 強さ」と同じ順）。どちらも真ん中で止めれば狙いどおり。
+   * ミニゲームの間は弧を描き直さない（結果は打つまで分からない）。
    */
   twoClick = true;
+  /** 今振れている針（impact ＝ 方向、power ＝ 距離）。 */
   swingStage: 'power' | 'impact' = 'impact';
-  /** 1 本目の針で決まった強さの倍率（1 で狙った距離どおり）。 */
-  private gaugeSet = 1;
-
-  /** 今の針の難しさを決める距離（2 回押しの 2 本目は、1 本目で決まった距離）。 */
-  get stageDistance(): number {
-    return this.twoClick && this.swingStage === 'impact' ? this.powerDistance : this.aimDistance;
-  }
+  /** 1 本目（方向）の針を止めた位置。 */
+  private dirNeedle = 0;
 
   /** 今の針の真ん中（狙いどおり）の位置。距離の針は、最大の近くを狙うほど右へ寄る。 */
   get needleCenter(): number {
@@ -243,13 +238,11 @@ export class GolfGame {
     return this.aimDistance >= this.reachOf(this.clubIndex) - 1 ? 1 : this.power;
   }
 
-  /** 今の針の真ん中（ずれ無し）の幅。 */
+  /** 今の針の真ん中（ずれ無し）の幅。距離では変えない。パットの方向だけは元の広さ。 */
   get perfectWidth(): number {
     if (!this.hardNeedle || (this.putting && this.swingStage === 'impact')) return PERFECT;
-    return hardPerfect(this.stageDistance);
+    return HARD_NEEDLE.perfect;
   }
-  /** 1 本目のバー（パワー）で決めた、おおよその距離（m）。2 本目の針の速さに使う。 */
-  private powerDistance = 0;
 
 
   constructor(
@@ -553,21 +546,14 @@ export class GolfGame {
       this.phase = 'swing';
       this.needleTime = 0;
       this.needle = -1;
-      this.swingStage = this.twoClick ? 'power' : 'impact';
-      this.gaugeSet = 1;
+      this.swingStage = 'impact';
       this.onSound({ type: 'ready' });
       this.emit();
     } else if (this.phase === 'swing') {
-      if (this.swingStage === 'power') {
-        // 距離の針を止めた: 真ん中なら狙った距離どおり、ずれるほど強く・弱く（端で ±POWER_RANGE）。
-        const e = this.needle;
-        // 目盛りの右端がそのクラブの全力（distanceScale）。最大の近くを狙うと真ん中の帯は右へ寄る。
-        const { gauge, perfect } = distanceGauge(e, this.scalePower, this.perfectWidth);
-        this.gaugeSet = gauge;
-        this.powerDistance = this.aimDistance * this.gaugeSet;
-        const pct = Math.round((this.gaugeSet - 1) * 100);
-        this.onMessage(perfect || pct === 0 ? '距離 ぴったり' : `距離 ${pct > 0 ? '+' : ''}${pct}%`);
-        this.swingStage = 'impact';
+      if (this.twoClick && this.swingStage === 'impact') {
+        // 方向の針を止めた: 次は距離の針。
+        this.dirNeedle = this.needle;
+        this.swingStage = 'power';
         this.needleTime = 0;
         this.needle = -1;
         this.emit();
@@ -580,8 +566,8 @@ export class GolfGame {
   /** 構えをやめて、狙いに戻る（針が振れている間に Esc など）。 */
   cancelSwing(): void {
     if (this.phase !== 'swing') return;
-    // 2 回押しで距離を決めた後は、やめられない（方向まで打ち切る）。
-    if (this.twoClick && this.swingStage === 'impact') return;
+    // 2 回押しで方向を決めた後は、やめられない（距離まで打ち切る）。
+    if (this.twoClick && this.swingStage === 'power') return;
     this.phase = 'aim';
     this.needle = -1;
     this.swingStage = 'impact';
@@ -593,15 +579,24 @@ export class GolfGame {
   /** 針を止めた所で打つ。真ん中ならナイスショット。ずれるほど曲がり、少し短くなる。 */
   private hit(): void {
     const club = this.club;
-    const e = this.needle;
     const putt = this.putting;
-    const effect = needleEffect(e, putt, this.hardNeedle, this.perfectWidth);
+    // 2 回押しでは、方向は 1 本目の針、距離は今止めた 2 本目の針で決まる。
+    const e = this.twoClick ? this.dirNeedle : this.needle;
+    const effect = needleEffect(e, putt, this.hardNeedle, putt ? PERFECT : HARD_NEEDLE.perfect);
+    let gaugeSet = 1;
+    if (this.twoClick) {
+      // 目盛りの右端がそのクラブの全力（distanceScale）。最大の近くを狙うと真ん中の帯は右へ寄る。
+      const { gauge, perfect: exact } = distanceGauge(this.needle, this.scalePower, this.perfectWidth);
+      gaugeSet = gauge;
+      const pct = Math.round((gauge - 1) * 100);
+      this.onMessage(exact || pct === 0 ? '距離 ぴったり' : `距離 ${pct > 0 ? '+' : ''}${pct}%`);
+    }
     const perfect = effect.perfect;
     this.lastSpot.x = this.ball.pos.x;
     this.lastSpot.z = this.ball.pos.z;
     const yaw = this.aimYaw + effect.yaw;
     // 2 回押しでは、距離は 1 本目の針だけで決まる（2 本目は方向だけ）。
-    const power = Math.min(1, this.twoClick ? this.power * this.gaugeSet : this.power * effect.power);
+    const power = Math.min(1, this.twoClick ? this.power * gaugeSet : this.power * effect.power);
     const lieLoss = putt ? 1 : LIE_POWER[this.ball.lie];
     this.ball.hit(yaw, club.loft, club.speed * power * lieLoss, club.spin, club.bite, effect.curve);
     // 友達には、同じ物理でもう一度飛ばせるよう、打った一打をそのまま送る。
@@ -664,12 +659,11 @@ export class GolfGame {
     }
     if (this.phase === 'swing') {
       this.needleTime += dt;
-      // 針の速さは距離で変える（2 回押しの 1 本目は狙った距離、2 本目は 1 本目で決まった距離）。
-      const d = this.stageDistance;
+      // パットの方向だけは元のゆっくりした針。ほかは元の針の NEEDLE_FACTOR 倍（距離では変えない）。
       const f =
         this.putting && this.swingStage === 'impact'
           ? PUTT_NEEDLE_SPEED
-          : NEEDLE_SPEED[this.putting ? 'green' : this.ball.lie] * (this.hardNeedle ? hardNeedleSpeed(d) : 1);
+          : NEEDLE_SPEED[this.putting ? 'green' : this.ball.lie] * (this.hardNeedle ? NEEDLE_FACTOR : 1);
       // 左端から右へ、右端から左へ、を繰り返す（三角波）。
       const t = (this.needleTime * f) % 2;
       this.needle = -1 + 2 * (t < 1 ? t : 2 - t);
