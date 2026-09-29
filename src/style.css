@@ -457,29 +457,80 @@ kbd {
   }
 }
 
-.t-track {
+.t-gauge {
+  /* みんゴルと同じく 1 本のゲージ。左の区間で方向、右の区間で距離を決める。 */
   position: relative;
-  width: min(220px, calc(100vw - 120px));
+  width: min(300px, calc(100vw - 96px));
   height: 8px;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.14);
+  margin-bottom: 14px;
 }
 
-/* 真ん中の帯（PERFECT の幅。針 -1..1 の ±0.12 = 幅の 12%）。 */
+.t-seg {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.14);
+  transition: opacity 160ms ease;
+}
+
+.t-dir {
+  left: 0;
+  width: 34%;
+}
+
+.t-dist {
+  left: 37%;
+  right: 0;
+}
+
+/* 今決めていない区間は薄く。 */
+.timing:not(.dist) .t-dist,
+.timing.dist .t-dir {
+  opacity: 0.45;
+}
+
+/* 真ん中の帯（狙いどおりになる所）。 */
 .t-sweet {
   position: absolute;
-  left: 44%;
-  width: 12%;
   top: 0;
   bottom: 0;
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.5);
 }
 
+/* 方向で止めた所の印。 */
+.t-mark {
+  position: absolute;
+  top: -3px;
+  bottom: -3px;
+  width: 2px;
+  margin-left: -1px;
+  border-radius: 1px;
+  background: rgba(255, 255, 255, 0.85);
+  display: none;
+}
+
+.t-cap {
+  position: absolute;
+  left: 50%;
+  top: calc(100% + 5px);
+  transform: translateX(-50%);
+  font: 600 10.5px/1 system-ui, sans-serif;
+  letter-spacing: 0.08em;
+  color: rgba(255, 255, 255, 0.55);
+  white-space: nowrap;
+}
+
+.timing:not(.dist) .t-dir .t-cap,
+.timing.dist .t-dist .t-cap {
+  color: #fff;
+}
+
 .t-needle {
   position: absolute;
   top: -7px;
-  bottom: -7px;
+  height: 22px;
   width: 3px;
   margin-left: -1.5px;
   border-radius: 2px;
@@ -492,18 +543,8 @@ kbd {
   box-shadow: 0 0 10px 2px rgba(255, 255, 255, 0.9);
 }
 
-.t-label {
-  position: absolute;
-  left: 50%;
-  bottom: calc(100% + 6px);
-  transform: translateX(-50%);
-  font: 600 12px/1 system-ui, sans-serif;
-  color: #fff;
-  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.6);
-  white-space: nowrap;
-  pointer-events: none;
-}
-.timing.sweet .t-sweet {
+.timing.sweet:not(.dist) .t-dir .t-sweet,
+.timing.sweet.dist .t-dist .t-sweet {
   background: rgba(255, 255, 255, 0.75);
 }
 

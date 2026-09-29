@@ -1845,16 +1845,15 @@ function placeTiming(game: GolfGame): void {
   ballScreen.set(game.ball.pos.x, game.ball.pos.y, game.ball.pos.z).project(camera);
   const inside = ballScreen.z < 1 && Math.abs(ballScreen.x) < 1 && Math.abs(ballScreen.y) < 1;
   const x = inside ? ((ballScreen.x + 1) / 2) * innerWidth : innerWidth / 2;
-  const y = (inside ? ((1 - ballScreen.y) / 2) * innerHeight : innerHeight * 0.7) + 34;
+  // 球の下に構えたクラブのヘッドが見えるよう、少し離して下に出す。
+  const y = (inside ? ((1 - ballScreen.y) / 2) * innerHeight : innerHeight * 0.7) + 78;
   // バーの幅の半分（約 150px）は画面の中に収める。タッチでは打つボタン（下から約 88〜166px）も避ける。
   const touchTiming = inputMode === 'touch';
   const topClearance = touchTiming ? 80 : 140;
   const bottomClearance = touchTiming ? 230 : 130;
   const timingY = Math.max(topClearance, Math.min(Math.max(topClearance, innerHeight - bottomClearance), y));
   const at = { x: Math.max(160, Math.min(innerWidth - 160, x)), y: timingY };
-  // 2 回押しの 1 本目（距離）と 2 本目（方向）は同じ見た目で、上の文字だけ替える。
-  const label = game.twoClick ? (game.swingStage === 'power' ? '距離' : '方向') : '';
-  overlay.setTiming(at, game.needle, game.perfectWidth, label, game.needleCenter);
+  overlay.setTiming(at, game.needle, game.gauge);
 }
 
 const aimScreen = new THREE.Vector3();

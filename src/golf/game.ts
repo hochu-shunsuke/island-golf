@@ -4,6 +4,7 @@ import type { Terrain } from '../world/terrain';
 import { HARD_NEEDLE, LIE_POWER, PERFECT, distanceGauge, distanceScale, type Point3, type Trial, clubFor, needleEffect, reachOf, solvePower } from './aim';
 import { BALL_RADIUS, Ball, type GolfGround, type Surface, rollSpeed } from './ball';
 import { CLUBS, type Club, PUTTER } from './clubs';
+import { ClubModel } from './clubModel';
 import { type Hole, holeIntro } from './course';
 import type { OpponentState, Opponents } from './opponents';
 import { TrailFade } from './trail';
@@ -155,6 +156,15 @@ const FAST_NEEDLE_SPEED: Record<Surface, number> = {
   snow: 1.58,
 };
 
+/** 打つゲージ（1 本のバー）の中身。stage は今決めている区間、dirStop は方向で止めた針（距離を決める間）。 */
+export interface SwingGauge {
+  stage: 'dir' | 'dist';
+  dirWidth: number;
+  distWidth: number;
+  distCenter: number;
+  dirStop: number | null;
+}
+
 export class GolfGame {
   readonly group = new THREE.Group();
   /** 打つための目印（軌道の予告・落とし所の輪・軌跡・傾きの矢印）。開始画面の空撮では隠す。旗と球は残す。 */
@@ -220,6 +230,8 @@ export class GolfGame {
   /** ホールの番号を真ん中に出している間は、操作を受け付けない残り秒数（lockInput）。 */
   private inputLock = 0;
   private readonly golfGround: GolfGround;
+  /** 球の所に構えたクラブ（今どのクラブで打つか）。 */
+  private readonly clubModel = new ClubModel();
   /** 散らばりを腕で決める速い針（aim.ts の HARD_NEEDLE）。 */
   hardNeedle = true;
   /**
@@ -233,9 +245,17 @@ export class GolfGame {
   /** 1 本目（方向）の針を止めた位置。 */
   private dirNeedle = 0;
 
-  /** 今の針の真ん中（狙いどおり）の位置。距離の針は、最大の近くを狙うほど右へ寄る。 */
-  get needleCenter(): number {
-    return this.twoClick && this.swingStage === 'power' ? distanceScale(this.scalePower).center : 0;
+  /** 打つゲージの中身（画面の 1 本のバー。ui/overlay.ts の SwingGauge）。 */
+  get gauge(): SwingGauge {
+    const dist = this.swingStage === 'power';
+    return {
+      stage: dist ? 'dist' : 'dir',
+      dirWidth: this.putting ? PERFECT : HARD_NEEDLE.perfect,
+      distWidth: HARD_NEEDLE.perfect,
+      // 距離の区間の真ん中の帯は、最大の近くを狙うほど右へ寄る。
+      distCenter: distanceScale(this.scalePower).center,
+      dirStop: dist ? this.dirNeedle : null,
+    };
   }
 
   /**
@@ -324,7 +344,7 @@ export class GolfGame {
       }),
     );
     this.slopes.visible = false;
-    this.aids.add(this.arc, this.roll, this.landing, this.trail, this.slopes);
+    this.aids.add(this.arc, this.roll, this.landing, this.trail, this.slopes, this.clubModel.group);
     this.group.add(this.aids);
     this.teeOff(course[0]);
   }
@@ -661,6 +681,17 @@ export class GolfGame {
   }
 
   update(dt: number): void {
+    // 構えたクラブは、狙う間と針を止める間だけ（ホールを上から見せる間は出さない）。
+    const b = this.ball.pos;
+    this.clubModel.update(
+      (this.phase === 'aim' || this.phase === 'swing') && this.intro <= 0,
+      b.x,
+      b.y,
+      b.z,
+      this.aimYaw,
+      this.clubIndex,
+      BALL_RADIUS,
+    );
     this.intro = Math.max(0, this.intro - dt);
     this.inputLock = Math.max(0, this.inputLock - dt);
     this.updateConfetti(dt);

@@ -1,6 +1,5 @@
 import { STAMPS, STAMP_PICK, THANKS, isRoomId } from '../../shared/room';
-import { PERFECT } from '../golf/aim';
-import { LIE_NAMES, toPar, type GolfStatus } from '../golf/game';
+import { LIE_NAMES, toPar, type GolfStatus, type SwingGauge } from '../golf/game';
 import type { IslandParams } from '../island/params';
 
 /**
@@ -225,6 +224,10 @@ async function copyText(text: string): Promise<boolean> {
   }
 }
 
+/** ゲージの中の区間（%）: 方向は 0〜DIR_TO、距離は DIST_FROM〜100。 */
+const DIR_TO = 34;
+const DIST_FROM = 37;
+
 export class Overlay {
   private readonly root: HTMLElement;
   private readonly panel: HTMLElement;
@@ -391,7 +394,11 @@ export class Overlay {
         </div>
       </div>
       <div class="timing" aria-hidden="true">
-        <div class="t-track"><i class="t-sweet"></i><i class="t-needle"></i></div>
+        <div class="t-gauge">
+          <div class="t-seg t-dir"><i class="t-sweet"></i><i class="t-mark"></i><span class="t-cap">方向</span></div>
+          <div class="t-seg t-dist"><i class="t-sweet"></i><span class="t-cap">距離</span></div>
+          <i class="t-needle"></i>
+        </div>
       </div>
       <div class="golf-touch">
         <button class="g-btn g-pause" aria-label="休憩"></button>
@@ -454,10 +461,9 @@ export class Overlay {
     this.shotDist = this.root.querySelector('.shot-dist')!;
     this.timing = this.root.querySelector('.timing')!;
     this.timingNeedle = this.root.querySelector('.t-needle')!;
-    this.timingSweet = this.root.querySelector('.t-sweet')!;
-    this.timingLabel = document.createElement('span');
-    this.timingLabel.className = 't-label';
-    this.timing.append(this.timingLabel);
+    this.dirSweet = this.root.querySelector('.t-dir .t-sweet')!;
+    this.distSweet = this.root.querySelector('.t-dist .t-sweet')!;
+    this.dirMark = this.root.querySelector('.t-mark')!;
     this.aimLabel = this.root.querySelector('.aim-label')!;
     this.holeNo = this.root.querySelector('.hole-no')!;
     this.holeOf = this.root.querySelector('.hole-of')!;
@@ -520,8 +526,9 @@ export class Overlay {
   private readonly shotDist: HTMLElement;
   private readonly timing: HTMLElement;
   private readonly timingNeedle: HTMLElement;
-  private readonly timingSweet: HTMLElement;
-  private readonly timingLabel: HTMLElement;
+  private readonly dirSweet: HTMLElement;
+  private readonly distSweet: HTMLElement;
+  private readonly dirMark: HTMLElement;
   private readonly aimLabel: HTMLElement;
   private aimLabelText = '';
   private readonly holeNo: HTMLElement;
@@ -1053,24 +1060,36 @@ export class Overlay {
    * 端ほど左・右へ曲がる。画面の下の端に置くと、狙いから目線が離れて見づらかった。
    * 同じ太さのバーにする（真ん中が高い山の形は、強さのゲージに見えた）。at は球の画面の位置（px）、null で隠す。
    */
-  setTiming(at: { x: number; y: number } | null, needle: number, perfect = PERFECT, label = '', center = 0): void {
+  setTiming(at: { x: number; y: number } | null, needle: number, g?: SwingGauge): void {
     this.timing.classList.toggle('on', at !== null);
-    if (!at) return;
+    if (!at || !g) return;
     this.timing.style.transform = `translate(${at.x.toFixed(1)}px, ${at.y.toFixed(1)}px)`;
-    this.timingNeedle.style.left = `${(((needle + 1) / 2) * 100).toFixed(2)}%`;
-    // 真ん中の幅（試作の速い針では狭い）。
-    const sweet = this.timingSweet;
-    // 帯がバーの端からはみ出すときは端で切る（最大を狙うと、帯は右端にぴったり付く）。
-    const from = Math.max(0, 50 + center * 50 - perfect * 50);
-    const to = Math.min(100, 50 + center * 50 + perfect * 50);
-    const width = `${(to - from).toFixed(1)}%`;
-    const left = `${from.toFixed(1)}%`;
-    if (sweet.style.width !== width || sweet.style.left !== left) {
-      sweet.style.width = width;
-      sweet.style.left = left;
-    }
-    this.timing.classList.toggle('sweet', Math.abs(needle - center) < perfect);
-    if (this.timingLabel.textContent !== label) this.timingLabel.textContent = label;
+    // みんゴルと同じく 1 本のゲージで決める。左の区間が方向、右の区間が距離。針は今決めている区間の中だけを往復する
+    // （今どちらを決めているかは、針のいる所で分かる）。区間の中の位置（%）は、針 -1..1 を区間の幅に割り当てる。
+    const inSeg = (n: number) => ((n + 1) / 2) * 100;
+    const place = (el: HTMLElement, center: number, width: number) => {
+      const from = Math.max(0, inSeg(center) - width * 50);
+      const to = Math.min(100, inSeg(center) + width * 50);
+      const left = `${from.toFixed(1)}%`;
+      const w = `${(to - from).toFixed(1)}%`;
+      if (el.style.left !== left || el.style.width !== w) {
+        el.style.left = left;
+        el.style.width = w;
+      }
+    };
+    place(this.dirSweet, 0, g.dirWidth);
+    place(this.distSweet, g.distCenter, g.distWidth);
+    const dist = g.stage === 'dist';
+    const segLeft = dist ? DIST_FROM : 0;
+    const segWidth = dist ? 100 - DIST_FROM : DIR_TO;
+    this.timingNeedle.style.left = `${(segLeft + (inSeg(needle) / 100) * segWidth).toFixed(2)}%`;
+    this.timing.classList.toggle('dist', dist);
+    // 方向で止めた所の印（距離を決める間だけ）。
+    this.dirMark.style.display = dist && g.dirStop !== null ? 'block' : 'none';
+    if (dist && g.dirStop !== null) this.dirMark.style.left = `${inSeg(g.dirStop).toFixed(1)}%`;
+    const center = dist ? g.distCenter : 0;
+    const width = dist ? g.distWidth : g.dirWidth;
+    this.timing.classList.toggle('sweet', Math.abs(needle - center) < width);
   }
 
   /** 落とし所の輪の上に、距離の目印。画面の位置（px）か、null で隠す。 */
