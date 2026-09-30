@@ -723,6 +723,7 @@ function applyRivals(): void {
   if (!golf) return;
   leaveFinale();
   holedCardAt = 0;
+  holedStage = null;
   finalePending = null;
   golf.setOpponents(makeOpponents(golf));
   if (entered) {
@@ -1034,9 +1035,13 @@ function ensureGolf(): GolfGame | null {
     overlay.celebrate(scoreName(strokes, hole.par), strokes === 1 || strokes <= hole.par - 2);
     if (strokes === 1 || strokes <= hole.par - 1) comRivals?.react('good');
     else if (strokes >= hole.par + 2) comRivals?.react('bad');
-    // COM の相手が残りを打ち切るのを待ってから、結果（最後のホール）かスコアカードを出す。
+    // 友達と: 全員が終えるのを待ってから、結果（最後のホール）かスコアカードを出す。
+    // COM と: すぐスコアカードを出し、押したら COM の続きを見せる（最後のホールも同じ。打ち切った後に結果）。
     if (last) finalePending = { total, totalPar };
-    else holedCardAt = performance.now() + HOLED_CARD_DELAY;
+    if (playMode === 'com') {
+      holedStage = 'card';
+      holedCardAt = performance.now() + HOLED_CARD_DELAY;
+    } else if (!last) holedCardAt = performance.now() + HOLED_CARD_DELAY;
   };
   // 遊び方に合わせて相手を置く（初めは 1 番のティーから）。
   golf.setOpponents(makeOpponents(golf));
@@ -1083,6 +1088,12 @@ let scorecardHeld = false;
  */
 let holedCardAt = 0;
 const HOLED_CARD_DELAY = 1300;
+/**
+ * COM と回るときのカップインの後: card（スコアカード）→ 押す → watch（カードを消して COM の続きを見る）→ 押す →
+ * ending（残りを打ち切り、揃ったら次のティーか結果へ）。文字の案内は出さない（利用者の判断）。
+ * COM がもう全員終えていれば、watch は飛ばす。
+ */
+let holedStage: 'card' | 'watch' | 'ending' | null = null;
 /** 最後のホールを入れた後、COM の相手が打ち終えるのを待っている間の、自分の合計（揃ったら結果を出す）。 */
 let finalePending: { total: number; totalPar: number } | null = null;
 
@@ -1234,7 +1245,10 @@ function holedCard(game: GolfGame): { head: string; foot: string } {
     head: `<b>${h.number} 番</b> ${strokes} 打 · ${scoreName(strokes, h.par)}<span>通算 ${toPar(total, par)}${rank ? ` · ${rank} 位` : ''}</span>`,
     foot: waiting
       ? `みんなを待っています（${doneCount}/${playingCount}）`
-      : h.number === game.course.length
+      : playMode === 'com' && !game.rivalsSettled
+        ? // COM がまだ回っている: 押すとカードが消えて続きが見える（次のティーへではない）。文字は出さない。
+          '▸'
+        : h.number === game.course.length
         ? `${how}で結果へ ▸`
         : `${how}で ${next.number} 番のティーへ ▸`,
   };
@@ -1242,8 +1256,26 @@ function holedCard(game: GolfGame): { head: string; foot: string } {
 
 /** カップインの後に押した: スコアカードがまだならすぐ出し、出ていれば次のティーへ。 */
 function holedPress(): void {
-  // 結果を出している間と、COM の相手がまだ打ち終えていない間（スコアカードがまだ）は進まない。
-  if (!golf || roundResult || !golf.rivalsSettled) return;
+  if (!golf || roundResult) return;
+  if (playMode === 'com' && holedStage) {
+    if (holedCardAt > performance.now()) {
+      holedCardAt = performance.now();
+      return;
+    }
+    if (holedStage === 'card' && !golf.rivalsSettled) {
+      holedStage = 'watch';
+      return;
+    }
+    if (holedStage !== 'ending') {
+      // 残りを打ち切る。揃ったら毎コマの処理（finishHoleWithComs）が次のティーか結果へ進める。
+      holedStage = 'ending';
+      holedCardAt = 0;
+      golf.finishOpponents();
+    }
+    return;
+  }
+  // 結果を出している間と、友達がまだ打ち終えていない間（スコアカードがまだ）は進まない。
+  if (!golf.rivalsSettled) return;
   if (holedCardAt > performance.now()) {
     holedCardAt = performance.now();
     return;
@@ -2038,8 +2070,20 @@ renderer.setAnimationLoop(() => {
     // ホールの切り替えで暗い間（暗くなる・読み込む）は、チャンクをまとめて組み立てる。
     chunks?.update(camera.position.x, camera.position.z, holeFade !== null && holeFade.phase !== 'in');
     sounds?.update(dt, lastStatus?.windSpeed ?? 0, 1, 0);
-    // 最後のホールの後、COM の相手が打ち終えたら結果へ。
-    if (finalePending && golf.rivalsSettled) {
+    golf.autoFinishOpponents = playMode !== 'com';
+    if (playMode === 'com') {
+      // COM と: 打ち切りを押して、全員が揃ったら次のティーか結果へ。
+      if (holedStage === 'ending' && golf.rivalsSettled) {
+        holedStage = null;
+        if (finalePending) {
+          startFinale(finalePending.total, finalePending.totalPar);
+          finalePending = null;
+        } else {
+          goNextHole();
+        }
+      }
+    } else if (finalePending && golf.rivalsSettled) {
+      // 最後のホールの後、友達が打ち終えたら結果へ。
       startFinale(finalePending.total, finalePending.totalPar);
       finalePending = null;
     }
@@ -2072,12 +2116,13 @@ renderer.setAnimationLoop(() => {
       );
       // カップインの後のスコアカードは、COM の相手が打ち終えてから（全員の打数を並べて出す）。
       // 友達を待つ間は景色を見回せるよう、中央のカードを自動では出さない。
+      // COM と回るときは COM を待たずに出し、押したら消して続きを見せる（holedStage）。
       const card =
         holedCardAt > 0 &&
         performance.now() >= holedCardAt &&
         golf.phase === 'holed' &&
         !holeFade &&
-        golf.rivalsSettled;
+        (playMode === 'com' ? holedStage === 'card' : golf.rivalsSettled);
       overlay.setScorecard(
         pars,
         scoreRows(lastStatus),

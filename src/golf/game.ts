@@ -254,6 +254,8 @@ export class GolfGame {
   aimBallLowest = AIM_BALL_LOWEST;
   /** COM を止めておく（COM と回る途中の休憩。友達は止められないので main.ts が COM のときだけ立てる）。 */
   opponentsPaused = false;
+  /** 自分が入れたら、相手の残りをすぐ打ち切るか（COM と回るときは main.ts が続きを見せてから finishOpponents）。 */
+  autoFinishOpponents = true;
   /** 風の筋（カメラの前を風の向きへ流れる白い線。golf/windStreaks.ts）。 */
   private readonly windStreaks = new WindStreaks();
   /** 散らばりを腕で決める速い針（aim.ts の HARD_NEEDLE）。 */
@@ -427,6 +429,11 @@ export class GolfGame {
   }
 
   /** COM の相手が、今のホールを全員終えたか（ひとりなら常に true）。スコアカードと結果はこれを待って出す。 */
+  /** 相手の残りを打ち切る（見えないところで一気に）。 */
+  finishOpponents(): void {
+    this.rivals?.finish();
+  }
+
   get rivalsSettled(): boolean {
     return !this.rivals || this.rivals.settled;
   }
@@ -773,8 +780,9 @@ export class GolfGame {
       this.celebrate(this.strokes === 1 || this.strokes <= h.par - 2 ? 260 : under ? 140 : 50);
       if (under) this.onSound({ type: 'cheer', big: this.strokes === 1 || this.strokes <= h.par - 2 });
       this.reportRest(true);
-      // COM の相手の残りは打ち切る（スコアカードと結果は rivalsSettled を待って出す）。
-      this.rivals?.finish();
+      // 相手の残りは打ち切る（スコアカードと結果は rivalsSettled を待って出す）。COM と回るときは main.ts が
+      // 見せてから打ち切るので、ここでは切らない（autoFinishOpponents）。
+      if (this.autoFinishOpponents) this.rivals?.finish();
       // 打数と通算は、画面の真ん中のスコアカード（ラウンドの終わりは結果の窓）が出す。
       const { total, totalPar } = this.totals();
       const last = h.number === this.course.length;
