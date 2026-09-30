@@ -392,7 +392,7 @@ export class Overlay {
       <div class="timing" aria-hidden="true">
         <div class="t-row">
           <span class="t-label"></span>
-          <div class="t-track"><i class="t-fill"></i><i class="t-sweet"></i><i class="t-needle"></i></div>
+          <div class="t-track"><i class="t-sweet"></i><i class="t-needle"></i></div>
         </div>
       </div>
       <div class="golf-touch">
@@ -405,7 +405,7 @@ export class Overlay {
         <span class="course-label">操作</span>
         <dl class="kg-rows">
           <dt><kbd>マウス</kbd><kbd>WASD</kbd></dt><dd>落とし所の輪を動かす</dd>
-          <dt><kbd>クリック</kbd><kbd>Space</kbd></dt><dd>構える → 距離 → 方向（針を真ん中で）</dd>
+          <dt><kbd>クリック</kbd><kbd>Space</kbd></dt><dd>構える → 方向 → 芯（針を真ん中で）</dd>
           <dt><kbd>F</kbd></dt><dd>空から見る／戻る</dd>
           <dt><kbd>Tab</kbd></dt><dd>スコアカード</dd>
           <dt><kbd>M</kbd></dt><dd>音を消す／出す</dd>
@@ -457,7 +457,6 @@ export class Overlay {
     this.timing = this.root.querySelector('.timing')!;
     this.timingNeedle = this.root.querySelector('.t-needle')!;
     this.timingSweet = this.root.querySelector('.t-sweet')!;
-    this.timingFill = this.root.querySelector('.t-fill')!;
     this.timingLabel = this.root.querySelector('.t-label')!;
     this.aimLabel = this.root.querySelector('.aim-label')!;
     this.holeNo = this.root.querySelector('.hole-no')!;
@@ -522,7 +521,6 @@ export class Overlay {
   private readonly timing: HTMLElement;
   private readonly timingNeedle: HTMLElement;
   private readonly timingSweet: HTMLElement;
-  private readonly timingFill: HTMLElement;
   private readonly timingLabel: HTMLElement;
   private readonly aimLabel: HTMLElement;
   private aimLabelText = '';
@@ -722,10 +720,10 @@ export class Overlay {
   }
   private titleTimer = 0;
 
-  /** 打った一打のでき（ナイスショット・フック・スライス・ダフリ・トップ）を画面の真ん中に大きく。 */
+  /** 打った一打のでき（ナイスショット・フック・スライス・芯を外した）を画面の真ん中に大きく。 */
   shotFeedback(kind: ShotFeedback): void {
     const el = this.feedbackEl;
-    el.textContent = { nice: 'Nice Shot!', hook: 'Hook', slice: 'Slice', chunk: 'Chunk', thin: 'Thin' }[kind];
+    el.textContent = { nice: 'Nice Shot!', hook: 'Hook', slice: 'Slice', mishit: 'Mishit' }[kind];
     el.classList.remove('on', 'nice', 'miss');
     void el.offsetWidth;
     el.classList.add('on', kind === 'nice' ? 'nice' : 'miss');
@@ -1058,43 +1056,20 @@ export class Overlay {
   setTiming(at: { x: number; y: number } | null, needle: number, g?: SwingGauge): void {
     this.timing.classList.toggle('on', at !== null);
     if (!at || !g) return;
-    // 球の下の 1 本のバー。方向と距離で見た目そのものを替える（みんゴルもパワーは伸びるメーター、インパクトは的で、
-    // 見た目で今何を決めているかが分かる）。方向: 真ん中の帯が的。距離: 針の後ろを塗る
-    // 強さのメーター、狙いどおりの所に帯（最大の近くを狙うと右へ寄る）。
+    // 画面の下の 1 本のバー。方向も芯も「真ん中で止める的」: 距離は輪で決めてあり、ここは量を決めるメーターではない
+    // （芯を縦のメーターにしていた頃は「上 ＝ 強い」に見え、上に外すと長くなる中身まで作ってしまった）。
+    // 芯は両端ほど暗くして、どちらへ外しても損だと見せる。
     const dist = g.stage === 'dist';
-    const center = dist ? g.distCenter : 0;
     const width = dist ? g.distWidth : g.dirWidth;
-    // 距離のバーは縦（下が弱い・短い、上が強い・長い）。方向のバーは横。
-    const pos = `${(((needle + 1) / 2) * 100).toFixed(2)}%`;
-    const from = Math.max(0, 50 + center * 50 - width * 50);
-    const to = Math.min(100, 50 + center * 50 + width * 50);
-    const start = `${from.toFixed(1)}%`;
-    const size = `${(to - from).toFixed(1)}%`;
-    const n = this.timingNeedle.style;
-    const f = this.timingFill.style;
+    const from = Math.max(0, 50 - width * 50);
+    const to = Math.min(100, 50 + width * 50);
+    this.timingNeedle.style.left = `${(((needle + 1) / 2) * 100).toFixed(2)}%`;
     const sw = this.timingSweet.style;
-    if (dist) {
-      n.left = '';
-      n.bottom = pos;
-      f.width = '';
-      f.height = "0%";
-      sw.left = '';
-      sw.width = '';
-      sw.bottom = start;
-      sw.height = size;
-    } else {
-      n.bottom = '';
-      n.left = pos;
-      f.height = '';
-      f.width = '0%';
-      sw.bottom = '';
-      sw.height = '';
-      sw.left = start;
-      sw.width = size;
-    }
+    sw.left = `${from.toFixed(1)}%`;
+    sw.width = `${(to - from).toFixed(1)}%`;
     this.timing.classList.toggle('dist', dist);
-    this.timing.classList.toggle('sweet', Math.abs(needle - center) < width);
-    const label = dist ? '距離' : '方向';
+    this.timing.classList.toggle('sweet', Math.abs(needle) < width);
+    const label = dist ? '芯' : '方向';
     if (this.timingLabel.textContent !== label) this.timingLabel.textContent = label;
   }
 

@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { SEA_LEVEL } from '../world/terrain';
 import type { Terrain } from '../world/terrain';
-import { LIE_POWER, PERFECT, type Strike, needleRole, strikeCenter, strikeOf, type Point3, type Trial, clubFor, needleEffect, reachOf, solvePower } from './aim';
+import { LIE_POWER, PERFECT, type Strike, needleRole, strikeOf, type Point3, type Trial, clubFor, needleEffect, reachOf, solvePower } from './aim';
 import { BALL_RADIUS, Ball, type GolfGround, type Surface, rollSpeed } from './ball';
 import { CLUBS, type Club, PUTTER } from './clubs';
 import { ClubModel } from './clubModel';
@@ -156,16 +156,15 @@ const FAST_NEEDLE_SPEED: Record<Surface, number> = {
   snow: 1.58,
 };
 
-/** 打つバーの中身（球の下の 1 本のバー。方向と距離で見た目を替える）。stage は今決めている方。 */
+/** 打つバーの中身（画面の下の 1 本のバー。方向と芯で帯の幅と見た目を替える）。stage は今決めている方。 */
 export interface SwingGauge {
   stage: 'dir' | 'dist';
   dirWidth: number;
   distWidth: number;
-  distCenter: number;
 }
 
-/** 打った一打のでき（画面の真ん中に大きく）。chunk はダフリ、thin はトップ。 */
-export type ShotFeedback = 'nice' | 'hook' | 'slice' | 'chunk' | 'thin';
+/** 打った一打のでき（画面の真ん中に大きく）。mishit は芯を大きく外して飛ばなかった。 */
+export type ShotFeedback = 'nice' | 'hook' | 'slice' | 'mishit';
 
 export class GolfGame {
   readonly group = new THREE.Group();
@@ -259,13 +258,12 @@ export class GolfGame {
       stage: dist ? 'dist' : 'dir',
       dirWidth: this.putting ? PERFECT : this.role.dirWidth,
       distWidth: this.strikeWidth,
-      distCenter: this.strikeCenter,
     };
   }
 
   /**
-   * 距離の針の目盛りに使う、輪に届く強さ。輪がそのクラブの届く限界にあれば全力（1）とみなす
-   * （試し打ちで求めた強さは全力のわずか下になり、最大を狙っても真ん中の帯が右端から少し離れていた）。
+   * 力みに使う、輪に届く強さ。輪がそのクラブの届く限界にあれば全力（1）とみなす
+   * （試し打ちで求めた強さは全力のわずか下になる）。
    */
   private get scalePower(): number {
     return this.aimDistance >= this.reachOf(this.clubIndex) - 1 ? 1 : this.power;
@@ -286,11 +284,6 @@ export class GolfGame {
     if (this.putting) return w;
     const p = Math.min(1, this.scalePower);
     return p <= 0.85 ? w : w * (1 - 0.45 * ((p - 0.85) / 0.15));
-  }
-
-  /** 芯の針の帯の真ん中。全力の近くを狙うほど上へ寄り、上の端がいつもそのクラブの最大（aim.ts の strikeCenter）。 */
-  private get strikeCenter(): number {
-    return this.putting ? 0 : strikeCenter(this.scalePower, this.aimDistance, this.strikeWidth);
   }
 
   /** 今の狙いでの 2 本の針の難しさ（遠いほど方向、近いほど距離が難しい。aim.ts の needleRole）。 */
@@ -614,7 +607,7 @@ export class GolfGame {
       this.emit();
     } else if (this.phase === 'swing') {
       if (this.twoClick && this.swingStage === 'impact') {
-        // 方向の針を止めた: 次は距離の針。
+        // 方向の針を止めた: 次は芯の針。
         this.dirNeedle = this.needle;
         this.swingStage = 'power';
         this.needleTime = 0;
@@ -646,10 +639,10 @@ export class GolfGame {
     // 2 回押しでは、方向は 1 本目の針、距離は今止めた 2 本目の針で決まる。
     const e = this.twoClick ? this.dirNeedle : this.needle;
     const effect = needleEffect(e, putt, this.hardNeedle, putt ? PERFECT : this.role.dirWidth);
-    // 2 本目の針は芯（当たりの質）。ダフリは飛ばず、トップは低く出て転がりすぎる（aim.ts の strikeOf）。
+    // 2 本目の針は芯。外すとどちらへでも短くなるだけ（aim.ts の strikeOf）。
     const strike: Strike = this.twoClick
-      ? strikeOf(this.needle, this.strikeWidth, this.aimDistance, putt, this.strikeCenter)
-      : { power: 1, loft: 1, spin: 1, bite: 1, kind: 'good' };
+      ? strikeOf(this.needle, this.strikeWidth, this.aimDistance, putt)
+      : { power: 1, kind: 'good' };
     const perfect = effect.perfect;
     this.lastSpot.x = this.ball.pos.x;
     this.lastSpot.z = this.ball.pos.z;
@@ -657,9 +650,9 @@ export class GolfGame {
     // 2 回押しでは、距離は 2 本目（芯）の針だけで決まる（1 本目は方向だけ）。全力より強くはならない。
     const power = Math.min(1, this.twoClick ? this.power * strike.power : this.power * effect.power);
     const lieLoss = putt ? 1 : LIE_POWER[this.ball.lie];
-    const loft = club.loft * strike.loft;
-    const spin = club.spin * strike.spin;
-    const bite = club.bite * strike.bite;
+    const loft = club.loft;
+    const spin = club.spin;
+    const bite = club.bite;
     this.ball.hit(yaw, loft, club.speed * power * lieLoss, spin, bite, effect.curve);
     // 友達には、同じ物理でもう一度飛ばせるよう、打った一打をそのまま送る。
     this.onPlayerShot?.(this.target.number, {
@@ -698,9 +691,8 @@ export class GolfGame {
     this.landing.visible = false;
     this.slopes.visible = false;
     if (!putt) {
-      // 大きなミス（ダフリ・トップ）を先に。芯も向きも真ん中ならナイスショット。
-      if (strike.kind === 'fat') this.onShotFeedback?.('chunk');
-      else if (strike.kind === 'thin') this.onShotFeedback?.('thin');
+      // 大きなミス（芯を外して飛ばない）を先に。芯も向きも真ん中ならナイスショット。
+      if (strike.kind === 'miss') this.onShotFeedback?.('mishit');
       else if (perfect && strike.power === 1) this.onShotFeedback?.('nice');
       else if (e > 0.45) this.onShotFeedback?.('slice');
       else if (e < -0.45) this.onShotFeedback?.('hook');

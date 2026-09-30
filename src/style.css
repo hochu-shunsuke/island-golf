@@ -431,7 +431,7 @@ kbd {
 /* 正確さのバー（構えている間、球のすぐ下）。同じ太さの横長のバーを白の濃淡だけで描く（強さではなく向きなので
    色は使わない）。真ん中の帯で止めるとナイスショット。帯に入っている間は針が白く光る。 */
 .timing {
-  /* 構えている間のバー。球に付けず、画面の下の真ん中に大きく（距離のバーは縦にして真ん中より右）。 */
+  /* 構えている間のバー。球に付けず、画面の下の真ん中に大きく（方向も芯も同じ場所・同じ形）。 */
   position: absolute;
   left: 50%;
   bottom: var(--gauge-bottom, max(30px, calc(env(safe-area-inset-bottom) + 20px)));
@@ -472,59 +472,9 @@ kbd {
   background: rgba(255, 255, 255, 0.14);
 }
 
-/* 距離のバーは縦（下が弱い・短い、上が強い・長い）。字はバーの上。 */
-.timing.dist {
-  left: calc(50% + min(300px, 34vw));
-  padding: 13px 13px 16px;
-  border-radius: 20px;
-}
-
-.timing.dist .t-row {
-  flex-direction: column;
-  gap: 10px;
-}
-
-.timing.dist .t-label {
-  width: auto;
-  text-align: center;
-}
-
+/* 芯のバー: 両端ほど暗い（どちらへ外しても短くなるだけ）。 */
 .timing.dist .t-track {
-  width: 12px;
-  height: min(300px, 36vh);
-}
-
-.timing.dist .t-needle {
-  top: auto;
-  left: -8px;
-  right: -8px;
-  bottom: 0;
-  width: auto;
-  height: 4px;
-  margin: 0 0 -2px;
-}
-
-.timing.dist .t-fill {
-  top: auto;
-  right: 0;
-  width: auto;
-  background: linear-gradient(0deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0.38));
-}
-
-.timing.dist .t-sweet {
-  left: 0;
-  right: 0;
-}
-
-/* 距離のバー: 針の後ろを下から塗る（強さのメーター）。 */
-.t-fill {
-  position: absolute;
-  left: 0;
-  top: 0;
-  bottom: 0;
-  width: 0;
-  border-radius: 999px;
-  background: linear-gradient(90deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0.38));
+  background: linear-gradient(90deg, rgba(255, 255, 255, 0.03), rgba(255, 255, 255, 0.24) 50%, rgba(255, 255, 255, 0.03));
 }
 
 /* 狙いどおりになる帯。 */

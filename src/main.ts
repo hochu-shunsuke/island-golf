@@ -1834,7 +1834,7 @@ function placeRivalMarkers(rivals: readonly OpponentState[]): void {
 
 /**
  * 構えている間のバー。球に付けず、画面の決まった所に大きく出す（みんゴルもゲージは画面下の定位置）。
- * 場所は style.css が決める（方向は下の真ん中、距離は縦で真ん中より右。タッチは打つボタンのすぐ上）。
+ * 場所は style.css が決める（下の真ん中。タッチは打つボタンのすぐ上）。
  */
 function placeTiming(game: GolfGame): void {
   if (game.phase !== 'swing') {
