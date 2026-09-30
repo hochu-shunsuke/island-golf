@@ -156,6 +156,22 @@ const FAST_NEEDLE_SPEED: Record<Surface, number> = {
   snow: 1.58,
 };
 
+/**
+ * 針の速さの幅を詰める: 一番遅い針はそのまま、一番速い針を 9 割にし、その間はまっすぐ縮める
+ * （ライ × 場面の役割の掛け算で、砂から遠くを狙う方向の針が 1 秒に 2 往復を越え、速すぎると言われた。2026-09-30）。
+ */
+const NEEDLE_RANGE = (() => {
+  const roles = [needleRole(0), needleRole(1000)];
+  const all = Object.values(FAST_NEEDLE_SPEED).flatMap((l) => roles.flatMap((r) => [l * r.dirSpeed, l * r.distSpeed]));
+  const lo = Math.min(...all);
+  const hi = Math.max(...all);
+  return { lo, squeeze: (hi * 0.9 - lo) / (hi - lo) };
+})();
+
+function squeezeSpeed(v: number): number {
+  return NEEDLE_RANGE.lo + (v - NEEDLE_RANGE.lo) * NEEDLE_RANGE.squeeze;
+}
+
 /** 打つバーの中身（画面の下の 1 本のバー。方向と芯で帯の幅と見た目を替える）。stage は今決めている方。 */
 export interface SwingGauge {
   stage: 'dir' | 'dist';
@@ -725,7 +741,7 @@ export class GolfGame {
         this.putting && this.swingStage === 'impact'
           ? PUTT_NEEDLE_SPEED
           : this.hardNeedle
-            ? FAST_NEEDLE_SPEED[lie] * (this.swingStage === 'power' ? role.distSpeed : role.dirSpeed)
+            ? squeezeSpeed(FAST_NEEDLE_SPEED[lie] * (this.swingStage === 'power' ? role.distSpeed : role.dirSpeed))
             : NEEDLE_SPEED[lie];
       // 左端から右へ、右端から左へ、を繰り返す（三角波）。
       const t = (this.needleTime * f) % 2;
