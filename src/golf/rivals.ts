@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { hashSeed, mulberry32 } from '../core/rng';
-import { LIE_POWER, type Point3, clubFor, needleEffect, needleRole, strikeOf, reachOf, solvePower, trial } from './aim';
+import { LIE_POWER, type Point3, clubFor, needleEffect, needleRole, strikeCenter, strikeOf, reachOf, solvePower, trial } from './aim';
 import { BALL_RADIUS, BALL_STEP, Ball, type GolfGround, rollSpeed } from './ball';
 import { CLUBS, PUTTER } from './clubs';
 import type { Hole } from './course';
@@ -464,7 +464,9 @@ export class Rivals implements Opponents {
     const clamp1 = (v: number) => Math.max(-1, Math.min(1, v));
     const role = needleRole(pick);
     const strain = power <= 0.85 ? 1 : 1 - 0.45 * ((Math.min(1, power) - 0.85) / 0.15);
-    const strike = strikeOf(clamp1(gauss(rand) * spec.distance), role.distWidth * strain, pick, false);
+    const width = role.distWidth * strain;
+    const center = strikeCenter(power, pick, width);
+    const strike = strikeOf(clamp1(center + gauss(rand) * spec.distance), width, pick, false, center);
     const eDir = clamp1(gauss(rand) * spec.spread);
     const effect = needleEffect(eDir, false, true, role.dirWidth);
     return {

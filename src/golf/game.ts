@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { SEA_LEVEL } from '../world/terrain';
 import type { Terrain } from '../world/terrain';
-import { LIE_POWER, PERFECT, type Strike, needleRole, strikeOf, type Point3, type Trial, clubFor, needleEffect, reachOf, solvePower } from './aim';
+import { LIE_POWER, PERFECT, type Strike, needleRole, strikeCenter, strikeOf, type Point3, type Trial, clubFor, needleEffect, reachOf, solvePower } from './aim';
 import { BALL_RADIUS, Ball, type GolfGround, type Surface, rollSpeed } from './ball';
 import { CLUBS, type Club, PUTTER } from './clubs';
 import { ClubModel } from './clubModel';
@@ -259,7 +259,7 @@ export class GolfGame {
       stage: dist ? 'dist' : 'dir',
       dirWidth: this.putting ? PERFECT : this.role.dirWidth,
       distWidth: this.strikeWidth,
-      distCenter: 0,
+      distCenter: this.strikeCenter,
     };
   }
 
@@ -286,6 +286,11 @@ export class GolfGame {
     if (this.putting) return w;
     const p = Math.min(1, this.scalePower);
     return p <= 0.85 ? w : w * (1 - 0.45 * ((p - 0.85) / 0.15));
+  }
+
+  /** 芯の針の帯の真ん中。全力の近くを狙うほど上へ寄り、上の端がいつもそのクラブの最大（aim.ts の strikeCenter）。 */
+  private get strikeCenter(): number {
+    return this.putting ? 0 : strikeCenter(this.scalePower, this.aimDistance, this.strikeWidth);
   }
 
   /** 今の狙いでの 2 本の針の難しさ（遠いほど方向、近いほど距離が難しい。aim.ts の needleRole）。 */
@@ -643,7 +648,7 @@ export class GolfGame {
     const effect = needleEffect(e, putt, this.hardNeedle, putt ? PERFECT : this.role.dirWidth);
     // 2 本目の針は芯（当たりの質）。ダフリは飛ばず、トップは低く出て転がりすぎる（aim.ts の strikeOf）。
     const strike: Strike = this.twoClick
-      ? strikeOf(this.needle, this.strikeWidth, this.aimDistance, putt)
+      ? strikeOf(this.needle, this.strikeWidth, this.aimDistance, putt, this.strikeCenter)
       : { power: 1, loft: 1, spin: 1, bite: 1, kind: 'good' };
     const perfect = effect.perfect;
     this.lastSpot.x = this.ball.pos.x;

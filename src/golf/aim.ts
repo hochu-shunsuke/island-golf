@@ -79,31 +79,64 @@ export interface Strike {
  * 縦のバーの見た目どおり、上に外すほど長く、下に外すほど短い。
  * パットはダフリ・トップにせず、強さが ±30% ずれるだけ。d は狙った距離（m）。
  */
-export function strikeOf(n: number, width: number, d: number, putt: boolean): Strike {
-  const x = Math.abs(n) < width ? 0 : n;
-  if (putt) return { power: 1 + x * POWER_RANGE, loft: 1, spin: 1, bite: 1, kind: 'good' };
-  const o = x === 0 ? 0 : (Math.abs(x) - width) / (1 - width);
+export function strikeOf(n: number, width: number, d: number, putt: boolean, center = 0): Strike {
+  if (putt) {
+    const x = Math.abs(n) < width ? 0 : n;
+    return { power: 1 + x * POWER_RANGE, loft: 1, spin: 1, bite: 1, kind: 'good' };
+  }
+  const far = farOf(d);
+  const up = n > center;
+  // 帯の外へどれだけ出たか（0..1）。帯が上へ寄っているときは、上と下で残りの長さが違う。
+  const room = up ? 1 - center - width : 1 + center - width;
+  const o = room <= 0 || Math.abs(n - center) <= width ? 0 : Math.min(1, (Math.abs(n - center) - width) / room);
   if (o < 0.4) return { power: 1 - 0.05 * (o / 0.4), loft: 1, spin: 1, bite: 1, kind: 'good' };
-  const u = Math.max(0, Math.min(1, (d - 40) / 160));
-  const far = u * u * (3 - 2 * u);
   const k = (o - 0.4) / 0.6;
   const s = k * k * (3 - 2 * k);
-  if (x < 0) {
+  if (!up) {
     // ダフリ: 強さ（初速）の割合。距離はほぼその 2 乗なので、寄せで約 2〜3 割、遠くで約 6 割の距離になる。
     const fatMin = 0.5 + 0.3 * far;
     return { power: 0.95 + (fatMin - 0.95) * s, loft: 1, spin: 1 - 0.3 * s, bite: 1, kind: s < 0.25 ? 'good' : 'fat' };
   }
   // トップ: 刃で打って低く強く出て、転がって狙いより長くなる。縦のバーの上 ＝ 長いにそろえる（遠くのトップを
   // 実際どおり「低く出て少し足りない」にしていた頃は、上で押すと飛ばなくなって意味が分からなかった）。
-  const thinPower = 1.4 - 0.2 * far;
+  // 全力の近くでは帯が上へ寄り（strikeCenter）、上に残った余裕の分だけ長くなる。上の端がそのクラブの最大。
+  const t = thinReach(center, width) * s;
   return {
-    power: 0.98 + (thinPower - 0.98) * s,
-    loft: 1 - 0.55 * s,
-    spin: 1 - 0.6 * s,
-    bite: 1 - 0.8 * s,
+    power: 0.98 + (thinPower(far) - 0.98) * t,
+    loft: 1 - 0.55 * t,
+    spin: 1 - 0.6 * t,
+    bite: 1 - 0.8 * t,
     // 目に見えて狂ったときだけミスの名前を出す（少し外しただけで「Thin」と出さない）。
-    kind: s < 0.25 ? 'good' : 'thin',
+    kind: t < 0.25 ? 'good' : 'thin',
   };
+}
+
+function farOf(d: number): number {
+  const u = Math.max(0, Math.min(1, (d - 40) / 160));
+  return u * u * (3 - 2 * u);
+}
+
+/** 一番ひどいトップの強さの倍率（寄せで 1.4、遠くで 1.2）。 */
+function thinPower(far: number): number {
+  return 1.4 - 0.2 * far;
+}
+
+/** 帯の真ん中がこの位置のとき、上の端で出るトップの深さ（0..1）。帯が上の端にあれば 0。 */
+function thinReach(center: number, width: number): number {
+  const top = 1 - width;
+  return top <= 0 ? 0 : Math.max(0, Math.min(1, 1 - center / top));
+}
+
+/**
+ * 芯の針の帯の真ん中（-1..1）。p は狙いに要る強さ（全力 ＝ 1）。縦のバーの上の端を、いつでもそのクラブの最大にする:
+ * 全力を狙えば帯は上の端にあり、上へ外しようがない。余裕があるほど帯は真ん中へ戻る。
+ * 前は帯がいつも真ん中で、全力近くで上に外すと「これ以上強くできないのにトップ」になり、最大の近くで押すほど飛ばなかった。
+ */
+export function strikeCenter(p: number, d: number, width: number): number {
+  const head = 1 / Math.max(0.05, p) - 1;
+  const room = thinPower(farOf(d)) - 1;
+  const r = Math.max(0, Math.min(1, head / room));
+  return (1 - r) * (1 - width);
 }
 
 
