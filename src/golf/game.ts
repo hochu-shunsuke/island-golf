@@ -6,7 +6,7 @@ import { BALL_RADIUS, Ball, type GolfGround, type Surface, rollSpeed } from './b
 import { CLUBS, type Club, PUTTER } from './clubs';
 import { type Hole, holeIntro } from './course';
 import type { OpponentState, Opponents } from './opponents';
-import { TrailFade } from './trail';
+import { TrailFade, addTrailPoint, setTrailLine } from './trail';
 import { WindStreaks } from './windStreaks';
 import type { RestInfo, ShotInfo } from '../../shared/room';
 
@@ -211,7 +211,7 @@ export class GolfGame {
   /** パットのときの傾斜の矢印（下る向き・長さと色が急さ）。 */
   private readonly slopes: THREE.Mesh;
   private slopesFor = '';
-  private readonly trailPoints: THREE.Vector3[] = [];
+  private readonly trailPoints: Point3[] = [];
   private needleTime = 0;
   /** 打つ前の球の位置（池に入ったらここへ戻す）。 */
   private readonly lastSpot = { x: 0, z: 0 };
@@ -742,13 +742,7 @@ export class GolfGame {
     // 地面に着いてから 6 秒たっても転がっていれば、その先は速く進める（ball.ts の rollSpeed）。
     if (this.groundTime !== null) this.groundTime += dt;
     this.ball.update(dt * rollSpeed(this.groundTime));
-    const p = this.ball.pos;
-    const last = this.trailPoints[this.trailPoints.length - 1];
-    if (!last || Math.hypot(last.x - p.x, last.y - p.y, last.z - p.z) > 2) {
-      this.trailPoints.push(new THREE.Vector3(p.x, p.y, p.z));
-      if (this.trailPoints.length > 400) this.trailPoints.shift();
-      setLine(this.trail, this.trailPoints);
-    }
+    if (addTrailPoint(this.trailPoints, this.ball.pos)) setTrailLine(this.trail, this.trailPoints);
     const h = this.target;
     if (this.ball.state === 'holed') {
       this.phase = 'holed';

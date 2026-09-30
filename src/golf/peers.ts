@@ -4,7 +4,7 @@ import type { Point3 } from './aim';
 import { BALL_RADIUS, BALL_STEP, Ball, type GolfGround, type Surface, rollSpeed } from './ball';
 import type { Hole } from './course';
 import type { OpponentState, Opponents } from './opponents';
-import { TrailFade } from './trail';
+import { TrailFade, addTrailPoint, setTrailLine } from './trail';
 
 /**
  * 友達（同じ部屋の人）。それぞれ自分の画面で自分の球を打ち、打った一打（ShotInfo）と止まった所（RestInfo）が
@@ -134,12 +134,7 @@ class Peer {
       this.ball.update(BALL_STEP);
       this.acc -= BALL_STEP;
     }
-    const p = this.ball.pos;
-    const last = this.trailPoints[this.trailPoints.length - 1];
-    if (!last || Math.hypot(last.x - p.x, last.y - p.y, last.z - p.z) > 2) {
-      this.trailPoints.push({ ...p });
-      this.setTrail();
-    }
+    if (addTrailPoint(this.trailPoints, this.ball.pos)) this.setTrail();
     this.sync();
     if (this.ball.state === 'flight' || this.ball.state === 'roll') return false;
     this.flying = false;
@@ -154,10 +149,7 @@ class Peer {
   }
 
   private setTrail(): void {
-    this.trail.geometry.dispose();
-    this.trail.geometry = new THREE.BufferGeometry().setFromPoints(
-      this.trailPoints.map((q) => new THREE.Vector3(q.x, q.y, q.z)),
-    );
+    setTrailLine(this.trail, this.trailPoints);
   }
 }
 
