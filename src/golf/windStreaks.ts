@@ -124,12 +124,13 @@ export class WindStreaks {
     s.speed = 3 + speed * 1.1;
     s.length = 5 + speed * 0.8;
     s.phase = Math.random() * Math.PI * 2;
-    s.sway = 0.45 + Math.random() * 0.5;
+    s.sway = 0.15 + Math.random() * 0.2;
   }
 
   /** 流れた道のり u（m）での、筋の上の点。風の向きに進み、横と上下にふわっと揺れる。 */
   private at(s: Streak, u: number, dx: number, dz: number, out: THREE.Vector3): THREE.Vector3 {
-    const w = u * 0.45 + s.phase;
+    // 波長を長くして、1 本の中では緩い弧 1 つほどに（短い波長ではうねうねしすぎた）。
+    const w = u * 0.18 + s.phase;
     const lateral = Math.sin(w) * s.sway;
     const lift = Math.sin(w * 0.7 + 1.3) * s.sway * 0.6 + u * 0.03;
     return out.set(s.x + dx * u - dz * lateral, s.y + lift, s.z + dz * u + dx * lateral);
