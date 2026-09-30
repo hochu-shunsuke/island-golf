@@ -590,9 +590,9 @@ export class Overlay {
     const putt = status.club.loft === 0;
     // 狙いの距離は落とし所に直接出す。ここはクラブで届く最大距離だけにして重複を避ける。
     const reach = putt ? status.aimDistance.toFixed(1) : String(Math.round(status.reach));
-    // ライと、狙いの高低差（1m 以上のときだけ）。
-    const elev = Math.abs(status.elevation) >= 1 ? ` · ${status.elevation > 0 ? '↑' : '↓'} ${Math.round(Math.abs(status.elevation))} m` : '';
-    const lie = `${LIE_NAMES[status.lie]}${elev}`;
+    // ライ（いつものフェアウェイは出さない）と、狙いの高低差（1m 以上のときだけ）。
+    const elevText = Math.abs(status.elevation) >= 1 ? `${status.elevation > 0 ? '↑' : '↓'} ${Math.round(Math.abs(status.elevation))} m` : '';
+    const lie = [status.lie === 'fairway' ? '' : LIE_NAMES[status.lie], elevText].filter(Boolean).join(' · ');
     const text = holeText + line + status.club.name + status.phase + reach + lie;
     if (text !== this.golfText) {
       this.golfText = text;
@@ -1058,7 +1058,6 @@ export class Overlay {
   setTiming(at: { x: number; y: number } | null, needle: number, g?: SwingGauge): void {
     this.timing.classList.toggle('on', at !== null);
     if (!at || !g) return;
-    this.timing.style.transform = `translate(${at.x.toFixed(1)}px, ${at.y.toFixed(1)}px)`;
     // 球の下の 1 本のバー。方向と距離で見た目そのものを替える（みんゴルもパワーは伸びるメーター、インパクトは的で、
     // 見た目で今何を決めているかが分かる）。方向: 真ん中の帯が的。距離: 針の後ろを塗る
     // 強さのメーター、狙いどおりの所に帯（最大の近くを狙うと右へ寄る）。

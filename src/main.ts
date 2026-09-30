@@ -1832,32 +1832,16 @@ function placeRivalMarkers(rivals: readonly OpponentState[]): void {
   overlay.setRivalMarkers(rivalMarkers);
 }
 
-const ballScreen = new THREE.Vector3();
 /**
- * 構えている間、球のすぐ下に正確さのバーを出す。球が画面の外（真下など）にあるときは、画面の下寄りの真ん中へ。
- * タッチでは右下の打つボタンより上に収める。球が画面下寄りにあると、バーとボタンが同じ高さへ来て重なっていた。
+ * 構えている間のバー。球に付けず、画面の決まった所に大きく出す（みんゴルもゲージは画面下の定位置）。
+ * 場所は style.css が決める（方向は下の真ん中、距離は縦で真ん中より右。タッチは打つボタンのすぐ上）。
  */
 function placeTiming(game: GolfGame): void {
   if (game.phase !== 'swing') {
     overlay.setTiming(null, 0);
     return;
   }
-  ballScreen.set(game.ball.pos.x, game.ball.pos.y, game.ball.pos.z).project(camera);
-  const inside = ballScreen.z < 1 && Math.abs(ballScreen.x) < 1 && Math.abs(ballScreen.y) < 1;
-  const x = inside ? ((ballScreen.x + 1) / 2) * innerWidth : innerWidth / 2;
-  // 球の下に構えたクラブのヘッドが見えるよう、少し離して下に出す。
-  const y = (inside ? ((1 - ballScreen.y) / 2) * innerHeight : innerHeight * 0.7) + 78;
-  // バーの幅の半分（約 150px）は画面の中に収める。タッチでは打つボタン（下から約 88〜166px）も避ける。
-  const touchTiming = inputMode === 'touch';
-  const topClearance = touchTiming ? 80 : 140;
-  const bottomClearance = touchTiming ? 230 : 130;
-  const timingY = Math.max(topClearance, Math.min(Math.max(topClearance, innerHeight - bottomClearance), y));
-  // 距離のバーは縦にして、球の右に出す（球の高さの真ん中あたりから）。方向のバーは横で、球の下。
-  const at =
-    game.swingStage === 'power'
-      ? { x: Math.max(60, Math.min(innerWidth - 60, x + 96)), y: Math.max(topClearance - 60, Math.min(innerHeight - 260, y - 190)) }
-      : { x: Math.max(160, Math.min(innerWidth - 160, x)), y: timingY };
-  overlay.setTiming(at, game.needle, game.gauge);
+  overlay.setTiming({ x: 0, y: 0 }, game.needle, game.gauge);
 }
 
 const aimScreen = new THREE.Vector3();
@@ -1980,7 +1964,9 @@ renderer.setAnimationLoop(() => {
         camera.fov = fov;
         camera.updateProjectionMatrix();
       }
-      golf.updateCamera(camera, dt);
+      golf.aimBallLowest = inputMode === 'touch' ? -0.46 : -0.66;
+      golf.aimBallLowest = inputMode === 'touch' ? -0.46 : -0.66;
+    golf.updateCamera(camera, dt);
     }
     if (roundResult && roundResultAt > 0 && performance.now() >= roundResultAt && !holeFade) {
       roundResultAt = 0;

@@ -229,6 +229,11 @@ export class GolfGame {
   /** ホールの番号を真ん中に出している間は、操作を受け付けない残り秒数（lockInput）。 */
   private inputLock = 0;
   private readonly golfGround: GolfGround;
+  /**
+   * 狙う間のカメラで、球を置く一番下の高さ（画面の真ん中が 0、下端 -1）。タッチは下の段（打つボタン）と
+   * その上のバーがあるので、main.ts がもう少し上にする。
+   */
+  aimBallLowest = AIM_BALL_LOWEST;
   /** 球の所に構えたクラブ（今どのクラブで打つか）。 */
   private readonly clubModel = new ClubModel();
   /** 散らばりを腕で決める速い針（aim.ts の HARD_NEEDLE）。 */
@@ -1062,7 +1067,7 @@ export class GolfGame {
     const landing = Math.atan2(g.height(lx, lz) - pos.y, back + d);
     const ball = Math.atan2(p.y - pos.y, back);
     let pitch = landing - AIM_LANDING_AT * half;
-    if ((ball - pitch) / half < AIM_BALL_LOWEST) pitch = ball - AIM_BALL_LOWEST * half;
+    if ((ball - pitch) / half < this.aimBallLowest) pitch = ball - this.aimBallLowest * half;
     look.set(pos.x + dx * Math.cos(pitch) * 10, pos.y + Math.sin(pitch) * 10, pos.z + dz * Math.cos(pitch) * 10);
   }
 

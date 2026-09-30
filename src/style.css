@@ -431,11 +431,12 @@ kbd {
 /* 正確さのバー（構えている間、球のすぐ下）。同じ太さの横長のバーを白の濃淡だけで描く（強さではなく向きなので
    色は使わない）。真ん中の帯で止めるとナイスショット。帯に入っている間は針が白く光る。 */
 .timing {
+  /* 構えている間のバー。球に付けず、画面の下の真ん中に大きく（距離のバーは縦にして真ん中より右）。 */
   position: absolute;
-  left: 0;
-  top: 0;
+  left: 50%;
+  bottom: var(--gauge-bottom, max(30px, calc(env(safe-area-inset-bottom) + 20px)));
   display: none;
-  padding: 12px 16px;
+  padding: 13px 18px;
   translate: -50% 0;
   border-radius: 999px;
   background: var(--glass);
@@ -465,16 +466,17 @@ kbd {
 
 .t-track {
   position: relative;
-  width: min(220px, calc(100vw - 160px));
-  height: 8px;
+  width: min(440px, calc(100vw - 112px));
+  height: 12px;
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.14);
 }
 
 /* 距離のバーは縦（下が弱い・短い、上が強い・長い）。字はバーの上。 */
 .timing.dist {
-  padding: 12px 12px 14px;
-  border-radius: 18px;
+  left: calc(50% + min(300px, 34vw));
+  padding: 13px 13px 16px;
+  border-radius: 20px;
 }
 
 .timing.dist .t-row {
@@ -488,18 +490,18 @@ kbd {
 }
 
 .timing.dist .t-track {
-  width: 8px;
-  height: 150px;
+  width: 12px;
+  height: min(300px, 36vh);
 }
 
 .timing.dist .t-needle {
   top: auto;
-  left: -7px;
-  right: -7px;
+  left: -8px;
+  right: -8px;
   bottom: 0;
   width: auto;
-  height: 3px;
-  margin: 0 0 -1.5px;
+  height: 4px;
+  margin: 0 0 -2px;
 }
 
 .timing.dist .t-fill {
@@ -536,10 +538,10 @@ kbd {
 
 .t-needle {
   position: absolute;
-  top: -7px;
-  bottom: -7px;
-  width: 3px;
-  margin-left: -1.5px;
+  top: -8px;
+  bottom: -8px;
+  width: 4px;
+  margin-left: -2px;
   border-radius: 2px;
   background: #fff;
   box-shadow: 0 0 4px rgba(0, 0, 0, 0.4);
@@ -556,8 +558,8 @@ kbd {
 
 .t-label {
   /* バーの中の左に、今決めている方（方向・距離）。 */
-  width: 2.6em;
-  font: 600 12px/1 system-ui, sans-serif;
+  width: 2.4em;
+  font: 600 13px/1 system-ui, sans-serif;
   letter-spacing: 0.04em;
   color: #fff;
   white-space: nowrap;
@@ -2717,10 +2719,35 @@ kbd {
 
 /* 下の段: クラブと打つボタンの高さの真ん中をそろえる。 */
 :root[data-input='touch'] .g-shot {
-  right: max(16px, env(safe-area-inset-right));
+  /* 打つボタンは下の真ん中（両手どちらの親指でも届き、いちばん押すボタンが真ん中にある）。 */
+  left: 50%;
+  right: auto;
+  translate: -50% 0;
   bottom: var(--touch-bottom);
   width: 72px;
   height: 72px;
+}
+
+/* 構えている間の「やめる」（×）は下の段の右（左はクラブの札）。 */
+:root[data-input='touch'] .g-cancel {
+  left: auto;
+  right: max(16px, env(safe-area-inset-right));
+  bottom: calc(var(--touch-bottom) + 11px);
+}
+
+/* タッチ: バーは打つボタンのすぐ上。 */
+:root[data-input='touch'] .timing {
+  --gauge-bottom: calc(var(--touch-bottom) + 90px);
+}
+
+/* タッチのクラブの札は、真ん中の打つボタンにかからないよう詰める。 */
+:root[data-input='touch'] .shot-top {
+  padding: 7px 11px;
+  gap: 1px 9px;
+}
+
+:root[data-input='touch'] .shot-short {
+  font-size: 26px;
 }
 
 :root[data-input='touch'] .golf-power {
