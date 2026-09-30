@@ -154,7 +154,7 @@ export class WindStreaks {
       // 両端を細く（真ん中が一番太い）、遠いほど少し太く（遠くでも見えるように）。
       const taper = Math.sin(Math.PI * f);
       const dist = a.distanceTo(cam);
-      const width = (0.045 + dist * 0.0022) * Math.pow(taper, 0.6);
+      const width = (0.022 + dist * 0.0011) * Math.pow(taper, 0.6);
       const v = (k * POINTS + i) * 2;
       this.position[v * 3] = a.x + side.x * width;
       this.position[v * 3 + 1] = a.y + side.y * width;

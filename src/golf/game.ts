@@ -1051,8 +1051,10 @@ export class GolfGame {
     const aiming = (this.phase === 'aim' || this.phase === 'swing') && !this.putting;
     const far = Math.hypot(camera.position.x - p.x, camera.position.y - p.y, camera.position.z - p.z);
     this.ballMesh.scale.setScalar(aiming ? THREE.MathUtils.clamp(far / 9, 1, AIM_BALL_SCALE) : 1);
-    // 風の筋は、狙う間と飛んでいる間だけ新しく出す（パットは風を受けないので出さない。ホールの入りの空撮も）。
-    const windy = (this.phase === 'aim' || this.phase === 'swing' || this.phase === 'moving') && !this.putting && this.intro <= 0;
+    // 風の筋は狙う間だけ新しく出す（パットは風を受けないので出さない。ホールの入りの空撮も）。飛んでいる間は、カメラが
+    // 秒速数十 m で球を追うので、景色に置いた筋はすぐ後ろへ取り残され、球の周りに出すと球の速さの流線に見えて風に
+    // 見えない。他のゴルフゲームも飛んでいる間は風の札と球の曲がりで見せる（マリオゴルフは空の粒と構えの芝投げ）。
+    const windy = (this.phase === 'aim' || this.phase === 'swing') && !this.putting && this.intro <= 0;
     this.windStreaks.update(dt, camera, this.ball.wind, (x, z) => this.golfGround.height(x, z), windy);
   }
 
