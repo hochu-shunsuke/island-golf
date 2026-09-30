@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { hashSeed, mulberry32 } from '../core/rng';
 import { LIE_POWER, clubAllowed, clubFor, needleEffect, needleRole, strikeOf, reachOf, solvePower, trial } from './aim';
+import { TrailFade, addTrailPoint, setTrailLine } from './trail';
 import { BALL_RADIUS, BALL_STEP, Ball, type GolfGround, rollSpeed } from './ball';
 import { CLUBS, PUTTER } from './clubs';
 import type { Hole } from './course';
@@ -115,6 +116,9 @@ class Rival {
   private groundTime: number | null = null;
   private readonly lastSpot = { x: 0, z: 0 };
   readonly mesh: THREE.Mesh;
+  readonly trail: THREE.Line;
+  readonly trailFade: TrailFade;
+  private readonly trailPoints: { x: number; y: number; z: number }[] = [];
 
   constructor(
     readonly spec: RivalSpec,
@@ -128,6 +132,9 @@ class Rival {
       new THREE.SphereGeometry(BALL_RADIUS, 14, 10),
       new THREE.MeshLambertMaterial({ color: spec.color, emissive: spec.color, emissiveIntensity: 0.25 }),
     );
+    const trailMaterial = new THREE.LineBasicMaterial({ color: spec.color, transparent: true, opacity: 0.6 });
+    this.trail = new THREE.Line(new THREE.BufferGeometry(), trailMaterial);
+    this.trailFade = new TrailFade(this.trail, trailMaterial, 0.6);
   }
 
   get moving(): boolean {
@@ -146,6 +153,8 @@ class Rival {
     this.ball.wind = hole.wind;
     this.ball.place(x, z);
     this.ball.lie = 'fairway';
+    this.trailPoints.length = 0;
+    setTrailLine(this.trail, this.trailPoints);
     this.mesh.visible = true;
   }
 
@@ -161,6 +170,9 @@ class Rival {
     this.planning = null;
     this.acc = 0;
     this.groundTime = club.loft > 0.5 ? null : 0;
+    this.trailPoints.length = 0;
+    addTrailPoint(this.trailPoints, this.ball.pos);
+    this.trailFade.show();
   }
 
   /**
@@ -178,8 +190,10 @@ class Rival {
         this.ball.update(BALL_STEP);
         this.acc -= BALL_STEP;
       }
+      if (addTrailPoint(this.trailPoints, this.ball.pos)) setTrailLine(this.trail, this.trailPoints);
     }
     if (this.moving) return false;
+    this.trailFade.settle();
     if (this.ball.state === 'holed') {
       this.holed = true;
       this.scores[hole.number - 1] = this.strokes;
@@ -231,8 +245,7 @@ export class Rivals implements Opponents {
     private readonly seedKey: string,
   ) {
     this.list = specs.map((s) => new Rival(s, ground));
-    // COM は球だけ見せる（軌跡まで出すと、3 本の線が画面を横切って自分の一打が読みにくかった）。
-    for (const r of this.list) this.group.add(r.mesh);
+    for (const r of this.list) this.group.add(r.mesh, r.trail);
   }
 
   get count(): number {
@@ -279,6 +292,7 @@ export class Rivals implements Opponents {
   update(dt: number, hole: Hole): void {
     let changed = false;
     for (const r of this.list) {
+      r.trailFade.update(dt);
       if (r.advance(dt, hole)) changed = true;
       r.syncMesh();
     }
