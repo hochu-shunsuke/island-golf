@@ -4,7 +4,6 @@ import type { Terrain } from '../world/terrain';
 import { LIE_POWER, PERFECT, type Strike, needleRole, strikeOf, type Point3, type Trial, clubFor, needleEffect, reachOf, solvePower } from './aim';
 import { BALL_RADIUS, Ball, type GolfGround, type Surface, rollSpeed } from './ball';
 import { CLUBS, type Club, PUTTER } from './clubs';
-import { ClubModel } from './clubModel';
 import { type Hole, holeIntro } from './course';
 import type { OpponentState, Opponents } from './opponents';
 import { TrailFade } from './trail';
@@ -237,8 +236,6 @@ export class GolfGame {
    * その上のバーがあるので、main.ts がもう少し上にする。
    */
   aimBallLowest = AIM_BALL_LOWEST;
-  /** 球の所に構えたクラブ（今どのクラブで打つか）。 */
-  private readonly clubModel = new ClubModel();
   /** 風の筋（カメラの前を風の向きへ流れる白い線。golf/windStreaks.ts）。 */
   private readonly windStreaks = new WindStreaks();
   /** 散らばりを腕で決める速い針（aim.ts の HARD_NEEDLE）。 */
@@ -366,7 +363,7 @@ export class GolfGame {
       }),
     );
     this.slopes.visible = false;
-    this.aids.add(this.arc, this.roll, this.landing, this.trail, this.slopes, this.clubModel.group);
+    this.aids.add(this.arc, this.roll, this.landing, this.trail, this.slopes);
     this.group.add(this.aids, this.windStreaks.mesh);
     this.teeOff(course[0]);
   }
@@ -704,17 +701,6 @@ export class GolfGame {
   }
 
   update(dt: number): void {
-    // 構えたクラブは、狙う間と針を止める間だけ（ホールを上から見せる間は出さない）。
-    const b = this.ball.pos;
-    this.clubModel.update(
-      (this.phase === 'aim' || this.phase === 'swing') && this.intro <= 0,
-      b.x,
-      b.y,
-      b.z,
-      this.aimYaw,
-      this.clubIndex,
-      BALL_RADIUS,
-    );
     this.intro = Math.max(0, this.intro - dt);
     this.inputLock = Math.max(0, this.inputLock - dt);
     this.updateConfetti(dt);
