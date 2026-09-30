@@ -45,8 +45,8 @@ export const RIVALS: readonly RivalSpec[] = [
     name: 'COM1',
     level: 'やさしい',
     color: 0xffcf3f,
-    spread: 0.2,
-    distance: 0.2,
+    spread: 0.24,
+    distance: 0.24,
     windRead: 0.5,
     puttPower: 0.25,
     puttYaw: 5,
@@ -57,8 +57,8 @@ export const RIVALS: readonly RivalSpec[] = [
     name: 'COM2',
     level: 'ふつう',
     color: 0xe8eef2,
-    spread: 0.13,
-    distance: 0.13,
+    spread: 0.16,
+    distance: 0.16,
     windRead: 0.7,
     puttPower: 0.2,
     puttYaw: 3.8,
@@ -69,11 +69,11 @@ export const RIVALS: readonly RivalSpec[] = [
     name: 'COM3',
     level: 'つよい',
     color: 0x3f63b8,
-    // 押しずれ 25ms ほど（ドライバーで向きの標準偏差 2.5°、ツアープロの 4° より上）。風は読み切る。
-    // 本物のコース 9 ラウンドで 9 ホール平均 -8.9（前のつよい -5.9、ふつう -1.6、やさしい +4.0）。
-    // 自分の散らばりごと試し打ちして狙いをずらす読みも試したが、-8.7 と変わらず、1 打の読みが 10 倍重くなったのでやめた。
-    spread: 0.06,
-    distance: 0.06,
+    // 押しずれ 30ms ほど（ドライバーで向きの標準偏差 約 3°）。風は読み切る。
+    // 本物のコース 9 ラウンドで 9 ホール平均 やさしい +6.4・ふつう +0.6・つよい -7.8（利用者の判断で、-8.9 から 1 打弱めた）。
+    // 自分の散らばりごと試し打ちして狙いをずらす読みも試したが、強さが変わらず、1 打の読みが 10 倍重くなったのでやめた。
+    spread: 0.08,
+    distance: 0.08,
     windRead: 1,
     puttPower: 0.1,
     puttYaw: 2,
