@@ -1942,7 +1942,10 @@ renderer.setAnimationLoop(() => {
     chunks?.update(player.position.x, player.position.z);
     updateCameraFeel(dt, player);
     updateAerialVisibility(dt, player.altitudeAboveGround);
-    if (golf) placeFlagMarkers(golf, player.position);
+    if (golf) {
+      placeFlagMarkers(golf, player.position);
+      golf.hideWind();
+    }
     sounds?.update(dt, lastStatus?.windSpeed ?? 0, 1, player.altitudeAboveGround);
     overlay.setFlightInfo(player.flying, player.speed, player.altitudeAboveSeaLevel, player.autoFlight);
     if (player.autoFlight !== lastAutoFlight) {
@@ -1965,8 +1968,7 @@ renderer.setAnimationLoop(() => {
         camera.updateProjectionMatrix();
       }
       golf.aimBallLowest = inputMode === 'touch' ? -0.46 : -0.66;
-      golf.aimBallLowest = inputMode === 'touch' ? -0.46 : -0.66;
-    golf.updateCamera(camera, dt);
+      golf.updateCamera(camera, dt);
     }
     if (roundResult && roundResultAt > 0 && performance.now() >= roundResultAt && !holeFade) {
       roundResultAt = 0;

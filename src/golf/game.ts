@@ -8,6 +8,7 @@ import { ClubModel } from './clubModel';
 import { type Hole, holeIntro } from './course';
 import type { OpponentState, Opponents } from './opponents';
 import { TrailFade } from './trail';
+import { WindStreaks } from './windStreaks';
 import type { RestInfo, ShotInfo } from '../../shared/room';
 
 /**
@@ -238,6 +239,8 @@ export class GolfGame {
   aimBallLowest = AIM_BALL_LOWEST;
   /** 球の所に構えたクラブ（今どのクラブで打つか）。 */
   private readonly clubModel = new ClubModel();
+  /** 風の筋（カメラの前を風の向きへ流れる白い線。golf/windStreaks.ts）。 */
+  private readonly windStreaks = new WindStreaks();
   /** 散らばりを腕で決める速い針（aim.ts の HARD_NEEDLE）。 */
   hardNeedle = true;
   /**
@@ -364,7 +367,7 @@ export class GolfGame {
     );
     this.slopes.visible = false;
     this.aids.add(this.arc, this.roll, this.landing, this.trail, this.slopes, this.clubModel.group);
-    this.group.add(this.aids);
+    this.group.add(this.aids, this.windStreaks.mesh);
     this.teeOff(course[0]);
   }
 
@@ -1048,6 +1051,14 @@ export class GolfGame {
     const aiming = (this.phase === 'aim' || this.phase === 'swing') && !this.putting;
     const far = Math.hypot(camera.position.x - p.x, camera.position.y - p.y, camera.position.z - p.z);
     this.ballMesh.scale.setScalar(aiming ? THREE.MathUtils.clamp(far / 9, 1, AIM_BALL_SCALE) : 1);
+    // 風の筋は、狙う間と飛んでいる間だけ新しく出す（パットは風を受けないので出さない。ホールの入りの空撮も）。
+    const windy = (this.phase === 'aim' || this.phase === 'swing' || this.phase === 'moving') && !this.putting && this.intro <= 0;
+    this.windStreaks.update(dt, camera, this.ball.wind, (x, z) => this.golfGround.height(x, z), windy);
+  }
+
+  /** 空から見ている間は、風の筋を隠す（カメラが球から離れ、止まった筋が残って見える）。 */
+  hideWind(): void {
+    this.windStreaks.mesh.visible = false;
   }
 
   /**
