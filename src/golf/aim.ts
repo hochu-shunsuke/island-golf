@@ -75,7 +75,8 @@ export interface Strike {
  * - 真ん中の帯（±width）: 狙いどおり
  * - 帯の少し外: ほぼ狙いどおり（最大 5% 短い）
  * - 下（n が負）へ大きく外す = ダフリ: 地面を先に叩いて飛ばない。遠くで約 6 割、寄せ（40m 以下）は 2〜3 割（「チョン」）
- * - 上（n が正）へ大きく外す = トップ: 低く強く出て、スピンも止まる力も抜けて転がりすぎる（寄せほど突き抜ける）
+ * - 上（n が正）へ大きく外す = トップ: 低く強く出て、スピンも止まる力も抜けて転がりすぎる（どの距離でも狙いより長い）
+ * 縦のバーの見た目どおり、上に外すほど長く、下に外すほど短い。
  * パットはダフリ・トップにせず、強さが ±30% ずれるだけ。d は狙った距離（m）。
  */
 export function strikeOf(n: number, width: number, d: number, putt: boolean): Strike {
@@ -92,8 +93,9 @@ export function strikeOf(n: number, width: number, d: number, putt: boolean): St
     const fatMin = 0.5 + 0.3 * far;
     return { power: 0.95 + (fatMin - 0.95) * s, loft: 1, spin: 1 - 0.3 * s, bite: 1, kind: s < 0.25 ? 'good' : 'fat' };
   }
-  // トップ: 刃で打って低く強く出る。寄せほど強く出て突き抜け、遠くでは低く出て少し足りない。
-  const thinPower = 1.4 - 0.5 * far;
+  // トップ: 刃で打って低く強く出て、転がって狙いより長くなる。縦のバーの上 ＝ 長いにそろえる（遠くのトップを
+  // 実際どおり「低く出て少し足りない」にしていた頃は、上で押すと飛ばなくなって意味が分からなかった）。
+  const thinPower = 1.4 - 0.2 * far;
   return {
     power: 0.98 + (thinPower - 0.98) * s,
     loft: 1 - 0.55 * s,
