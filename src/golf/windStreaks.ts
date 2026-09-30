@@ -10,7 +10,8 @@ const MAX = 10;
 /** 1 本の線の点の数。 */
 const POINTS = 18;
 /** これ以上カメラが地面から離れていたら出さない（空から見ているとき）。 */
-const MAX_CAMERA_HEIGHT = 40;
+const MAX_CAMERA_HEIGHT = 90;
+const UP = new THREE.Vector3(0, 1, 0);
 
 interface Streak {
   /** 生まれてからの秒数。負なら、まだ生まれていない（待ち）。 */
@@ -33,6 +34,10 @@ export class WindStreaks {
   private readonly position: Float32Array;
   private readonly color: Float32Array;
   private readonly geometry = new THREE.BufferGeometry();
+  /** 前のコマのカメラの位置と、カメラの進む速さ（m/s）。 */
+  private readonly lastCam = new THREE.Vector3(NaN, 0, 0);
+  private camSpeed = 0;
+  private readonly basis = { f: new THREE.Vector3(), r: new THREE.Vector3(), u: new THREE.Vector3() };
   private readonly tmp = { a: new THREE.Vector3(), b: new THREE.Vector3(), t: new THREE.Vector3(), s: new THREE.Vector3() };
 
   constructor() {
@@ -70,25 +75,32 @@ export class WindStreaks {
   ): void {
     const speed = Math.hypot(wind.x, wind.z);
     const cam = camera.position;
+    if (dt > 0 && Number.isFinite(this.lastCam.x)) {
+      const v = this.lastCam.distanceTo(cam) / dt;
+      this.camSpeed += (Math.min(v, 80) - this.camSpeed) * Math.min(1, dt * 4);
+    }
+    this.lastCam.copy(cam);
     const high = cam.y - height(cam.x, cam.z) > MAX_CAMERA_HEIGHT;
     // 風が強いほど本数が多い（1m/s で 2 本、6m/s 以上で全部）。
     const active = show && !high && speed > 0.3 ? Math.round(Math.min(MAX, 1 + (speed / 6) * (MAX - 1))) : 0;
     const dx = speed > 0 ? wind.x / speed : 0;
     const dz = speed > 0 ? wind.z / speed : 0;
-    const fwd = camera.getWorldDirection(this.tmp.t);
-    const fx = fwd.x;
-    const fz = fwd.z;
-    const fl = Math.hypot(fx, fz) || 1;
+    // カメラの向き（前・右・上）。飛ぶ球を見下ろすカメラでも、画面に映る範囲に出す。
+    const f = camera.getWorldDirection(this.basis.f);
+    const r = this.basis.r.crossVectors(f, UP).normalize();
+    this.basis.u.crossVectors(r, f);
     let drawn = 0;
     for (let k = 0; k < MAX; k++) {
       const s = this.streaks[k];
       s.age += dt;
-      if (s.age >= s.life) {
+      // カメラの後ろへ取り残された筋は、すぐ前に出し直す（飛ぶ球を追うカメラは秒速数十 m で進む）。
+      const behind = s.age >= 0 && (s.x - cam.x) * f.x + (s.y - cam.y) * f.y + (s.z - cam.z) * f.z < 2;
+      if (s.age >= s.life || (behind && k < active)) {
         // 流れきった: 待ってから、カメラの前のどこかに生まれ直す。
         if (k >= active) {
           s.age = -0.5;
         } else {
-          this.spawn(s, cam, fx / fl, fz / fl, height, speed);
+          this.spawn(s, cam, height, speed, this.camSpeed);
         }
       }
       if (s.age < 0) {
@@ -106,23 +118,24 @@ export class WindStreaks {
   private spawn(
     s: Streak,
     cam: THREE.Vector3,
-    fx: number,
-    fz: number,
     height: (x: number, z: number) => number,
     speed: number,
+    camSpeed: number,
   ): void {
-    // カメラの前 8〜34m、左右は見えている幅の中、地面から 1.5〜6m。
-    const d = 8 + Math.random() * 26;
+    const { f, r, u } = this.basis;
+    // 視線の先 8〜34m（カメラが進んでいれば、その分だけ先に。すぐ追い越して消えないように）、左右と上下は見えている幅の中。
+    const d = 8 + Math.random() * 26 + camSpeed * 0.6;
     const side = (Math.random() * 2 - 1) * d * 0.6;
-    const x = cam.x + fx * d - fz * side;
-    const z = cam.z + fz * d + fx * side;
-    s.x = x;
-    s.z = z;
-    s.y = height(x, z) + 1.5 + Math.random() * 4.5;
+    const up = (Math.random() * 2 - 1) * d * 0.3;
+    s.x = cam.x + f.x * d + r.x * side + u.x * up;
+    s.z = cam.z + f.z * d + r.z * side + u.z * up;
+    // 地面には潜らせない。
+    s.y = Math.max(height(s.x, s.z) + 1.5, cam.y + f.y * d + r.y * side + u.y * up);
     s.age = 0;
     s.life = 2.2 + Math.random() * 1;
     s.speed = 3 + speed * 1.1;
-    s.length = 5 + speed * 0.8;
+    // 遠くに出した筋は、その分だけ長く（画面の上で同じくらいの長さに見えるように）。
+    s.length = (5 + speed * 0.8) * Math.max(1, d / 30);
     s.phase = Math.random() * Math.PI * 2;
     s.sway = 0.15 + Math.random() * 0.2;
   }
@@ -154,7 +167,7 @@ export class WindStreaks {
       // 両端を細く（真ん中が一番太い）、遠いほど少し太く（遠くでも見えるように）。
       const taper = Math.sin(Math.PI * f);
       const dist = a.distanceTo(cam);
-      const width = (0.022 + dist * 0.0011) * Math.pow(taper, 0.6);
+      const width = (0.012 + dist * 0.0016) * Math.pow(taper, 0.6);
       const v = (k * POINTS + i) * 2;
       this.position[v * 3] = a.x + side.x * width;
       this.position[v * 3 + 1] = a.y + side.y * width;
