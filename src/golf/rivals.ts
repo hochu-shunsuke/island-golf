@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { hashSeed, mulberry32 } from '../core/rng';
-import { LIE_POWER, type Point3, clubFor, distanceGauge, distanceScale, needleEffect, needleRole, reachOf, solvePower, trial } from './aim';
+import { LIE_POWER, type Point3, clubFor, needleEffect, needleRole, strikeOf, reachOf, solvePower, trial } from './aim';
 import { BALL_RADIUS, BALL_STEP, Ball, type GolfGround, rollSpeed } from './ball';
 import { CLUBS, PUTTER } from './clubs';
 import type { Hole } from './course';
@@ -98,6 +98,10 @@ interface Plan {
   yaw: number;
   power: number;
   curve: number;
+  /** 芯の針の結果（打ち出し角・スピン・止まる力に掛ける）。無ければ 1。 */
+  loft?: number;
+  spin?: number;
+  bite?: number;
 }
 
 class Rival {
@@ -161,7 +165,14 @@ class Rival {
     this.lastSpot.x = this.ball.pos.x;
     this.lastSpot.z = this.ball.pos.z;
     const lieLoss = plan.club === PUTTER ? 1 : LIE_POWER[this.ball.lie];
-    this.ball.hit(plan.yaw, club.loft, club.speed * plan.power * lieLoss, club.spin, club.bite, plan.curve);
+    this.ball.hit(
+      plan.yaw,
+      club.loft * (plan.loft ?? 1),
+      club.speed * plan.power * lieLoss,
+      club.spin * (plan.spin ?? 1),
+      club.bite * (plan.bite ?? 1),
+      plan.curve,
+    );
     this.strokes++;
     this.plan = null;
     this.planning = null;
@@ -449,15 +460,22 @@ export class Rivals implements Opponents {
       const got = Math.hypot(land.x - b.x, land.z - b.z);
       dist = Math.max(1, dist + (pick - got));
     }
-    // プレイヤーと同じ 2 回押し: 方向の針と距離の針（真ん中の幅は距離で変えない）。
+    // プレイヤーと同じ 2 回押し: 方向の針と芯の針（ダフリ・トップ。aim.ts の strikeOf）。
     const clamp1 = (v: number) => Math.max(-1, Math.min(1, v));
-    // 距離の針はプレイヤーと同じ目盛り（右端が全力、最大の近くでは真ん中が右へ寄る）。
-    const { center } = distanceScale(power);
     const role = needleRole(pick);
-    const { gauge } = distanceGauge(clamp1(center + gauss(rand) * spec.distance), power, role.distWidth);
+    const strain = power <= 0.85 ? 1 : 1 - 0.45 * ((Math.min(1, power) - 0.85) / 0.15);
+    const strike = strikeOf(clamp1(gauss(rand) * spec.distance), role.distWidth * strain, pick, false);
     const eDir = clamp1(gauss(rand) * spec.spread);
     const effect = needleEffect(eDir, false, true, role.dirWidth);
-    return { club, yaw: yaw + effect.yaw, power: Math.max(0.1, Math.min(1, power * gauge)), curve: effect.curve };
+    return {
+      club,
+      yaw: yaw + effect.yaw,
+      power: Math.max(0.1, Math.min(1, power * strike.power)),
+      curve: effect.curve,
+      loft: strike.loft,
+      spin: strike.spin,
+      bite: strike.bite,
+    };
   }
 }
 

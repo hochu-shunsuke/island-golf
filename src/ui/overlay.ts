@@ -1,5 +1,5 @@
 import { STAMPS, STAMP_PICK, THANKS, isRoomId } from '../../shared/room';
-import { LIE_NAMES, toPar, type GolfStatus, type SwingGauge } from '../golf/game';
+import { LIE_NAMES, toPar, type GolfStatus, type ShotFeedback, type SwingGauge } from '../golf/game';
 import type { IslandParams } from '../island/params';
 
 /**
@@ -722,10 +722,10 @@ export class Overlay {
   }
   private titleTimer = 0;
 
-  /** 打った一打のでき（ナイスショット・フック・スライス）を画面の真ん中に大きく。 */
-  shotFeedback(kind: 'nice' | 'hook' | 'slice'): void {
+  /** 打った一打のでき（ナイスショット・フック・スライス・ダフリ・トップ）を画面の真ん中に大きく。 */
+  shotFeedback(kind: ShotFeedback): void {
     const el = this.feedbackEl;
-    el.textContent = kind === 'nice' ? 'Nice Shot!' : kind === 'hook' ? 'Hook' : 'Slice';
+    el.textContent = { nice: 'Nice Shot!', hook: 'Hook', slice: 'Slice', chunk: 'Chunk', thin: 'Thin' }[kind];
     el.classList.remove('on', 'nice', 'miss');
     void el.offsetWidth;
     el.classList.add('on', kind === 'nice' ? 'nice' : 'miss');
@@ -1077,7 +1077,7 @@ export class Overlay {
       n.left = '';
       n.bottom = pos;
       f.width = '';
-      f.height = pos;
+      f.height = "0%";
       sw.left = '';
       sw.width = '';
       sw.bottom = start;

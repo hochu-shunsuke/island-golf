@@ -53,28 +53,57 @@ export function needleRole(d: number): { dirSpeed: number; dirWidth: number; dis
   return {
     dirSpeed: 0.85 + 0.4 * t,
     dirWidth: 0.12 - 0.06 * t,
-    distSpeed: 1.25 - 0.4 * t,
+    // 芯の針は大きなミスが出るよう、方向より少し速め（寄せで 1.45 倍、遠くで 1 倍）。
+    distSpeed: (1.25 - 0.4 * t) * 1.16,
     distWidth: 0.06 + 0.06 * t,
   };
 }
 
-/**
- * 距離の針の目盛り。左端は −30%、右端は +30% かそのクラブの全力（最大飛距離）の手前の方。
- * power は輪に届く強さ（全力を 1 として）。center は狙いどおり（倍率 1）になる針の位置（-1..1）で、
- * 最大の近くを狙うほど右へ寄る（右端で止めたときだけ全力。真ん中より右なら全部全力、にはしない）。
- */
-export function distanceScale(power: number): { lo: number; hi: number; center: number } {
-  const lo = 1 - POWER_RANGE;
-  const hi = Math.max(1, Math.min(1 + POWER_RANGE, 1 / Math.max(0.05, power)));
-  return { lo, hi, center: (2 * (1 - lo)) / (hi - lo) - 1 };
+/** 芯の針を止めた結果（打つときに、強さ・打ち出し角・スピン・止まる力に掛ける）。 */
+export interface Strike {
+  power: number;
+  loft: number;
+  spin: number;
+  bite: number;
+  /** good（芯か、ほぼ芯）・fat（ダフリ）・thin（トップ）。 */
+  kind: 'good' | 'fat' | 'thin';
 }
 
-/** 距離の針を n（-1..1）で止めたときの強さの倍率。真ん中の帯（center から ±width）なら狙いどおり。 */
-export function distanceGauge(n: number, power: number, width: number): { gauge: number; perfect: boolean } {
-  const { lo, hi, center } = distanceScale(power);
-  const perfect = Math.abs(n - center) < width;
-  return { gauge: perfect ? 1 : lo + ((n + 1) / 2) * (hi - lo), perfect };
+/**
+ * 2 本目の針（芯）。実際のゴルフの距離の狂いは「±% になめらかにずれる」ではなく、ほとんどが当たりの質から来る。
+ * 少しずれてもほぼ同じ距離だが、大きく外すと急に極端になる（Broadie の「ひどいショット」がスコアに効く）。
+ * - 真ん中の帯（±width）: 狙いどおり
+ * - 帯の少し外: ほぼ狙いどおり（最大 5% 短い）
+ * - 下（n が負）へ大きく外す = ダフリ: 地面を先に叩いて飛ばない。遠くで約 6 割、寄せ（40m 以下）は 2〜3 割（「チョン」）
+ * - 上（n が正）へ大きく外す = トップ: 低く強く出て、スピンも止まる力も抜けて転がりすぎる（寄せほど突き抜ける）
+ * パットはダフリ・トップにせず、強さが ±30% ずれるだけ。d は狙った距離（m）。
+ */
+export function strikeOf(n: number, width: number, d: number, putt: boolean): Strike {
+  const x = Math.abs(n) < width ? 0 : n;
+  if (putt) return { power: 1 + x * POWER_RANGE, loft: 1, spin: 1, bite: 1, kind: 'good' };
+  const o = x === 0 ? 0 : (Math.abs(x) - width) / (1 - width);
+  if (o < 0.4) return { power: 1 - 0.05 * (o / 0.4), loft: 1, spin: 1, bite: 1, kind: 'good' };
+  const u = Math.max(0, Math.min(1, (d - 40) / 160));
+  const far = u * u * (3 - 2 * u);
+  const k = (o - 0.4) / 0.6;
+  const s = k * k * (3 - 2 * k);
+  if (x < 0) {
+    // ダフリ: 強さ（初速）の割合。距離はほぼその 2 乗なので、寄せで約 2〜3 割、遠くで約 6 割の距離になる。
+    const fatMin = 0.5 + 0.3 * far;
+    return { power: 0.95 + (fatMin - 0.95) * s, loft: 1, spin: 1 - 0.3 * s, bite: 1, kind: s < 0.25 ? 'good' : 'fat' };
+  }
+  // トップ: 刃で打って低く強く出る。寄せほど強く出て突き抜け、遠くでは低く出て少し足りない。
+  const thinPower = 1.4 - 0.5 * far;
+  return {
+    power: 0.98 + (thinPower - 0.98) * s,
+    loft: 1 - 0.55 * s,
+    spin: 1 - 0.6 * s,
+    bite: 1 - 0.8 * s,
+    // 目に見えて狂ったときだけミスの名前を出す（少し外しただけで「Thin」と出さない）。
+    kind: s < 0.25 ? 'good' : 'thin',
+  };
 }
+
 
 
 /** ライ lie から、クラブ c が届く一番遠いキャリー（m）。パターは転がる距離。 */
