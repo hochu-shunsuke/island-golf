@@ -8,13 +8,14 @@ import type { Hole } from './course';
 import type { OpponentState, Opponents } from './opponents';
 
 /**
- * COM の相手。プレイヤーが打つたびに、全員が同時に 1 打ずつ打つ（Golf Clash と同じ。順番を待たない）。
+ * COM の相手。プレイヤーを待たず、それぞれ自分のタイミングで打つ（友達と回るときと同じ。順番を待たない）。
+ * 球が止まってから pace の秒数だけ考えて打ち、自分やプレイヤーの一打にスタンプで反応する（性格は RivalSpec）。
  *
  * - 読み: プレイヤーと同じ試し打ち（aim.ts）で、風と傾きを読んで向きと強さを決める
  * - 腕前: 正確さの針のずれを乱数で足す（プレイヤーの針と同じ効き方）。ずれの大きさが強さの差
  * - 球: プレイヤーの球と同じ物理で、実際の時間で飛ぶ。刻みは固定（BALL_STEP）なので、画面の速さに関係なく、
  *   同じコース・同じ日なら毎回同じ結果になる（乱数も合言葉・日・ホール・打数から作る）
- * - 次の一打の読みは、プレイヤーが狙っている間に、1 コマ 6ms まで少しずつ済ませておく
+ * - 次の一打の読みは、考えている間に、1 コマ 6ms まで少しずつ済ませておく
  *   （1 打の読みは試し打ち数十回で 10〜60ms。まとめて読むと、打った瞬間や狙っている間に画面が止まる）
  * - プレイヤーが先にカップに入れたら、残りを同じく少しずつ読んで打ち切る（画面には出さない）。ダブルパーで打ち切り
  */
@@ -36,7 +37,19 @@ export interface RivalSpec {
   puttYaw: number;
   /** パットの傾きを読む回数（向きと強さを試し打ちで直す回数。多いほど上りも下りも合う）。 */
   puttRead: number;
+  /** 球が止まってから次を打つまでの秒数（この間で毎回ばらつく）。プレイヤーを待たず、自分のタイミングで打つ。 */
+  pace: readonly [number, number];
+  /** スタンプを送る気の多さ（出来事ごとに送る確率）。 */
+  chatty: number;
+  /**
+   * 出来事ごとに選ぶスタンプ（shared/room.ts の STAMPS の番号。空なら送らない）。good・bad は自分の一打、
+   * cheer・tease はプレイヤーのいい一打・ミス、reply はプレイヤーのスタンプへの返事。
+   */
+  stamps: Readonly<Record<StampMood, readonly number[]>>;
 }
+
+/** COM がスタンプを送るきっかけ。 */
+type StampMood = 'good' | 'bad' | 'cheer' | 'tease' | 'reply';
 
 /** 3 人の相手。COM1 はやさしい、COM2 はふつう、COM3 はつよい（風を読み切り、プロより正確）。 */
 export const RIVALS: readonly RivalSpec[] = [
@@ -51,6 +64,10 @@ export const RIVALS: readonly RivalSpec[] = [
     puttPower: 0.25,
     puttYaw: 5,
     puttRead: 1,
+    // せっかちでおしゃべり。人のミスは笑わない。
+    pace: [2.5, 7],
+    chatty: 0.7,
+    stamps: { good: [0], bad: [3], cheer: [0], tease: [], reply: [0] },
   },
   {
     id: 'com2',
@@ -63,6 +80,9 @@ export const RIVALS: readonly RivalSpec[] = [
     puttPower: 0.2,
     puttYaw: 3.8,
     puttRead: 2,
+    pace: [3.5, 8],
+    chatty: 0.45,
+    stamps: { good: [0, 1], bad: [3, 4], cheer: [0], tease: [2], reply: [0, 2] },
   },
   {
     id: 'com3',
@@ -78,6 +98,10 @@ export const RIVALS: readonly RivalSpec[] = [
     puttPower: 0.1,
     puttYaw: 2,
     puttRead: 3,
+    // じっくり読んで、口数は少ない。決めたときだけ得意げ。
+    pace: [5, 9],
+    chatty: 0.3,
+    stamps: { good: [1], bad: [4], cheer: [], tease: [2], reply: [1] },
   },
 ];
 
@@ -95,12 +119,19 @@ const LIE_PENALTY: Record<Ball['lie'], number> = {
 const CUP_RADIUS = 0.22;
 /** 1 コマで読みに使ってよい時間（ms）。 */
 const PLAN_BUDGET = 6;
+/** ティーに立ってから打ち始めるまでの秒数（ホールの入りの空撮 game.ts の INTRO_TIME の間は打たない）。 */
+const TEE_WAIT = 3.4;
+/** 1 人の COM がスタンプを送る間隔の下限（秒）と、COM どうしで空ける間（秒）。 */
+const STAMP_GAP = 8;
+const STAMP_ANY_GAP = 2.5;
 /** 1 人の 1 打の計画。 */
 interface Plan {
   club: number;
   yaw: number;
   power: number;
   curve: number;
+  /** 芯を大きく外した（Mishit）。止まったらスタンプのきっかけにする。 */
+  miss?: boolean;
 }
 
 class Rival {
@@ -110,6 +141,12 @@ class Rival {
   wet = 0;
   holed = false;
   readonly scores: (number | undefined)[] = [];
+  /** 次を打てるまでの秒数（球が止まってから考える間）。 */
+  wait = 0;
+  /** 最後に打った一打が Mishit だったか。 */
+  lastMiss = false;
+  /** 最後にスタンプを送った時刻（Rivals の clock）。 */
+  lastStampAt = -Infinity;
   plan: Plan | null = null;
   /** 読みかけの計画（1 コマに少しずつ進める）。 */
   planning: Generator<void, Plan> | null = null;
@@ -240,6 +277,16 @@ export class Rivals implements Opponents {
   private finishing = false;
   /** 様子が変わったとき（止まった・入った）に呼ぶ（画面の順位を描き直す）。 */
   onChange: (() => void) | null = null;
+  /** COM がスタンプを送った（main.ts が球の上に吹き出しを出す）。s は STAMPS の番号。 */
+  onStamp: ((id: string, s: number) => void) | null = null;
+  /** COM が打った（main.ts が、カメラからの遠さに合わせた音を鳴らす）。 */
+  onHit: ((club: number, at: { x: number; y: number; z: number }) => void) | null = null;
+  /** update で進む時計（秒）。休憩中は進まない。 */
+  private clock = 0;
+  /** 誰かが最後にスタンプを送った時刻（COM どうしで立て続けに送らない）。 */
+  private lastAnyStamp = -Infinity;
+  /** 少し間を置いて送るスタンプ（人が反応するまでの間）。 */
+  private readonly stampQueue: { r: Rival; s: number; at: number }[] = [];
 
   constructor(
     specs: readonly RivalSpec[],
@@ -268,22 +315,59 @@ export class Rivals implements Opponents {
     const len = Math.hypot(dx, dz) || 1;
     const rx = -dz / len;
     const rz = dx / len;
+    this.stampQueue.length = 0;
     this.list.forEach((r, k) => {
       const side = (k % 2 === 0 ? 1 : -1) * (1.6 + Math.floor(k / 2) * 1.6);
       r.teeOff(hole, hole.tee.x + rx * side, hole.tee.z + rz * side);
+      // ホールの入り（上から見せる間）が終わってから、それぞれの間で打ち始める。
+      r.wait = TEE_WAIT + this.think(r);
       r.syncMesh();
     });
     this.onChange?.();
   }
 
-  /** プレイヤーが打った: まだ入れていない全員が、同時に 1 打ずつ打つ（読みかけなら、ここで読み終える）。 */
-  shoot(hole: Hole): void {
-    for (const r of this.list) {
-      if (r.holed) continue;
-      // 前の球がまだ転がっていれば、止まるまで進めてから打つ。
-      if (r.moving) r.advance(0, hole, true);
-      if (r.holed) continue;
-      r.hit(this.planNow(r, hole));
+  /**
+   * プレイヤーが打った。COM はプレイヤーを待たずに自分のタイミングで打つので、ここでは何もしない
+   * （前はプレイヤーが打つたびに全員が同時に 1 打ずつ打っていて、友達と回るときの自由さが無かった）。
+   */
+  shoot(_hole: Hole): void {}
+
+  /**
+   * プレイヤーの出来事（いい一打・ミス・スタンプ）に、COM のだれか 1 人が反応するかもしれない
+   * （全員が一斉に返すと、画面がスタンプで埋まる）。
+   */
+  react(kind: 'good' | 'bad' | 'stamp'): void {
+    const mood: StampMood = kind === 'good' ? 'cheer' : kind === 'bad' ? 'tease' : 'reply';
+    const order = [...this.list].sort(() => Math.random() - 0.5);
+    for (const r of order) if (this.say(r, mood)) return;
+  }
+
+  /** 次を打つまでに考える秒数（パットは短め）。 */
+  private think(r: Rival): number {
+    const [a, b] = r.spec.pace;
+    const t = a + (b - a) * Math.random();
+    return r.ball.lie === 'green' ? t * 0.7 : t;
+  }
+
+  /** スタンプを送る（気の多さで決め、少し間を置く）。送ることにしたら true。 */
+  private say(r: Rival, mood: StampMood): boolean {
+    const list = r.spec.stamps[mood];
+    if (list.length === 0 || Math.random() > r.spec.chatty) return false;
+    if (this.clock - r.lastStampAt < STAMP_GAP || this.stampQueue.some((q) => q.r === r)) return false;
+    const s = list[Math.floor(Math.random() * list.length)];
+    this.stampQueue.push({ r, s, at: this.clock + 0.6 + Math.random() * 1.4 });
+    return true;
+  }
+
+  /** 球が止まった: 自分の一打の出来でスタンプを送るかもしれない。次を打つまでの間を決め直す。 */
+  private afterStop(r: Rival, hole: Hole, wetBefore: number): void {
+    r.wait = this.think(r);
+    if (r.holed) {
+      const d = (r.scores[hole.number - 1] ?? r.strokes) - hole.par;
+      if (r.strokes === 1 || d <= -1) this.say(r, 'good');
+      else if (d >= 2) this.say(r, 'bad');
+    } else if (r.wet > wetBefore || r.lastMiss) {
+      this.say(r, 'bad');
     }
   }
 
@@ -294,9 +378,14 @@ export class Rivals implements Opponents {
 
   update(dt: number, hole: Hole): void {
     let changed = false;
+    this.clock += dt;
     for (const r of this.list) {
       r.trailFade.update(dt);
-      if (r.advance(dt, hole)) changed = true;
+      const wetBefore = r.wet;
+      if (r.advance(dt, hole)) {
+        changed = true;
+        if (!this.finishing) this.afterStop(r, hole, wetBefore);
+      }
       r.syncMesh();
     }
     // 読みを進める（狙っている間は次の一打を、打ち切りの間は残りの一打を）。1 コマ PLAN_BUDGET まで。
@@ -316,12 +405,32 @@ export class Rivals implements Opponents {
     }
     if (this.finishing) {
       // 読み終えた 1 人だけ打って、止まるまで一気に進める（1 コマに 1 打）。
-      const q = this.list.find((x) => !x.holed && x.plan);
+      const q = this.list.find((x) => !x.holed && !x.moving && x.plan);
       if (q) {
         q.hit(q.plan!);
         q.advance(0, hole, true);
         changed = true;
       }
+    } else {
+      // それぞれの間がたって、読み終えていれば打つ。
+      for (const r of this.list) {
+        if (r.holed || r.moving) continue;
+        r.wait -= dt;
+        if (r.wait > 0 || !r.plan) continue;
+        const plan = r.plan;
+        r.hit(plan);
+        r.lastMiss = !!plan.miss;
+        this.onHit?.(plan.club, r.ball.pos);
+        changed = true;
+      }
+    }
+    // 間を置いたスタンプを送る（COM どうしは少なくとも STAMP_ANY_GAP あける）。
+    const q = this.stampQueue[0];
+    if (q && q.at <= this.clock && this.clock - this.lastAnyStamp >= STAMP_ANY_GAP) {
+      this.stampQueue.shift();
+      this.lastAnyStamp = this.clock;
+      q.r.lastStampAt = this.clock;
+      this.onStamp?.(q.r.spec.id, q.s);
     }
     if (changed) this.onChange?.();
   }
@@ -337,16 +446,6 @@ export class Rivals implements Opponents {
       holed: r.holed,
       ball: r.holed ? null : { ...r.ball.pos },
     }));
-  }
-
-  /** 読みかけなら読み終え、読んでいなければ今読む（打つ瞬間に間に合わなかったとき）。 */
-  private planNow(r: Rival, hole: Hole): Plan {
-    if (r.plan) return r.plan;
-    const gen = r.planning ?? this.planSteps(r, hole);
-    for (;;) {
-      const step = gen.next();
-      if (step.done) return step.value;
-    }
   }
 
   /** 次の一打を一度に決める（調整やテストから使う）。 */
@@ -472,7 +571,13 @@ export class Rivals implements Opponents {
     const strike = strikeOf(clamp1(gauss(rand) * spec.distance), width, pick, false);
     const eDir = clamp1(gauss(rand) * spec.spread);
     const effect = needleEffect(eDir, false, true, role.dirWidth);
-    return { club, yaw: yaw + effect.yaw, power: Math.max(0.1, Math.min(1, power * strike.power)), curve: effect.curve };
+    return {
+      club,
+      yaw: yaw + effect.yaw,
+      power: Math.max(0.1, Math.min(1, power * strike.power)),
+      curve: effect.curve,
+      miss: strike.kind === 'miss',
+    };
   }
 }
 

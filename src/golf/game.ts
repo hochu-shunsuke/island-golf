@@ -236,6 +236,8 @@ export class GolfGame {
    * その上のバーがあるので、main.ts がもう少し上にする。
    */
   aimBallLowest = AIM_BALL_LOWEST;
+  /** COM を止めておく（COM と回る途中の休憩。友達は止められないので main.ts が COM のときだけ立てる）。 */
+  opponentsPaused = false;
   /** 風の筋（カメラの前を風の向きへ流れる白い線。golf/windStreaks.ts）。 */
   private readonly windStreaks = new WindStreaks();
   /** 散らばりを腕で決める速い針（aim.ts の HARD_NEEDLE）。 */
@@ -731,7 +733,7 @@ export class GolfGame {
       this.emit();
     }
     if (this.phase === 'moving') this.updateMoving(dt);
-    this.rivals?.update(dt, this.target);
+    this.rivals?.update(this.opponentsPaused ? 0 : dt, this.target);
     // カップに入った球は穴の中へ沈める。狙う間に大きく描いた球（updateCamera）は、地面に埋まらないよう持ち上げる。
     const sink = this.phase === 'holed' ? BALL_RADIUS * 1.6 : 0;
     const lift = (this.ballMesh.scale.x - 1) * BALL_RADIUS;

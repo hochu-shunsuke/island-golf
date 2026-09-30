@@ -30,7 +30,7 @@ export interface Opponents {
   /** 様子が変わったとき（止まった・入った・部屋の様子が届いた）に呼ぶ。 */
   onChange: (() => void) | null;
   teeOff(hole: Hole): void;
-  /** プレイヤーが打った（COM は同時に打つ。友達はそれぞれ自分で打つので何もしない）。 */
+  /** プレイヤーが打った（COM も友達もそれぞれ自分のタイミングで打つので、今は何もしない）。 */
   shoot(hole: Hole): void;
   /** プレイヤーが入れた（COM は残りを打ち切る）。 */
   finish(): void;

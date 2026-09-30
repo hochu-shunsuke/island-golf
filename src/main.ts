@@ -18,6 +18,7 @@ import { MORNING, Sky } from './render/sky';
 import { Water } from './render/water';
 import { type PlayMode, type RoundResult, type ScoreRow, type StandingRow, Overlay } from './ui/overlay';
 import { RIVALS, Rivals } from './golf/rivals';
+import { PUTTER } from './golf/clubs';
 import { Peers, peerColor } from './golf/peers';
 import type { Opponents } from './golf/opponents';
 import { RoomClient, type RoomStatus } from './net/room';
@@ -330,13 +331,31 @@ overlay.setMode(playMode);
  * 友達とは、入っている部屋の人（部屋に入っていなければ、まだひとり）。
  */
 function makeOpponents(game: GolfGame): Opponents | null {
+  comRivals = null;
   if (playMode === 'friends') {
     if (!party) return null;
     party.peers = new Peers(game.ground);
     if (party.view) party.peers.setRoom(party.view, party.me);
     return party.peers;
   }
-  return playMode === 'com' ? new Rivals(RIVALS, game.ground, `${params.seed}:${dayIndex()}`) : null;
+  if (playMode !== 'com') return null;
+  const rivals = new Rivals(RIVALS, game.ground, `${params.seed}:${dayIndex()}`);
+  rivals.onStamp = (id, s) => showRivalStamp(id, s);
+  rivals.onHit = (club, at) => rivalHitSound(club, at);
+  comRivals = rivals;
+  return rivals;
+}
+
+/** COM と回っているときの相手（スタンプの反応と、打った音に使う）。 */
+let comRivals: Rivals | null = null;
+
+/** COM が離れた所で打った音。カメラから遠いほど小さく、250m より遠ければ鳴らさない。 */
+function rivalHitSound(club: number, at: { x: number; y: number; z: number }): void {
+  if (!sounds) return;
+  const d = Math.hypot(at.x - camera.position.x, at.y - camera.position.y, at.z - camera.position.z);
+  if (d > 250) return;
+  const kind = club === PUTTER ? 'putter' : club <= 1 ? 'wood' : club <= 4 ? 'iron' : 'wedge';
+  sounds.hit(kind, 1, false, 0.1 + 0.35 * Math.max(0, 1 - d / 150));
 }
 
 // ── 友達と（部屋） ────────────────────────────────────
@@ -580,19 +599,40 @@ const STAMP_SHOW_MS = 2800;
 const STAMP_NEAR = 90;
 let lastStampSent = 0;
 
-/** スタンプを送る（1〜5 のキー・スタンプのボタン）。自分の画面にもすぐ出す。 */
+/** 自分のスタンプの持ち主の印（部屋では自分の番号、COM と回るときは 'you'）。 */
+function myStampId(): string {
+  return party?.me ?? 'you';
+}
+
+/** スタンプを送れるか（友達と回っている間か、COM と回っている間）。 */
+function stampsOpen(): boolean {
+  return (playMode === 'friends' && !!party?.inRound) || (playMode === 'com' && entered && comRivals !== null);
+}
+
+/** スタンプを送る（1〜5 のキー・スタンプのボタン）。自分の画面にもすぐ出す。COM と回るときは COM が返すかもしれない。 */
 function sendStamp(s: number): void {
-  if (!party?.inRound || s < 0 || s >= STAMP_PICK) return;
+  if (!stampsOpen() || s < 0 || s >= STAMP_PICK) return;
   const now = performance.now();
   if (now - lastStampSent < STAMP_GAP_MS) return;
   lastStampSent = now;
-  party.client.send({ t: 'stamp', s });
+  if (playMode === 'friends') party?.client.send({ t: 'stamp', s });
+  else comRivals?.react('stamp');
   overlay.showStamp('', s, true, false);
-  stampOn.set(party.me, { s, until: now + STAMP_SHOW_MS, key: `${s}:${now}`, fed: false });
+  stampOn.set(myStampId(), { s, until: now + STAMP_SHOW_MS, key: `${s}:${now}`, fed: false });
+}
+
+/** COM のスタンプ（球の上に吹き出し。映っていなければ左に出す）。 */
+function showRivalStamp(id: string, s: number): void {
+  const now = performance.now();
+  stampOn.set(id, { s, until: now + STAMP_SHOW_MS, key: `${s}:${now}`, fed: false });
 }
 
 /** 結果の画面の「ありがとう」を送る（ラウンドが終わって部屋は回っていないが、部屋にいれば送れる）。 */
 function sendThanks(): void {
+  if (playMode === 'com') {
+    overlay.addThanks('あなた', true);
+    return;
+  }
   if (!party) return;
   party.client.send({ t: 'stamp', s: THANKS });
   overlay.addThanks('あなた', true);
@@ -620,7 +660,7 @@ function placeStampBubbles(game: GolfGame, rivals: readonly OpponentState[]): vo
       stampOn.delete(id);
       continue;
     }
-    const you = id === party?.me;
+    const you = id === myStampId();
     const r = you ? null : rivals.find((q) => q.id === id);
     const ball = you ? game.ball.pos : r?.ball;
     const name = you ? 'あなた' : (r?.name ?? party?.view?.players.find((p) => p.id === id)?.name ?? '');
@@ -642,7 +682,7 @@ function placeStampBubbles(game: GolfGame, rivals: readonly OpponentState[]): vo
 }
 
 function updatePartyLabel(): void {
-  overlay.setStampBar(playMode === 'friends' && !!party?.inRound);
+  overlay.setStampBar(stampsOpen());
   overlay.setCourseLocked(playMode === 'friends' && party ? party.id : null);
   if (playMode !== 'friends') {
     overlay.setStartLabel(null);
@@ -973,6 +1013,8 @@ function ensureGolf(): GolfGame | null {
     (text) => overlay.flash(text),
     (x, z, r, visit) => chunks?.treesNear(x, z, r, visit),
     (e) => {
+      // 自分の球が水に入ったら、COM のだれかが反応するかもしれない。
+      if (e.type === 'splash') comRivals?.react('bad');
       if (!sounds) return;
       if (e.type === 'hit') sounds.hit(e.kind, e.strength, e.perfect);
       else if (e.type === 'land') sounds.land(e.surface, e.speed);
@@ -982,9 +1024,16 @@ function ensureGolf(): GolfGame | null {
       else sounds.ready();
     },
   );
-  golf.onShotFeedback = (kind) => overlay.shotFeedback(kind);
+  golf.onShotFeedback = (kind) => {
+    overlay.shotFeedback(kind);
+    // COM のだれかが反応するかもしれない（いい一打に😃、ミスに🤣など。性格は rivals.ts）。
+    if (kind === 'nice') comRivals?.react('good');
+    else if (kind === 'mishit') comRivals?.react('bad');
+  };
   golf.onHoled = (hole, strokes, total, totalPar, last) => {
     overlay.celebrate(scoreName(strokes, hole.par), strokes === 1 || strokes <= hole.par - 2);
+    if (strokes === 1 || strokes <= hole.par - 1) comRivals?.react('good');
+    else if (strokes >= hole.par + 2) comRivals?.react('bad');
     // COM の相手が残りを打ち切るのを待ってから、結果（最後のホール）かスコアカードを出す。
     if (last) finalePending = { total, totalPar };
     else holedCardAt = performance.now() + HOLED_CARD_DELAY;
@@ -1573,7 +1622,7 @@ addEventListener('keydown', (e: KeyboardEvent) => {
   if (!playing) return;
   if (e.code === 'Space') e.preventDefault();
   // 友達と: 1〜5 でスタンプ（マウスを固定している PC ではボタンを押せない）。カップイン後に待つ間も送れる。
-  if (!e.repeat && playMode === 'friends' && party?.inRound && /^Digit[1-5]$/.test(e.code)) {
+  if (!e.repeat && stampsOpen() && /^Digit[1-5]$/.test(e.code)) {
     sendStamp(Number(e.code.slice(5)) - 1);
     return;
   }
@@ -1958,6 +2007,7 @@ renderer.setAnimationLoop(() => {
       }
     }
   } else if (playing && golf) {
+    golf.opponentsPaused = false;
     if (!updateHoleFade(dt)) golf.update(dt);
     if (finaleCam) finaleCam.update(dt, camera);
     else {
@@ -1972,8 +2022,16 @@ renderer.setAnimationLoop(() => {
     }
     if (roundResult && roundResultAt > 0 && performance.now() >= roundResultAt && !holeFade) {
       roundResultAt = 0;
-      overlay.setThanks(playMode === 'friends' && party !== null);
+      overlay.setThanks((playMode === 'friends' && party !== null) || playMode === 'com');
       overlay.showRoundResult(roundResult);
+      // COM も少しずつ間を置いて「ありがとう」を送る。
+      if (playMode === 'com') {
+        golf.rivalStates.forEach((r, i) => {
+          window.setTimeout(() => {
+            if (roundResult && playMode === 'com') overlay.addThanks(r.name, false);
+          }, 1400 + i * 900 + Math.random() * 700);
+        });
+      }
       // 結果の窓のボタンを押せるように、マウスを放す（ロックが外れても休憩にはしない）。
       if (document.pointerLockElement === canvas) document.exitPointerLock();
     }
@@ -2041,7 +2099,8 @@ renderer.setAnimationLoop(() => {
       overlay.setTiming(null, 0);
     }
   } else if (restView && golf && sceneReady) {
-    // 回っている途中の休憩: 遊んでいた画面のまま（球・友達の球・カメラを進め続ける）。
+    // 回っている途中の休憩: 遊んでいた画面のまま（球・友達の球・カメラを進め続ける）。COM は休憩の間は待つ。
+    golf.opponentsPaused = playMode === 'com';
     golf.update(dt);
     golf.updateCamera(camera, dt);
     chunks?.update(camera.position.x, camera.position.z);

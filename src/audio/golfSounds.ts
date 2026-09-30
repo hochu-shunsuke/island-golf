@@ -84,9 +84,10 @@ export class GolfSounds {
   /**
    * 打った音。kind はクラブの種類、strength は初速の割合（0..1）、perfect は芯で捉えたか。
    */
-  hit(kind: 'wood' | 'iron' | 'wedge' | 'putter', strength: number, perfect: boolean): void {
+  hit(kind: 'wood' | 'iron' | 'wedge' | 'putter', strength: number, perfect: boolean, level = 1): void {
     const t = this.ctx.currentTime + 0.005;
-    const s = Math.max(0.25, Math.min(1, strength));
+    // level は遠さ（COM が離れた所で打った音は小さく）。
+    const s = Math.max(0.25, Math.min(1, strength)) * level;
     if (kind === 'putter') {
       this.burst(t, 1800, 3, 0.05, 0.08 * s + 0.03);
       this.ring(t, 950, 0.09, 0.05 * s + 0.02);
