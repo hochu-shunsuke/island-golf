@@ -73,7 +73,7 @@ export interface Strike {
  * - 真ん中の帯（±width）: 狙いどおり
  * - 帯の外: 外した分だけ早くから短くなる（針のずれ 0.2 で寄せ約 1 割、Mishit の手前で寄せ 6 割・遠く 7.5 割の距離）。
  *   前は帯の少し外を「ほぼ同じ」にしていて、人の押しずれ（40ms 前後）ではほとんど損が出ず、芯の針の意味が無かった
- * - 針の半分より外（Mishit）: 段差で初速が半分。ドライバーで約 4 割、寄せは約 3 割の距離（「チョン」）
+ * - 針の半分より外（Mishit）: 段差で初速が半分以下。入ってすぐで狙いの約 3 割、端では 1 割以下（チョロ）
  * 前は上に外すと長くなるトップを作り、打ち出し角とスピンまで変えていた。上で押して飛ばなかったり最大を越えたりして、
  * 押し方と結果が合わなかった。
  * パットだけは強さが ±30% ずれる（強すぎも得にならない）。d は狙った距離（m）。
@@ -85,9 +85,13 @@ export function strikeOf(n: number, width: number, d: number, putt: boolean): St
   const o = x === 0 ? 0 : (Math.abs(x) - width) / (STRIKE_MISHIT - width);
   const u = Math.max(0, Math.min(1, (d - 40) / 160));
   const far = u * u * (3 - 2 * u);
-  // 強さ（初速）の割合。距離はほぼその 2 乗。Mishit は段差で初速が半分（どの番手も狙いの 3〜4 割の距離）: 手前でなめらかに
+  // 強さ（初速）の割合。距離はほぼその 2 乗。Mishit は段差で初速が半分以下（Mishit に入ってすぐで狙いの 3 割、端でほぼ転がるだけ）: 手前でなめらかに
   // 落とすと、Mishit と出ても遠くで 8 割飛んで、表示と結果が合わなかった。
-  if (o >= 1) return { power: 0.5, kind: 'miss' };
+  if (o >= 1) {
+    // 端へ行くほどさらに弱く、端ではほとんど転がるだけ（チョロ）。
+    const m = Math.min(1, (Math.abs(x) - STRIKE_MISHIT) / (1 - STRIKE_MISHIT));
+    return { power: 0.45 - 0.3 * m, kind: 'miss' };
+  }
   return { power: 1 - (0.25 - 0.1 * far) * Math.pow(o, 1.3), kind: 'good' };
 }
 
