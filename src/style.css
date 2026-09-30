@@ -491,13 +491,6 @@ kbd {
   background: rgba(255, 255, 255, 0.5);
 }
 
-.timing.dist .t-sweet {
-  /* 距離の帯は目印の線に見えるよう、少しはみ出す。 */
-  top: -3px;
-  bottom: -3px;
-  background: rgba(255, 255, 255, 0.6);
-}
-
 .t-needle {
   position: absolute;
   top: -7px;

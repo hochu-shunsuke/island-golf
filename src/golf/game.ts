@@ -621,10 +621,7 @@ export class GolfGame {
     let gaugeSet = 1;
     if (this.twoClick) {
       // 目盛りの右端がそのクラブの全力（distanceScale）。最大の近くを狙うと真ん中の帯は右へ寄る。
-      const { gauge, perfect: exact } = distanceGauge(this.needle, this.scalePower, this.perfectWidth);
-      gaugeSet = gauge;
-      const pct = Math.round((gauge - 1) * 100);
-      this.onMessage(exact || pct === 0 ? '距離 ぴったり' : `距離 ${pct > 0 ? '+' : ''}${pct}%`);
+      gaugeSet = distanceGauge(this.needle, this.scalePower, this.perfectWidth).gauge;
     }
     const perfect = effect.perfect;
     this.lastSpot.x = this.ball.pos.x;
