@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { hashSeed, mulberry32 } from '../core/rng';
-import { LIE_POWER, type Point3, clubFor, needleEffect, needleRole, strikeOf, reachOf, solvePower, trial } from './aim';
+import { LIE_POWER, type Point3, clubAllowed, clubFor, needleEffect, needleRole, strikeOf, reachOf, solvePower, trial } from './aim';
 import { BALL_RADIUS, BALL_STEP, Ball, type GolfGround, rollSpeed } from './ball';
 import { CLUBS, PUTTER } from './clubs';
 import type { Hole } from './course';
@@ -47,7 +47,7 @@ export const RIVALS: readonly RivalSpec[] = [
     color: 0xffcf3f,
     spread: 0.2,
     distance: 0.2,
-    windRead: 0.25,
+    windRead: 0.5,
     puttPower: 0.25,
     puttYaw: 5,
     puttRead: 1,
@@ -59,7 +59,7 @@ export const RIVALS: readonly RivalSpec[] = [
     color: 0xe8eef2,
     spread: 0.13,
     distance: 0.13,
-    windRead: 0.5,
+    windRead: 0.7,
     puttPower: 0.2,
     puttYaw: 3.8,
     puttRead: 2,
@@ -71,7 +71,7 @@ export const RIVALS: readonly RivalSpec[] = [
     color: 0x3f63b8,
     spread: 0.08,
     distance: 0.08,
-    windRead: 0.75,
+    windRead: 0.9,
     puttPower: 0.15,
     puttYaw: 2.8,
     puttRead: 2,
@@ -103,6 +103,8 @@ interface Plan {
 class Rival {
   readonly ball: Ball;
   strokes = 0;
+  /** このホールで水に入れた回数。1 度入れたら風を読み切り、池の手前に余裕を持つ（同じミスを繰り返さない）。 */
+  wet = 0;
   holed = false;
   readonly scores: (number | undefined)[] = [];
   plan: Plan | null = null;
@@ -142,6 +144,7 @@ class Rival {
   teeOff(hole: Hole, x: number, z: number): void {
     if (hole.number === 1) this.scores.length = 0;
     this.strokes = 0;
+    this.wet = 0;
     this.holed = false;
     this.plan = null;
     this.planning = null;
@@ -203,6 +206,7 @@ class Rival {
     } else if (this.ball.state === 'water') {
       // 1 打罰で、打った所から打ち直し（プレイヤーと同じ）。
       this.strokes++;
+      this.wet++;
       this.ball.place(this.lastSpot.x, this.lastSpot.z);
     }
     this.giveUpIfTooMany(hole);
@@ -394,9 +398,24 @@ export class Rivals implements Opponents {
       const missPower = 1 + gauss(rand) * spec.puttPower;
       return { club: PUTTER, yaw: yaw + missYaw, power: Math.max(0.02, Math.min(1, power * missPower)), curve: 0 };
     }
-    // 読んだ風（腕前の分だけ）。
+    // 読んだ風（腕前の分だけ。このホールで 1 度水に入れたら読み切る）。
     const w = r.ball.wind;
-    const wind = { x: w.x * spec.windRead, z: w.z * spec.windRead };
+    const read = r.wet > 0 ? 1 : spec.windRead;
+    const wind = { x: w.x * read, z: w.z * read };
+    // 距離 d に届くクラブで試し打ちする。風で届かない（全力でも手前に落ちる）なら番手を上げる
+    // （無風の表だけでクラブを選ぶと、向かい風の池越えで全力でも池に落ち続けた）。
+    const solveFor = (yaw: number, d: number, refine: number) => {
+      let c = clubFor(d, r.strokes, lie);
+      let s = solvePower(this.ground, b, lie, c, yaw, d, wind, refine);
+      for (;;) {
+        const land = s.trial.land;
+        const got = land ? Math.hypot(land.x - b.x, land.z - b.z) : 0;
+        if (s.power < 0.999 || got >= d - 2 || c === 0 || !clubAllowed(c - 1, r.strokes, lie)) break;
+        c--;
+        s = solvePower(this.ground, b, lie, c, yaw, d, wind, refine);
+      }
+      return { c, s };
+    };
     const target = r.strokes === 0 ? hole.aim : pin;
     const want = Math.hypot(target.x - b.x, target.z - b.z);
     const full = Math.min(want, reachOf(clubFor(want, r.strokes, lie), lie));
@@ -408,24 +427,30 @@ export class Rivals implements Opponents {
     // - 水に入る所は選ばない。同じクラブで力だけ弱めると低く出て転がり、池越えのパー 5 で池に打ち続けた
     // - 試し打ちは距離を合わせてから見る（表の見当だけだと手前に落ちて乾いて見え、本番では池に届いた）
     // - 6% 飛びすぎたら水に入る所は減点する（腕前の狂いで池の縁から転がり込まないように）
+    // - 芯を外すと短くなるだけなので、手前の池は 8% 短くても越える所だけを安全とする。越えられない候補しか無ければ、
+    //   狙いより少し奥（プレイヤーが「少し遠めに輪を置く」のと同じ）も試す
     // ふつうの一打（届く所がフェアウェイかグリーンで、水にも届かない）は 1 つ目で決まる。
     let pick = full;
     let club = clubFor(full, r.strokes, lie);
     let best = Infinity;
-    // 候補は多くて 6 つ（1 打を読むのに時間をかけすぎない。狙っている間に 1 コマで読む）。
+    // 候補は多くて 8 つ（1 打を読むのに時間をかけすぎない。狙っている間に 1 コマで読む）。
     const step = Math.max(15, (full * 0.75) / 5);
-    for (let d = full; d >= Math.max(15, full * 0.25); d -= step) {
+    const candidates: number[] = [];
+    for (let d = full; d >= Math.max(15, full * 0.25); d -= step) candidates.push(d);
+    candidates.splice(1, 0, full * 1.08, full * 1.16);
+    for (const d of candidates) {
       yield;
-      const c = clubFor(d, r.strokes, lie);
       const p = pointAt(d);
       const yaw = yawTo(p.x, p.z);
-      const s = solvePower(this.ground, b, lie, c, yaw, d, wind, 2);
+      const { c, s } = solveFor(yaw, d, 2);
       if (s.trial.state === 'water') continue;
       const end = s.trial.end;
       const surface = this.ground.surface(end.x, end.z);
       const long = trial(this.ground, b, lie, c, yaw, Math.min(1, s.power * 1.06), wind);
-      const safe = long.state !== 'water';
-      const score = Math.hypot(pin.x - end.x, pin.z - end.z) + LIE_PENALTY[surface] + (safe ? 0 : 40);
+      const short = trial(this.ground, b, lie, c, yaw, s.power * 0.92, wind);
+      const safe = long.state !== 'water' && short.state !== 'water';
+      // 水に入れた後は、危ない所をもっと嫌う（刻んででも池を避ける）。
+      const score = Math.hypot(pin.x - end.x, pin.z - end.z) + LIE_PENALTY[surface] + (safe ? 0 : r.wet > 0 ? 120 : 40);
       if (score < best) {
         best = score;
         pick = d;
@@ -440,7 +465,8 @@ export class Rivals implements Opponents {
     let power = 1;
     for (let k = 0; k < 2; k++) {
       yield;
-      const s = solvePower(this.ground, b, lie, club, yaw, dist, wind);
+      const { c, s } = solveFor(yaw, dist, 5);
+      club = c;
       power = s.power;
       const land = s.trial.land;
       if (!land) break;
