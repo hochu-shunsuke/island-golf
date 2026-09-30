@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { SEA_LEVEL } from '../world/terrain';
 import type { Terrain } from '../world/terrain';
-import { HARD_NEEDLE, LIE_POWER, PERFECT, distanceGauge, distanceScale, type Point3, type Trial, clubFor, needleEffect, reachOf, solvePower } from './aim';
+import { LIE_POWER, PERFECT, distanceGauge, distanceScale, needleRole, type Point3, type Trial, clubFor, needleEffect, reachOf, solvePower } from './aim';
 import { BALL_RADIUS, Ball, type GolfGround, type Surface, rollSpeed } from './ball';
 import { CLUBS, type Club, PUTTER } from './clubs';
 import { ClubModel } from './clubModel';
@@ -249,8 +249,8 @@ export class GolfGame {
     const dist = this.swingStage === 'power';
     return {
       stage: dist ? 'dist' : 'dir',
-      dirWidth: this.putting ? PERFECT : HARD_NEEDLE.perfect,
-      distWidth: HARD_NEEDLE.perfect,
+      dirWidth: this.putting ? PERFECT : this.role.dirWidth,
+      distWidth: this.role.distWidth,
       // 距離の区間の真ん中の帯は、最大の近くを狙うほど右へ寄る。
       distCenter: distanceScale(this.scalePower).center,
     };
@@ -267,7 +267,12 @@ export class GolfGame {
   /** 今の針の真ん中（ずれ無し）の幅。距離では変えない。パットの方向だけは元の広さ。 */
   get perfectWidth(): number {
     if (!this.hardNeedle || (this.putting && this.swingStage === 'impact')) return PERFECT;
-    return HARD_NEEDLE.perfect;
+    return this.swingStage === 'power' ? this.role.distWidth : this.role.dirWidth;
+  }
+
+  /** 今の狙いでの 2 本の針の難しさ（遠いほど方向、近いほど距離が難しい。aim.ts の needleRole）。 */
+  private get role(): ReturnType<typeof needleRole> {
+    return needleRole(this.aimDistance);
   }
 
 
@@ -617,7 +622,7 @@ export class GolfGame {
     const putt = this.putting;
     // 2 回押しでは、方向は 1 本目の針、距離は今止めた 2 本目の針で決まる。
     const e = this.twoClick ? this.dirNeedle : this.needle;
-    const effect = needleEffect(e, putt, this.hardNeedle, putt ? PERFECT : HARD_NEEDLE.perfect);
+    const effect = needleEffect(e, putt, this.hardNeedle, putt ? PERFECT : this.role.dirWidth);
     let gaugeSet = 1;
     if (this.twoClick) {
       // 目盛りの右端がそのクラブの全力（distanceScale）。最大の近くを狙うと真ん中の帯は右へ寄る。
@@ -702,13 +707,14 @@ export class GolfGame {
     }
     if (this.phase === 'swing') {
       this.needleTime += dt;
-      // パットの方向だけは元のゆっくりした針。ほかはライごとの速さ（距離では変えない）。
+      // パットの方向だけは元のゆっくりした針。ほかはライごとの速さに、場面の役割（遠いほど方向、近いほど距離が速い）を掛ける。
       const lie = this.putting ? 'green' : this.ball.lie;
+      const role = this.role;
       const f =
         this.putting && this.swingStage === 'impact'
           ? PUTT_NEEDLE_SPEED
           : this.hardNeedle
-            ? FAST_NEEDLE_SPEED[lie]
+            ? FAST_NEEDLE_SPEED[lie] * (this.swingStage === 'power' ? role.distSpeed : role.dirSpeed)
             : NEEDLE_SPEED[lie];
       // 左端から右へ、右端から左へ、を繰り返す（三角波）。
       const t = (this.needleTime * f) % 2;

@@ -1852,7 +1852,11 @@ function placeTiming(game: GolfGame): void {
   const topClearance = touchTiming ? 80 : 140;
   const bottomClearance = touchTiming ? 230 : 130;
   const timingY = Math.max(topClearance, Math.min(Math.max(topClearance, innerHeight - bottomClearance), y));
-  const at = { x: Math.max(160, Math.min(innerWidth - 160, x)), y: timingY };
+  // 距離のバーは縦にして、球の右に出す（球の高さの真ん中あたりから）。方向のバーは横で、球の下。
+  const at =
+    game.swingStage === 'power'
+      ? { x: Math.max(60, Math.min(innerWidth - 60, x + 96)), y: Math.max(topClearance - 60, Math.min(innerHeight - 260, y - 190)) }
+      : { x: Math.max(160, Math.min(innerWidth - 160, x)), y: timingY };
   overlay.setTiming(at, game.needle, game.gauge);
 }
 

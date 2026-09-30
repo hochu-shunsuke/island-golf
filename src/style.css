@@ -471,7 +471,50 @@ kbd {
   background: rgba(255, 255, 255, 0.14);
 }
 
-/* 距離のバー: 針の後ろを左から塗る（強さのメーター）。 */
+/* 距離のバーは縦（下が弱い・短い、上が強い・長い）。字はバーの上。 */
+.timing.dist {
+  padding: 12px 12px 14px;
+  border-radius: 18px;
+}
+
+.timing.dist .t-row {
+  flex-direction: column;
+  gap: 10px;
+}
+
+.timing.dist .t-label {
+  width: auto;
+  text-align: center;
+}
+
+.timing.dist .t-track {
+  width: 8px;
+  height: 150px;
+}
+
+.timing.dist .t-needle {
+  top: auto;
+  left: -7px;
+  right: -7px;
+  bottom: 0;
+  width: auto;
+  height: 3px;
+  margin: 0 0 -1.5px;
+}
+
+.timing.dist .t-fill {
+  top: auto;
+  right: 0;
+  width: auto;
+  background: linear-gradient(0deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0.38));
+}
+
+.timing.dist .t-sweet {
+  left: 0;
+  right: 0;
+}
+
+/* 距離のバー: 針の後ろを下から塗る（強さのメーター）。 */
 .t-fill {
   position: absolute;
   left: 0;

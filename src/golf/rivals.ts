@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { hashSeed, mulberry32 } from '../core/rng';
-import { LIE_POWER, type Point3, clubFor, HARD_NEEDLE, distanceGauge, distanceScale, needleEffect, reachOf, solvePower, trial } from './aim';
+import { LIE_POWER, type Point3, clubFor, distanceGauge, distanceScale, needleEffect, needleRole, reachOf, solvePower, trial } from './aim';
 import { BALL_RADIUS, BALL_STEP, Ball, type GolfGround, rollSpeed } from './ball';
 import { CLUBS, PUTTER } from './clubs';
 import type { Hole } from './course';
@@ -453,9 +453,10 @@ export class Rivals implements Opponents {
     const clamp1 = (v: number) => Math.max(-1, Math.min(1, v));
     // 距離の針はプレイヤーと同じ目盛り（右端が全力、最大の近くでは真ん中が右へ寄る）。
     const { center } = distanceScale(power);
-    const { gauge } = distanceGauge(clamp1(center + gauss(rand) * spec.distance), power, HARD_NEEDLE.perfect);
+    const role = needleRole(pick);
+    const { gauge } = distanceGauge(clamp1(center + gauss(rand) * spec.distance), power, role.distWidth);
     const eDir = clamp1(gauss(rand) * spec.spread);
-    const effect = needleEffect(eDir, false, true, HARD_NEEDLE.perfect);
+    const effect = needleEffect(eDir, false, true, role.dirWidth);
     return { club, yaw: yaw + effect.yaw, power: Math.max(0.1, Math.min(1, power * gauge)), curve: effect.curve };
   }
 }

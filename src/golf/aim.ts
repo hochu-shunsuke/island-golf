@@ -42,6 +42,23 @@ export const HARD_NEEDLE = { perfect: 0.08, yawDeg: 9, curve: 0.6, power: 0.1 };
 export const POWER_RANGE = 0.3;
 
 /**
+ * 場面で入れ替える 2 本の針の難しさ（狙う距離 d で決める）。遠いほど方向が難しく、近いほど距離が難しい。
+ * 実際のゴルフでも、ティーショットは方向のずれがスコアに効き（Broadie & Ko 2009）、寄せとパットは縦のずれ（強さ）が効く。
+ * speed は針の速さの倍率（game.ts の FAST_NEEDLE_SPEED に掛ける）、width は真ん中（狙いどおり）の幅。
+ * 40m 以下と 200m 以上で両端、その間はなめらかに。
+ */
+export function needleRole(d: number): { dirSpeed: number; dirWidth: number; distSpeed: number; distWidth: number } {
+  const u = Math.max(0, Math.min(1, (d - 40) / 160));
+  const t = u * u * (3 - 2 * u);
+  return {
+    dirSpeed: 0.85 + 0.4 * t,
+    dirWidth: 0.12 - 0.06 * t,
+    distSpeed: 1.25 - 0.4 * t,
+    distWidth: 0.06 + 0.06 * t,
+  };
+}
+
+/**
  * 距離の針の目盛り。左端は −30%、右端は +30% かそのクラブの全力（最大飛距離）の手前の方。
  * power は輪に届く強さ（全力を 1 として）。center は狙いどおり（倍率 1）になる針の位置（-1..1）で、
  * 最大の近くを狙うほど右へ寄る（右端で止めたときだけ全力。真ん中より右なら全部全力、にはしない）。

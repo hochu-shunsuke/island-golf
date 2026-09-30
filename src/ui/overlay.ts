@@ -1065,16 +1065,33 @@ export class Overlay {
     const dist = g.stage === 'dist';
     const center = dist ? g.distCenter : 0;
     const width = dist ? g.distWidth : g.dirWidth;
-    const pos = ((needle + 1) / 2) * 100;
-    this.timingNeedle.style.left = `${pos.toFixed(2)}%`;
-    this.timingFill.style.width = dist ? `${pos.toFixed(2)}%` : '0%';
+    // 距離のバーは縦（下が弱い・短い、上が強い・長い）。方向のバーは横。
+    const pos = `${(((needle + 1) / 2) * 100).toFixed(2)}%`;
     const from = Math.max(0, 50 + center * 50 - width * 50);
     const to = Math.min(100, 50 + center * 50 + width * 50);
-    const left = `${from.toFixed(1)}%`;
-    const w = `${(to - from).toFixed(1)}%`;
-    if (this.timingSweet.style.left !== left || this.timingSweet.style.width !== w) {
-      this.timingSweet.style.left = left;
-      this.timingSweet.style.width = w;
+    const start = `${from.toFixed(1)}%`;
+    const size = `${(to - from).toFixed(1)}%`;
+    const n = this.timingNeedle.style;
+    const f = this.timingFill.style;
+    const sw = this.timingSweet.style;
+    if (dist) {
+      n.left = '';
+      n.bottom = pos;
+      f.width = '';
+      f.height = pos;
+      sw.left = '';
+      sw.width = '';
+      sw.bottom = start;
+      sw.height = size;
+    } else {
+      n.bottom = '';
+      n.left = pos;
+      f.height = '';
+      f.width = '0%';
+      sw.bottom = '';
+      sw.height = '';
+      sw.left = start;
+      sw.width = size;
     }
     this.timing.classList.toggle('dist', dist);
     this.timing.classList.toggle('sweet', Math.abs(needle - center) < width);
