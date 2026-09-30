@@ -38,7 +38,7 @@ export interface RivalSpec {
   puttRead: number;
 }
 
-/** 3 人の相手。COM1 はやさしい、COM2 はふつう、COM3 はつよい。 */
+/** 3 人の相手。COM1 はやさしい、COM2 はふつう、COM3 はつよい（風を読み切り、プロより正確）。 */
 export const RIVALS: readonly RivalSpec[] = [
   {
     id: 'com1',
@@ -69,12 +69,15 @@ export const RIVALS: readonly RivalSpec[] = [
     name: 'COM3',
     level: 'つよい',
     color: 0x3f63b8,
-    spread: 0.08,
-    distance: 0.08,
-    windRead: 0.9,
-    puttPower: 0.15,
-    puttYaw: 2.8,
-    puttRead: 2,
+    // 押しずれ 25ms ほど（ドライバーで向きの標準偏差 2.5°、ツアープロの 4° より上）。風は読み切る。
+    // 本物のコース 9 ラウンドで 9 ホール平均 -8.9（前のつよい -5.9、ふつう -1.6、やさしい +4.0）。
+    // 自分の散らばりごと試し打ちして狙いをずらす読みも試したが、-8.7 と変わらず、1 打の読みが 10 倍重くなったのでやめた。
+    spread: 0.06,
+    distance: 0.06,
+    windRead: 1,
+    puttPower: 0.1,
+    puttYaw: 2,
+    puttRead: 3,
   },
 ];
 
@@ -464,15 +467,22 @@ export class Rivals implements Opponents {
       dist = Math.max(1, dist + (pick - got));
     }
     // プレイヤーと同じ 2 回押し: 方向の針と芯の針（外すと短いだけ。aim.ts の strikeOf）。
-    const clamp1 = (v: number) => Math.max(-1, Math.min(1, v));
     const role = needleRole(pick);
-    const strain = power <= 0.85 ? 1 : 1 - 0.45 * ((Math.min(1, power) - 0.85) / 0.15);
-    const width = role.distWidth * strain;
+    const width = role.distWidth * strainOf(power);
     const strike = strikeOf(clamp1(gauss(rand) * spec.distance), width, pick, false);
     const eDir = clamp1(gauss(rand) * spec.spread);
     const effect = needleEffect(eDir, false, true, role.dirWidth);
     return { club, yaw: yaw + effect.yaw, power: Math.max(0.1, Math.min(1, power * strike.power)), curve: effect.curve };
   }
+}
+
+function clamp1(v: number): number {
+  return Math.max(-1, Math.min(1, v));
+}
+
+/** 力み: 全力の近く（85% より上）を狙うほど芯の帯が狭い（プレイヤーの game.ts の strikeWidth と同じ）。 */
+function strainOf(power: number): number {
+  return power <= 0.85 ? 1 : 1 - 0.45 * ((Math.min(1, power) - 0.85) / 0.15);
 }
 
 /** from から見て、got の向きを want の向きへ合わせるのに足す角度（ラジアン、yaw と同じ回り）。 */
