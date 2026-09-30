@@ -53,8 +53,9 @@ export function needleRole(d: number): { dirSpeed: number; dirWidth: number; dis
   return {
     dirSpeed: 0.85 + 0.4 * t,
     dirWidth: 0.12 - 0.06 * t,
-    // 芯の針は大きなミスが出るよう、方向より少し速め（寄せで 1.45 倍、遠くで 1 倍）。
-    distSpeed: (1.25 - 0.4 * t) * 1.16,
+    // 芯の針は方向の針と鏡写し（寄せで 1.25 倍、遠くで 0.85 倍）。縦のバーだった頃の 1.16 倍の上乗せは、
+    // 横の長いバーにしたら見た目にも速すぎた。
+    distSpeed: 1.25 - 0.4 * t,
     distWidth: 0.06 + 0.06 * t,
   };
 }
