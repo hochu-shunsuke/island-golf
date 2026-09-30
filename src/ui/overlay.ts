@@ -224,10 +224,6 @@ async function copyText(text: string): Promise<boolean> {
   }
 }
 
-/** ゲージの中の区間（%）: 方向は 0〜DIR_TO、距離は DIST_FROM〜100。 */
-const DIR_TO = 34;
-const DIST_FROM = 37;
-
 export class Overlay {
   private readonly root: HTMLElement;
   private readonly panel: HTMLElement;
@@ -394,10 +390,9 @@ export class Overlay {
         </div>
       </div>
       <div class="timing" aria-hidden="true">
-        <div class="t-gauge">
-          <div class="t-seg t-dir"><i class="t-sweet"></i><i class="t-mark"></i><span class="t-cap">方向</span></div>
-          <div class="t-seg t-dist"><i class="t-sweet"></i><span class="t-cap">距離</span></div>
-          <i class="t-needle"></i>
+        <div class="t-row">
+          <span class="t-label"></span>
+          <div class="t-track"><i class="t-fill"></i><i class="t-sweet"></i><i class="t-needle"></i></div>
         </div>
       </div>
       <div class="golf-touch">
@@ -461,9 +456,9 @@ export class Overlay {
     this.shotDist = this.root.querySelector('.shot-dist')!;
     this.timing = this.root.querySelector('.timing')!;
     this.timingNeedle = this.root.querySelector('.t-needle')!;
-    this.dirSweet = this.root.querySelector('.t-dir .t-sweet')!;
-    this.distSweet = this.root.querySelector('.t-dist .t-sweet')!;
-    this.dirMark = this.root.querySelector('.t-mark')!;
+    this.timingSweet = this.root.querySelector('.t-sweet')!;
+    this.timingFill = this.root.querySelector('.t-fill')!;
+    this.timingLabel = this.root.querySelector('.t-label')!;
     this.aimLabel = this.root.querySelector('.aim-label')!;
     this.holeNo = this.root.querySelector('.hole-no')!;
     this.holeOf = this.root.querySelector('.hole-of')!;
@@ -526,9 +521,9 @@ export class Overlay {
   private readonly shotDist: HTMLElement;
   private readonly timing: HTMLElement;
   private readonly timingNeedle: HTMLElement;
-  private readonly dirSweet: HTMLElement;
-  private readonly distSweet: HTMLElement;
-  private readonly dirMark: HTMLElement;
+  private readonly timingSweet: HTMLElement;
+  private readonly timingFill: HTMLElement;
+  private readonly timingLabel: HTMLElement;
   private readonly aimLabel: HTMLElement;
   private aimLabelText = '';
   private readonly holeNo: HTMLElement;
@@ -1064,32 +1059,27 @@ export class Overlay {
     this.timing.classList.toggle('on', at !== null);
     if (!at || !g) return;
     this.timing.style.transform = `translate(${at.x.toFixed(1)}px, ${at.y.toFixed(1)}px)`;
-    // みんゴルと同じく 1 本のゲージで決める。左の区間が方向、右の区間が距離。針は今決めている区間の中だけを往復する
-    // （今どちらを決めているかは、針のいる所で分かる）。区間の中の位置（%）は、針 -1..1 を区間の幅に割り当てる。
-    const inSeg = (n: number) => ((n + 1) / 2) * 100;
-    const place = (el: HTMLElement, center: number, width: number) => {
-      const from = Math.max(0, inSeg(center) - width * 50);
-      const to = Math.min(100, inSeg(center) + width * 50);
-      const left = `${from.toFixed(1)}%`;
-      const w = `${(to - from).toFixed(1)}%`;
-      if (el.style.left !== left || el.style.width !== w) {
-        el.style.left = left;
-        el.style.width = w;
-      }
-    };
-    place(this.dirSweet, 0, g.dirWidth);
-    place(this.distSweet, g.distCenter, g.distWidth);
+    // 球の下の 1 本のバー。方向と距離で見た目そのものを替える（みんゴルもパワーは伸びるメーター、インパクトは的で、
+    // 見た目で今何を決めているかが分かる）。方向: 真ん中の帯が的。距離: 針の後ろを塗る
+    // 強さのメーター、狙いどおりの所に帯（最大の近くを狙うと右へ寄る）。
     const dist = g.stage === 'dist';
-    const segLeft = dist ? DIST_FROM : 0;
-    const segWidth = dist ? 100 - DIST_FROM : DIR_TO;
-    this.timingNeedle.style.left = `${(segLeft + (inSeg(needle) / 100) * segWidth).toFixed(2)}%`;
-    this.timing.classList.toggle('dist', dist);
-    // 方向で止めた所の印（距離を決める間だけ）。
-    this.dirMark.style.display = dist && g.dirStop !== null ? 'block' : 'none';
-    if (dist && g.dirStop !== null) this.dirMark.style.left = `${inSeg(g.dirStop).toFixed(1)}%`;
     const center = dist ? g.distCenter : 0;
     const width = dist ? g.distWidth : g.dirWidth;
+    const pos = ((needle + 1) / 2) * 100;
+    this.timingNeedle.style.left = `${pos.toFixed(2)}%`;
+    this.timingFill.style.width = dist ? `${pos.toFixed(2)}%` : '0%';
+    const from = Math.max(0, 50 + center * 50 - width * 50);
+    const to = Math.min(100, 50 + center * 50 + width * 50);
+    const left = `${from.toFixed(1)}%`;
+    const w = `${(to - from).toFixed(1)}%`;
+    if (this.timingSweet.style.left !== left || this.timingSweet.style.width !== w) {
+      this.timingSweet.style.left = left;
+      this.timingSweet.style.width = w;
+    }
+    this.timing.classList.toggle('dist', dist);
     this.timing.classList.toggle('sweet', Math.abs(needle - center) < width);
+    const label = dist ? '距離' : '方向';
+    if (this.timingLabel.textContent !== label) this.timingLabel.textContent = label;
   }
 
   /** 落とし所の輪の上に、距離の目印。画面の位置（px）か、null で隠す。 */

@@ -156,13 +156,12 @@ const FAST_NEEDLE_SPEED: Record<Surface, number> = {
   snow: 1.58,
 };
 
-/** 打つゲージ（1 本のバー）の中身。stage は今決めている区間、dirStop は方向で止めた針（距離を決める間）。 */
+/** 打つバーの中身（球の下の 1 本のバー。方向と距離で見た目を替える）。stage は今決めている方。 */
 export interface SwingGauge {
   stage: 'dir' | 'dist';
   dirWidth: number;
   distWidth: number;
   distCenter: number;
-  dirStop: number | null;
 }
 
 export class GolfGame {
@@ -254,7 +253,6 @@ export class GolfGame {
       distWidth: HARD_NEEDLE.perfect,
       // 距離の区間の真ん中の帯は、最大の近くを狙うほど右へ寄る。
       distCenter: distanceScale(this.scalePower).center,
-      dirStop: dist ? this.dirNeedle : null,
     };
   }
 
