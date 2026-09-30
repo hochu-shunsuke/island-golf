@@ -6,7 +6,7 @@ import { RENDER_ORDER } from '../render/order';
  * 右上の風の札（数字と矢印）だけでは、狙う景色の中で風が感じられなかった。
  * 強い風ほど本数が多く、速く、長い。無風では出ない。全部で 1 枚のメッシュ（1 回の描画）。
  */
-const MAX = 10;
+const MAX = 14;
 /** 1 本の線の点の数。 */
 const POINTS = 18;
 /** これ以上カメラが地面から離れていたら出さない（空から見ているとき）。 */
@@ -81,8 +81,8 @@ export class WindStreaks {
     }
     this.lastCam.copy(cam);
     const high = cam.y - height(cam.x, cam.z) > MAX_CAMERA_HEIGHT;
-    // 風が強いほど本数が多い（1m/s で 2 本、6m/s 以上で全部）。
-    const active = show && !high && speed > 0.3 ? Math.round(Math.min(MAX, 1 + (speed / 6) * (MAX - 1))) : 0;
+    // 風が強いほど本数が多い（風速 1m/s ごとに約 1.7 本。8m/s で全部）。
+    const active = show && !high && speed > 0.3 ? Math.max(1, Math.min(MAX, Math.round(speed * 1.75))) : 0;
     const dx = speed > 0 ? wind.x / speed : 0;
     const dz = speed > 0 ? wind.z / speed : 0;
     // カメラの向き（前・右・上）。飛ぶ球を見下ろすカメラでも、画面に映る範囲に出す。
@@ -92,16 +92,15 @@ export class WindStreaks {
     let drawn = 0;
     for (let k = 0; k < MAX; k++) {
       const s = this.streaks[k];
+      const waited = s.age < 0;
       s.age += dt;
       // カメラの後ろへ取り残された筋は、すぐ前に出し直す（飛ぶ球を追うカメラは秒速数十 m で進む）。
-      const behind = s.age >= 0 && (s.x - cam.x) * f.x + (s.y - cam.y) * f.y + (s.z - cam.z) * f.z < 2;
-      if (s.age >= s.life || (behind && k < active)) {
-        // 流れきった: 待ってから、カメラの前のどこかに生まれ直す。
-        if (k >= active) {
-          s.age = -0.5;
-        } else {
-          this.spawn(s, cam, height, speed, this.camSpeed);
-        }
+      const behind = !waited && (s.x - cam.x) * f.x + (s.y - cam.y) * f.y + (s.z - cam.z) * f.z < 2;
+      // 待ち終えた・流れきった・取り残された: 今の本数の内ならカメラの前に生まれ直し、外なら待つ
+      // （待ち終えた筋をそのまま出すと、前の位置に古い筋が現れ、風速より多く出ていた）。
+      if ((waited && s.age >= 0) || (!waited && s.age >= s.life) || (behind && k < active)) {
+        if (k < active) this.spawn(s, cam, height, speed, this.camSpeed, dx, dz);
+        else s.age = -0.5;
       }
       if (s.age < 0) {
         this.hide(k);
@@ -121,21 +120,27 @@ export class WindStreaks {
     height: (x: number, z: number) => number,
     speed: number,
     camSpeed: number,
+    dx: number,
+    dz: number,
   ): void {
     const { f, r, u } = this.basis;
+    s.life = 2.2 + Math.random() * 1;
+    // 流れる速さは風速に比例（1m/s で 3m/s、8m/s で 13.5m/s）。
+    s.speed = 1.5 + speed * 1.5;
     // 視線の先 8〜34m（カメラが進んでいれば、その分だけ先に。すぐ追い越して消えないように）、左右と上下は見えている幅の中。
     const d = 8 + Math.random() * 26 + camSpeed * 0.6;
+    // 長さは風速に比例し、遠くに出した筋ほど長く（画面の上で同じくらいの長さに見えるように）。
+    s.length = (7 + speed * 1.5) * Math.max(1, d / 30);
     const side = (Math.random() * 2 - 1) * d * 0.6;
     const up = (Math.random() * 2 - 1) * d * 0.3;
-    s.x = cam.x + f.x * d + r.x * side + u.x * up;
-    s.z = cam.z + f.z * d + r.z * side + u.z * up;
+    // 選んだ点が、流れる道のりの真ん中になるよう風上へずらす（そのままだと横風では筋が画面の横へ、向かい風では
+    // カメラの手前へ流れ出て、画面に残る本数が風速より少なかった）。
+    const back = (s.speed * s.life + s.length) / 2;
+    s.x = cam.x + f.x * d + r.x * side + u.x * up - dx * back;
+    s.z = cam.z + f.z * d + r.z * side + u.z * up - dz * back;
     // 地面には潜らせない。
     s.y = Math.max(height(s.x, s.z) + 1.5, cam.y + f.y * d + r.y * side + u.y * up);
     s.age = 0;
-    s.life = 2.2 + Math.random() * 1;
-    s.speed = 3 + speed * 1.1;
-    // 遠くに出した筋は、その分だけ長く（画面の上で同じくらいの長さに見えるように）。
-    s.length = (5 + speed * 0.8) * Math.max(1, d / 30);
     s.phase = Math.random() * Math.PI * 2;
     s.sway = 0.15 + Math.random() * 0.2;
   }
@@ -151,10 +156,9 @@ export class WindStreaks {
 
   private write(k: number, s: Streak, dx: number, dz: number, cam: THREE.Vector3): void {
     const { a, b, t, s: side } = this.tmp;
-    // 頭は流れ続け、尾は少し遅れてついてくる。終わりに近づくと尾が追いつき、細く短くなって消える。
-    const head = s.speed * s.age;
-    const end = s.age / s.life;
-    const tail = Math.max(0, head - s.length * (1 - smooth(Math.max(0, (end - 0.55) / 0.45))));
+    // 生まれたときから全部の長さで流れ、濃さだけで出て消える（点から伸びると、溜めてから抜けていくように見えた）。
+    const tail = s.speed * s.age;
+    const head = tail + s.length;
     // 全体の濃さ: ふわっと出て、ふわっと消える。
     const fade = Math.min(1, s.age / 0.35) * Math.min(1, (s.life - s.age) / 0.6);
     for (let i = 0; i < POINTS; i++) {
